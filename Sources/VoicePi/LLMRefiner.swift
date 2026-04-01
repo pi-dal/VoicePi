@@ -45,7 +45,7 @@ struct LLMRefinerConfiguration: Codable, Equatable {
     }
 }
 
-enum LLMRefinerError: LocalizedError {
+enum LLMRefinerError: LocalizedError, Equatable {
     case notConfigured
     case invalidBaseURL
     case invalidHTTPResponse
@@ -162,7 +162,7 @@ final class LLMRefiner {
         )
     }
 
-    private static func chatCompletionsEndpoint(from baseURL: URL) -> URL {
+    static func chatCompletionsEndpoint(from baseURL: URL) -> URL {
         let value = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
         if value.hasSuffix("/v1/chat/completions") || value.hasSuffix("/chat/completions") {
@@ -176,7 +176,7 @@ final class LLMRefiner {
         return URL(string: value + "/v1/chat/completions")!
     }
 
-    private static func sanitize(content: String, fallback: String) -> String {
+    static func sanitize(content: String, fallback: String) -> String {
         var value = content.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if value.hasPrefix("```") {
