@@ -421,29 +421,11 @@ final class SpeechRecorder: NSObject {
 
         let rms = sqrt(sumSquares / Float(channelCount))
         let decibels = 20.0 * log10(max(rms, 0.000_01))
-        return normalizeDecibels(decibels)
-    }
-
-    nonisolated private static func normalizeDecibels(_ db: Float) -> CGFloat {
-        let minDb: Float = -55
-        let maxDb: Float = -8
-        let clamped = min(max(db, minDb), maxDb)
-        let linear = (clamped - minDb) / (maxDb - minDb)
-        let curved = pow(linear, 1.35)
-        return CGFloat(min(max(curved, 0), 1))
+        return SpeechRecorderMath.normalizeDecibels(decibels)
     }
 
     private func applyEnvelopeAndPublish(_ target: CGFloat) {
-        let attack: CGFloat = 0.40
-        let release: CGFloat = 0.15
-
-        if target > meterEnvelope {
-            meterEnvelope += (target - meterEnvelope) * attack
-        } else {
-            meterEnvelope += (target - meterEnvelope) * release
-        }
-
-        meterEnvelope = min(max(meterEnvelope, 0), 1)
+        meterEnvelope = SpeechRecorderMath.applyEnvelope(current: meterEnvelope, target: target)
         delegate?.speechRecorder(self, didUpdateMetering: meterEnvelope)
     }
 }
