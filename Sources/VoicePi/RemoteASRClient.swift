@@ -1,6 +1,6 @@
 import Foundation
 
-enum RemoteASRClientError: LocalizedError {
+enum RemoteASRClientError: LocalizedError, Equatable {
     case notConfigured
     case invalidBaseURL
     case invalidAudioFile
@@ -91,29 +91,7 @@ final class RemoteASRClient {
             )
         }
 
-        if let verbose = try? JSONDecoder().decode(RemoteASRVerboseResponse.self, from: data) {
-            let text = verbose.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { throw RemoteASRClientError.emptyTranscription }
-            return text
-        }
-
-        if let simple = try? JSONDecoder().decode(RemoteASRTextResponse.self, from: data) {
-            let text = simple.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { throw RemoteASRClientError.emptyTranscription }
-            return text
-        }
-
-        if
-            let raw = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !raw.isEmpty,
-            raw.first != "{",
-            raw.first != "["
-        {
-            return raw
-        }
-
-        throw RemoteASRClientError.emptyTranscription
+        return try Self.parseTranscriptionResponse(data)
     }
 
     func testConnection(
@@ -145,7 +123,7 @@ final class RemoteASRClient {
         throw RemoteASRClientError.badStatusCode(httpResponse.statusCode, nil)
     }
 
-    private static func transcriptionsEndpoint(from baseURL: URL) -> URL {
+    static func transcriptionsEndpoint(from baseURL: URL) -> URL {
         let value = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
         if value.hasSuffix("/v1/audio/transcriptions") || value.hasSuffix("/audio/transcriptions") {
@@ -159,7 +137,7 @@ final class RemoteASRClient {
         return URL(string: value + "/v1/audio/transcriptions")!
     }
 
-    private static func makeMultipartBody(
+    static func makeMultipartBody(
         boundary: String,
         fileData: Data,
         fileURL: URL,
@@ -203,6 +181,32 @@ final class RemoteASRClient {
 
         append("--\(boundary)--\(lineBreak)")
         return body
+    }
+
+    static func parseTranscriptionResponse(_ data: Data) throws -> String {
+        if let verbose = try? JSONDecoder().decode(RemoteASRVerboseResponse.self, from: data) {
+            let text = verbose.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { throw RemoteASRClientError.emptyTranscription }
+            return text
+        }
+
+        if let simple = try? JSONDecoder().decode(RemoteASRTextResponse.self, from: data) {
+            let text = simple.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { throw RemoteASRClientError.emptyTranscription }
+            return text
+        }
+
+        if
+            let raw = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty,
+            raw.first != "{",
+            raw.first != "["
+        {
+            return raw
+        }
+
+        throw RemoteASRClientError.emptyTranscription
     }
 
     private static func mimeType(for pathExtension: String) -> String {
