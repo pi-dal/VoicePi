@@ -18,7 +18,7 @@ SIGN_IDENTITY ?= -
 INSTALL_DIR ?= /Applications
 APP_ID ?= com.voicepi.app
 
-.PHONY: all build verify package run install clean bundle debug release dist-clean
+.PHONY: all build verify package zip run install clean bundle debug release dist-clean
 
 all: verify
 
@@ -29,6 +29,11 @@ verify: debug
 
 package: verify release
 	@echo "Packaged app bundle ready: $(APP_BUNDLE)"
+
+zip: package
+	rm -f "$(DIST_DIR)/release/$(APP_NAME)-macOS.zip"
+	ditto -c -k --sequesterRsrc --keepParent "$(APP_BUNDLE)" "$(DIST_DIR)/release/$(APP_NAME)-macOS.zip"
+	@echo "Packaged zip archive ready: $(DIST_DIR)/release/$(APP_NAME)-macOS.zip"
 
 debug:
 	@echo "==> Running verification build"
