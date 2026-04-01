@@ -11,7 +11,7 @@ VERIFY_TARGET="${VERIFY_TARGET:-verify}"
 DEBUG_APP_BUNDLE="dist/debug/${APP_NAME}.app"
 
 echo "==> Starting verification workflow"
-echo "==> Building and bundling development app"
+echo "==> Running repository tests and building development app"
 make "$VERIFY_TARGET"
 
 echo

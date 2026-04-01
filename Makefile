@@ -18,13 +18,16 @@ SIGN_IDENTITY ?= -
 INSTALL_DIR ?= /Applications
 APP_ID ?= com.voicepi.app
 
-.PHONY: all build verify package zip run install clean bundle debug release dist-clean
+.PHONY: all build test verify package zip run install clean bundle debug release dist-clean
 
 all: verify
 
 build: verify
 
-verify: debug
+test:
+	@./Scripts/test.sh
+
+verify: test debug
 	@echo "Verification bundle ready: $(DEBUG_APP_BUNDLE)"
 
 package: verify release
