@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, for example v1.2.3"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
+          path: release-src
+          fetch-depth: 0
+
+      - name: Prepare release artifacts
+        id: prepare
+        working-directory: release-src
+        env:
+          TAG_NAME: ${{ env.TAG_NAME }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./Scripts/prepare_release.sh
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.prepare.outputs.tag_name }}
+          ASSET_PATH: ${{ format('release-src/{0}', steps.prepare.outputs.asset_path) }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "$ASSET_PATH" --clobber
+          else
+            gh release create "$TAG_NAME" "$ASSET_PATH" --title "$TAG_NAME" --generate-notes
+          fi
+
+      - name: Check out default branch for Homebrew cask update
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: repo-main
+          fetch-depth: 0
+
+      - name: Update repository Homebrew cask
+        working-directory: release-src
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+          SHA256: ${{ steps.prepare.outputs.sha256 }}
+          RELEASE_URL: ${{ steps.prepare.outputs.release_url }}
+          OUTPUT_PATH: ${{ github.workspace }}/repo-main/Casks/voicepi.rb
+        run: ./Scripts/write_homebrew_cask.sh
+
+      - name: Commit Homebrew cask update
+        working-directory: repo-main
+        run: |
+          if git diff --quiet -- Casks/voicepi.rb; then
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/voicepi.rb
+          git commit -m "chore: update Homebrew cask for ${{ steps.prepare.outputs.version }}"
+          git push origin HEAD:${{ github.event.repository.default_branch }}
