@@ -4,6 +4,8 @@ VoicePi is a macOS 14+ menu-bar voice input app built with Swift Package Manager
 
 It lets you press a keyboard trigger to start recording speech, transcribe audio with either Apple Speech or a remote OpenAI-compatible ASR model, optionally refine the transcript with an OpenAI-compatible LLM, and then paste the final text into the currently focused input field when you press the trigger again.
 
+![VoicePi App Icon](docs/assets/voicepi-icon.png)
+
 ## Repository
 
 VoicePi is hosted on GitHub. See the repository for source code, issue tracking, and release packaging updates:
@@ -152,8 +154,19 @@ VoicePi supports two practical distribution paths.
 Use this path when you want to share builds quickly with a small number of testers:
 
 ```sh
-./Scripts/package.sh
-ditto -c -k --sequesterRsrc --keepParent dist/release/VoicePi.app dist/release/VoicePi-macOS.zip
+./Scripts/package_zip.sh
+```
+
+The script runs the normal packaging flow first, then creates:
+
+```text
+dist/release/VoicePi-macOS.zip
+```
+
+If you prefer Make targets, this repository also exposes:
+
+```sh
+make zip
 ```
 
 Share `dist/release/VoicePi-macOS.zip` with testers. The default release bundle is ad-hoc signed, so macOS Gatekeeper may block it on other machines. Testers can usually open it by right-clicking the app and choosing **Open**, or by removing the quarantine attribute after download:
