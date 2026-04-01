@@ -1,3 +1,34 @@
+# macOS
 .DS_Store
+
+# Build
 .build/
+DerivedData/
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+Packages/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+
+# Distribution
 dist/
+*.ipa
+
+# Debug
+*.hmap
+*.plist
+
+# IDE
+.zed/
+.claude/
+.codex/
+!.vscode/extensions.json
+!.vscode/settings.json
