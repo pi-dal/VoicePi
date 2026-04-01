@@ -221,14 +221,23 @@ Signing alone is not enough for a smooth external install experience. If you dis
 
 The repository ships with two GitHub Actions workflows:
 
-- `CI` runs `./Scripts/test.sh` on macOS for pushes to `main` and for pull requests.
+- `CI` runs `./Scripts/test.sh` on macOS for pull requests.
 - `Release` runs when you push a tag that starts with `v`, packages `dist/release/VoicePi-macOS.zip`, creates or updates the matching GitHub Release, and rewrites `Casks/voicepi.rb` on `main`.
+
+VoicePi follows Epoch Semantic Versioning, using the normal SemVer `MAJOR` position as `epoch * 1000 + technical_major`. In practice:
+
+- `PATCH` is for backwards-compatible fixes.
+- `MINOR` is for backwards-compatible features.
+- `MAJOR` is for smaller incompatible changes that should still be progressive to adopt.
+- `EPOCH` is reserved for genuinely new eras of the product and appears as jumps like `v1000.0.0`.
+
+That means the first public release is `v1.0.0`, and later progressive breaking changes can move to `v2.0.0`, `v3.0.0`, and so on without implying a marketing reset.
 
 Create a release like this:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The tag should follow `v<semver>`, for example `v1.2.3`. The workflow uses the tag version for both the GitHub Release asset URL and the Homebrew cask metadata.
