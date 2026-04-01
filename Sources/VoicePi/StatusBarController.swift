@@ -98,9 +98,26 @@ final class StatusBarController: NSObject {
     private func refreshStatusItemAppearance() {
         guard let button = statusItem.button else { return }
 
-        let symbolName = isRecording ? "mic.circle.fill" : "waveform.circle"
-        button.image = NSImage(
-            systemSymbolName: symbolName,
+        button.image = statusBarIconImage(isRecording: isRecording)
+    }
+
+    static func statusBarIconResourceName(isRecording: Bool) -> String {
+        "AppIcon"
+    }
+
+    private func statusBarIconImage(isRecording: Bool) -> NSImage? {
+        let resourceName = Self.statusBarIconResourceName(isRecording: isRecording)
+
+        if let url = Bundle.main.url(forResource: resourceName, withExtension: "icns"),
+           let image = NSImage(contentsOf: url) {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = false
+            return image
+        }
+
+        let fallbackSymbolName = isRecording ? "mic.circle.fill" : "waveform.circle"
+        return NSImage(
+            systemSymbolName: fallbackSymbolName,
             accessibilityDescription: "VoicePi"
         )
     }
