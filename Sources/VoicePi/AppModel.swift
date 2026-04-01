@@ -2,6 +2,45 @@ import AppKit
 import Combine
 import Foundation
 
+enum InterfaceTheme: String, Codable, CaseIterable {
+    case system
+    case light
+    case dark
+
+    var title: String {
+        switch self {
+        case .system:
+            return "System"
+        case .light:
+            return "Light"
+        case .dark:
+            return "Dark"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .system:
+            return "circle.lefthalf.filled"
+        case .light:
+            return "sun.max"
+        case .dark:
+            return "moon"
+        }
+    }
+
+    var appearance: NSAppearance? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return NSAppearance(named: .aqua)
+        case .dark:
+            return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 struct ActivationShortcut: Codable, Equatable {
     var keyCodes: [UInt16]
     var modifierFlagsRawValue: UInt
@@ -644,6 +683,7 @@ final class AppModel: ObservableObject {
         static let activationShortcut = "activationShortcut"
         static let asrBackend = "asrBackend"
         static let remoteASRConfig = "remoteASRConfig"
+        static let interfaceTheme = "interfaceTheme"
     }
 
     @Published var selectedLanguage: SupportedLanguage {
@@ -679,6 +719,12 @@ final class AppModel: ObservableObject {
     @Published var remoteASRConfiguration: RemoteASRConfiguration {
         didSet {
             persistRemoteASRConfiguration()
+        }
+    }
+
+    @Published var interfaceTheme: InterfaceTheme {
+        didSet {
+            defaults.set(interfaceTheme.rawValue, forKey: Keys.interfaceTheme)
         }
     }
 
@@ -743,6 +789,15 @@ final class AppModel: ObservableObject {
             self.remoteASRConfiguration = decoded
         } else {
             self.remoteASRConfiguration = .init()
+        }
+
+        if
+            let storedTheme = defaults.string(forKey: Keys.interfaceTheme),
+            let theme = InterfaceTheme(rawValue: storedTheme)
+        {
+            self.interfaceTheme = theme
+        } else {
+            self.interfaceTheme = .system
         }
     }
 
