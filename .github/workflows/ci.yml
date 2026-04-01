@@ -9,10 +9,17 @@ permissions:
 jobs:
   test:
     runs-on: macos-14
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
 
       - name: Run repository tests
         run: ./Scripts/test.sh
