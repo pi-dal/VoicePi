@@ -214,63 +214,53 @@ final class AppController: NSObject {
     }
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {
-        switch model.asrBackend {
-        case .appleSpeech:
-            return localFallback
-
-        case .remoteOpenAICompatible:
-            let configuration = model.remoteASRConfiguration
-            guard configuration.isConfigured else {
-                presentTransientError("Remote ASR is selected, but API Base URL, API Key, and Model are not fully configured.")
-                return localFallback
+        await AppWorkflowSupport.resolveTranscriptAfterRecording(
+            backend: model.asrBackend,
+            localFallback: localFallback,
+            audioURL: speechRecorder.latestAudioFileURL,
+            language: model.selectedLanguage,
+            configuration: model.remoteASRConfiguration,
+            remoteASR: remoteASRClient,
+            onPresentation: { [weak self] presentation in
+                guard let self else { return }
+                switch presentation {
+                case .transcribing(let overlayTranscript, let statusText):
+                    self.floatingPanelController.showRefining(transcript: "Transcribing…")
+                    self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    self.statusBarController?.setTransientStatus(statusText)
+                case .refining(let overlayTranscript, let statusText):
+                    self.floatingPanelController.showRefining(transcript: localFallback)
+                    self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    self.statusBarController?.setTransientStatus(statusText)
+                }
+            },
+            onError: { [weak self] message in
+                self?.presentTransientError(message)
             }
-
-            let audioURL = speechRecorder.latestAudioFileURL
-            guard let audioURL else {
-                presentTransientError("Remote ASR could not find the recorded audio file.")
-                return localFallback
-            }
-
-            floatingPanelController.showRefining(transcript: "Transcribing…")
-            model.updateOverlayRefining(transcript: "Transcribing...")
-            statusBarController?.setTransientStatus("Remote ASR…")
-
-            do {
-                let transcript = try await remoteASRClient.transcribe(
-                    audioFileURL: audioURL,
-                    language: model.selectedLanguage,
-                    configuration: configuration
-                )
-                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? localFallback : trimmed
-            } catch {
-                presentTransientError("Remote ASR failed: \(error.localizedDescription)")
-                return localFallback
-            }
-        }
+        )
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
-        guard model.isLLMReady else { return text }
-
-        floatingPanelController.showRefining(transcript: text)
-        model.updateOverlayRefining(transcript: "Refining...")
-        statusBarController?.setTransientStatus("Refining…")
-
-        let configuration = LLMRefinerConfiguration(
-            baseURL: model.llmConfiguration.baseURL,
-            apiKey: model.llmConfiguration.apiKey,
-            model: model.llmConfiguration.model
+        await AppWorkflowSupport.refineIfNeeded(
+            text,
+            llmEnabled: model.llmEnabled,
+            configuration: model.llmConfiguration,
+            refiner: llmRefiner,
+            onPresentation: { [weak self] presentation in
+                guard let self else { return }
+                switch presentation {
+                case .transcribing:
+                    break
+                case .refining(let overlayTranscript, let statusText):
+                    self.floatingPanelController.showRefining(transcript: text)
+                    self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    self.statusBarController?.setTransientStatus(statusText)
+                }
+            },
+            onError: { [weak self] message in
+                self?.presentTransientError(message)
+            }
         )
-
-        do {
-            let refined = try await llmRefiner.refine(text: text, configuration: configuration)
-            let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? text : trimmed
-        } catch {
-            presentTransientError("LLM refinement failed: \(error.localizedDescription)")
-            return text
-        }
     }
 
     private func prepareForRecording() async -> Bool {
@@ -284,23 +274,16 @@ final class AppController: NSObject {
             accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
         )
 
-        if !accessibilityGranted {
-            presentTransientError("Accessibility permission is required for global key monitoring and paste injection.")
-            return false
-        }
-
-        if !microphoneGranted {
-            presentTransientError("Microphone permission was not granted.")
-            return false
-        }
-
-        if model.asrBackend == .appleSpeech && !speechGranted {
-            presentTransientError("Speech Recognition permission was not granted.")
-            return false
-        }
-
-        if model.asrBackend == .remoteOpenAICompatible && !model.remoteASRConfiguration.isConfigured {
-            presentTransientError("Remote ASR is selected, but its configuration is incomplete.")
+        if let message = AppWorkflowSupport.preparationFailureMessage(
+            permissions: .init(
+                accessibilityGranted: accessibilityGranted,
+                microphoneGranted: microphoneGranted,
+                speechGranted: speechGranted
+            ),
+            backend: model.asrBackend,
+            remoteConfigurationReady: model.remoteASRConfiguration.isConfigured
+        ) {
+            presentTransientError(message)
             return false
         }
 
