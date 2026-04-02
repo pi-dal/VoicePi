@@ -495,6 +495,53 @@ enum ASRBackend: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum PostProcessingMode: String, CaseIterable, Identifiable, Codable {
+    case disabled
+    case refinement
+    case translation
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .disabled:
+            return "Disabled"
+        case .refinement:
+            return "Refinement"
+        case .translation:
+            return "Translate"
+        }
+    }
+}
+
+enum TranslationProvider: String, CaseIterable, Identifiable, Codable {
+    case appleTranslate
+    case llm
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .appleTranslate:
+            return "Apple Translate"
+        case .llm:
+            return "LLM"
+        }
+    }
+
+    static func availableProviders(appleTranslateSupported: Bool) -> [TranslationProvider] {
+        appleTranslateSupported ? [.appleTranslate, .llm] : [.llm]
+    }
+
+    static func sanitized(
+        _ selected: TranslationProvider,
+        appleTranslateSupported: Bool
+    ) -> TranslationProvider {
+        let available = availableProviders(appleTranslateSupported: appleTranslateSupported)
+        return available.contains(selected) ? selected : available[0]
+    }
+}
+
 struct RemoteASRConfiguration: Codable, Equatable {
     var baseURL: String
     var apiKey: String
@@ -680,6 +727,9 @@ final class AppModel: ObservableObject {
         static let selectedLanguage = "selectedLanguage"
         static let llmEnabled = "llmEnabled"
         static let llmConfig = "llmConfig"
+        static let postProcessingMode = "postProcessingMode"
+        static let translationProvider = "translationProvider"
+        static let targetLanguage = "targetLanguage"
         static let activationShortcut = "activationShortcut"
         static let asrBackend = "asrBackend"
         static let remoteASRConfig = "remoteASRConfig"
@@ -692,15 +742,27 @@ final class AppModel: ObservableObject {
         }
     }
 
-    @Published var llmEnabled: Bool {
-        didSet {
-            defaults.set(llmEnabled, forKey: Keys.llmEnabled)
-        }
-    }
-
     @Published var llmConfiguration: LLMConfiguration {
         didSet {
             persistConfiguration()
+        }
+    }
+
+    @Published var postProcessingMode: PostProcessingMode {
+        didSet {
+            defaults.set(postProcessingMode.rawValue, forKey: Keys.postProcessingMode)
+        }
+    }
+
+    @Published var translationProvider: TranslationProvider {
+        didSet {
+            defaults.set(translationProvider.rawValue, forKey: Keys.translationProvider)
+        }
+    }
+
+    @Published var targetLanguage: SupportedLanguage {
+        didSet {
+            defaults.set(targetLanguage.rawValue, forKey: Keys.targetLanguage)
         }
     }
 
@@ -735,6 +797,7 @@ final class AppModel: ObservableObject {
     @Published var microphoneAuthorization: AuthorizationState = .unknown
     @Published var speechAuthorization: AuthorizationState = .unknown
     @Published var accessibilityAuthorization: AuthorizationState = .unknown
+    @Published var inputMonitoringAuthorization: AuthorizationState = .unknown
 
     private let defaults: UserDefaults
     private let encoder = JSONEncoder()
@@ -743,16 +806,17 @@ final class AppModel: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
+        let initialSelectedLanguage: SupportedLanguage
+
         if
             let storedLanguage = defaults.string(forKey: Keys.selectedLanguage),
             let language = SupportedLanguage(rawValue: storedLanguage)
         {
-            self.selectedLanguage = language
+            initialSelectedLanguage = language
         } else {
-            self.selectedLanguage = .default
+            initialSelectedLanguage = .default
         }
-
-        self.llmEnabled = defaults.object(forKey: Keys.llmEnabled) as? Bool ?? false
+        self.selectedLanguage = initialSelectedLanguage
 
         if
             let data = defaults.data(forKey: Keys.llmConfig),
@@ -761,6 +825,34 @@ final class AppModel: ObservableObject {
             self.llmConfiguration = decoded
         } else {
             self.llmConfiguration = .init()
+        }
+
+        if
+            let storedMode = defaults.string(forKey: Keys.postProcessingMode),
+            let mode = PostProcessingMode(rawValue: storedMode)
+        {
+            self.postProcessingMode = mode
+        } else {
+            let legacyEnabled = defaults.object(forKey: Keys.llmEnabled) as? Bool ?? false
+            self.postProcessingMode = legacyEnabled ? .refinement : .disabled
+        }
+
+        if
+            let storedProvider = defaults.string(forKey: Keys.translationProvider),
+            let provider = TranslationProvider(rawValue: storedProvider)
+        {
+            self.translationProvider = provider
+        } else {
+            self.translationProvider = .appleTranslate
+        }
+
+        if
+            let storedTargetLanguage = defaults.string(forKey: Keys.targetLanguage),
+            let language = SupportedLanguage(rawValue: storedTargetLanguage)
+        {
+            self.targetLanguage = language
+        } else {
+            self.targetLanguage = initialSelectedLanguage
         }
 
         if
@@ -802,11 +894,16 @@ final class AppModel: ObservableObject {
     }
 
     var isLLMReady: Bool {
-        llmEnabled && llmConfiguration.isConfigured
+        llmConfiguration.isConfigured
     }
 
     var isRemoteASRReady: Bool {
         asrBackend == .remoteOpenAICompatible && remoteASRConfiguration.isConfigured
+    }
+
+    var llmEnabled: Bool {
+        get { postProcessingMode == .refinement }
+        set { postProcessingMode = newValue ? .refinement : .disabled }
     }
 
     func updateOverlayRecording(transcript: String, level: CGFloat) {
@@ -860,6 +957,25 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func setPostProcessingMode(_ mode: PostProcessingMode) {
+        postProcessingMode = mode
+    }
+
+    func setTranslationProvider(_ provider: TranslationProvider) {
+        translationProvider = provider
+    }
+
+    func setTargetLanguage(_ language: SupportedLanguage) {
+        targetLanguage = language
+    }
+
+    func effectiveTranslationProvider(appleTranslateSupported: Bool) -> TranslationProvider {
+        TranslationProvider.sanitized(
+            translationProvider,
+            appleTranslateSupported: appleTranslateSupported
+        )
+    }
+
     func setMicrophoneAuthorization(_ state: AuthorizationState) {
         microphoneAuthorization = state
     }
@@ -870,6 +986,10 @@ final class AppModel: ObservableObject {
 
     func setAccessibilityAuthorization(_ state: AuthorizationState) {
         accessibilityAuthorization = state
+    }
+
+    func setInputMonitoringAuthorization(_ state: AuthorizationState) {
+        inputMonitoringAuthorization = state
     }
 
     func setActivationShortcut(_ shortcut: ActivationShortcut) {

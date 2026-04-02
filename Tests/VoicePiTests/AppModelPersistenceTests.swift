@@ -5,11 +5,13 @@ import Testing
 struct AppModelPersistenceTests {
     @Test
     @MainActor
-    func llmAndRemoteConfigurationsPersistAcrossReloads() {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.llmAndRemoteConfigurationsPersistAcrossReloads.\(UUID().uuidString)")!
+    func postProcessingAndRemoteConfigurationsPersistAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.postProcessingAndRemoteConfigurationsPersistAcrossReloads.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
 
-        model.llmEnabled = true
+        model.setPostProcessingMode(.refinement)
+        model.setTranslationProvider(.llm)
+        model.setTargetLanguage(.japanese)
         model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "llm-key", model: "gpt-4o-mini")
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation")
@@ -17,7 +19,9 @@ struct AppModelPersistenceTests {
 
         let reloaded = AppModel(defaults: defaults)
 
-        #expect(reloaded.llmEnabled)
+        #expect(reloaded.postProcessingMode == .refinement)
+        #expect(reloaded.translationProvider == .llm)
+        #expect(reloaded.targetLanguage == .japanese)
         #expect(reloaded.llmConfiguration == .init(baseURL: "https://llm.example.com", apiKey: "llm-key", model: "gpt-4o-mini"))
         #expect(reloaded.asrBackend == .remoteOpenAICompatible)
         #expect(reloaded.remoteASRConfiguration == .init(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation"))
@@ -33,13 +37,34 @@ struct AppModelPersistenceTests {
         #expect(model.isLLMReady == false)
         #expect(model.isRemoteASRReady == false)
 
-        model.llmEnabled = true
+        model.setPostProcessingMode(.translation)
+        model.setTranslationProvider(.appleTranslate)
         model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "llm-key", model: "gpt")
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "")
 
         #expect(model.isLLMReady)
         #expect(model.isRemoteASRReady)
+        #expect(model.translationProvider == .appleTranslate)
+    }
+
+    @Test
+    func translationProviderAvailabilityHidesAppleTranslateWhenUnsupported() {
+        #expect(TranslationProvider.availableProviders(appleTranslateSupported: true) == [.appleTranslate, .llm])
+        #expect(TranslationProvider.availableProviders(appleTranslateSupported: false) == [.llm])
+    }
+
+    @Test
+    @MainActor
+    func effectiveTranslationProviderFallsBackWhenPersistedProviderIsUnavailable() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.effectiveTranslationProviderFallsBackWhenPersistedProviderIsUnavailable.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        model.setPostProcessingMode(.translation)
+        model.setTranslationProvider(.appleTranslate)
+
+        #expect(model.effectiveTranslationProvider(appleTranslateSupported: true) == .appleTranslate)
+        #expect(model.effectiveTranslationProvider(appleTranslateSupported: false) == .llm)
     }
 
     @Test

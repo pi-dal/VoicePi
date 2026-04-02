@@ -40,7 +40,8 @@ VoicePi is released under the [MIT License](LICENSE).
 - Xcode Command Line Tools or full Xcode
 - Microphone permission
 - Speech Recognition permission
-- Accessibility permission
+- Accessibility permission for shortcut suppression and paste injection
+- Input Monitoring permission for global shortcut listening
 
 ## Project Structure
 
@@ -250,29 +251,32 @@ make clean
 
 ## Permissions
 
-VoicePi needs three macOS permissions:
+VoicePi needs four macOS permissions for the full shortcut-to-paste flow:
 
 1. **Microphone**
 2. **Speech Recognition**
 3. **Accessibility**
+4. **Input Monitoring**
 
 ### Why each permission is needed
 
 - **Microphone**: records your voice
 - **Speech Recognition**: required when using the local Apple Speech backend
-- **Accessibility**: required for global key monitoring and simulated paste injection
+- **Accessibility**: required to suppress the shortcut chord and inject the final paste
+- **Input Monitoring**: required to listen for the global shortcut outside VoicePi
 
 If you switch to a remote ASR backend, the app still needs **Microphone**, but local **Speech Recognition** may no longer be the primary transcription path.
 
 ### Granting permissions
 
-On first run, macOS should prompt for some of these automatically.
+On first run, VoicePi asks for the permissions it can prompt for while macOS still treats them as undecided. If you already denied one of them in an earlier run, macOS may not show the prompt again and you will need to re-enable it in System Settings.
 
 You can also open the in-app **Settings → Permissions** section, which provides direct buttons for:
 
 - **Open Microphone Settings**
 - **Open Speech Recognition Settings**
 - **Open Accessibility Settings**
+- **Open Input Monitoring Settings**
 - **Refresh Permission Status**
 
 If needed, you can still open the pages manually:
@@ -280,17 +284,19 @@ If needed, you can still open the pages manually:
 - **System Settings → Privacy & Security → Microphone**
 - **System Settings → Privacy & Security → Speech Recognition**
 - **System Settings → Privacy & Security → Accessibility**
+- **System Settings → Privacy & Security → Input Monitoring**
 
 Make sure `VoicePi.app` is enabled in each relevant section.
 
 ## Usage
 
 1. Launch `VoicePi.app`
-2. A microphone icon appears in the menu bar
-3. Press the configured hotkey trigger to start recording
-4. Speak
-5. Press the trigger again to stop recording
-6. VoicePi injects the final transcribed text into the currently focused input field
+2. Grant the requested permissions, especially **Input Monitoring** for shortcut listening and **Accessibility** for shortcut suppression and paste injection
+3. A microphone icon appears in the menu bar
+4. Press the configured hotkey trigger to start recording
+5. Speak
+6. Press the trigger again to stop recording
+7. VoicePi injects the final transcribed text into the currently focused input field
 
 While recording, a floating capsule appears centered near the bottom of the screen and shows:
 
@@ -424,7 +430,7 @@ From the menu bar:
 The settings window is organized into multiple sections:
 
 - **Home** — product introduction, quick usage overview, and feature summary
-- **Permissions** — direct permission status and buttons that jump to the relevant macOS settings pages
+- **Permissions** — direct permission status for Microphone, Speech Recognition, Accessibility, and Input Monitoring, plus buttons that jump to the relevant macOS settings pages and explain what each one controls
 - **ASR** — backend selection, recognition language, and remote ASR configuration
 - **LLM** — API Base URL, API Key, Model, Test, and Save controls
 
@@ -484,6 +490,8 @@ Check:
 
 - microphone permission
 - if using Apple Speech, speech recognition permission
+- accessibility permission for shortcut suppression and paste injection
+- input monitoring permission for shortcut listening
 - selected language availability on the machine
 - whether the configured shortcut is the one you are actually pressing
 
@@ -497,7 +505,16 @@ Check:
 
 ### The emoji picker still appears
 
-This usually means the global key event interception path is not active or accessibility/input monitoring constraints are preventing the intended suppression behavior.
+This usually means the global key event interception path is not active, Input Monitoring is blocking shortcut listening, or Accessibility is blocking shortcut suppression.
+
+### The shortcut does not respond at all
+
+Check:
+
+- **Input Monitoring** is enabled for `VoicePi.app`
+- **Accessibility** is enabled for `VoicePi.app`
+- you relaunched VoicePi after changing Input Monitoring if macOS did not apply it immediately
+- the shortcut shown in **Settings → Home** matches the keys you are pressing
 
 ### The transcript is empty
 

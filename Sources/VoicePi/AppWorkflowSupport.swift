@@ -11,7 +11,16 @@ protocol RemoteASRServing {
 protocol TranscriptRefining {
     func refine(
         text: String,
-        configuration: LLMRefinerConfiguration
+        configuration: LLMRefinerConfiguration,
+        targetLanguage: SupportedLanguage?
+    ) async throws -> String
+}
+
+protocol TranscriptTranslating {
+    func translate(
+        text: String,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage
     ) async throws -> String
 }
 
@@ -46,16 +55,22 @@ enum AppWorkflowSupport {
 
         case .remoteOpenAICompatible:
             guard configuration.isConfigured else {
-                onError("Remote ASR is selected, but API Base URL, API Key, and Model are not fully configured.")
+                await MainActor.run {
+                    onError("Remote ASR is selected, but API Base URL, API Key, and Model are not fully configured.")
+                }
                 return localFallback
             }
 
             guard let audioURL else {
-                onError("Remote ASR could not find the recorded audio file.")
+                await MainActor.run {
+                    onError("Remote ASR could not find the recorded audio file.")
+                }
                 return localFallback
             }
 
-            onPresentation(.transcribing(overlayTranscript: "Transcribing...", statusText: "Remote ASR…"))
+            await MainActor.run {
+                onPresentation(.transcribing(overlayTranscript: "Transcribing...", statusText: "Remote ASR…"))
+            }
 
             do {
                 let transcript = try await remoteASR.transcribe(
@@ -66,39 +81,113 @@ enum AppWorkflowSupport {
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? localFallback : trimmed
             } catch {
-                onError("Remote ASR failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    onError("Remote ASR failed: \(error.localizedDescription)")
+                }
                 return localFallback
             }
         }
     }
 
-    static func refineIfNeeded(
+    static func postProcessIfNeeded(
         _ text: String,
-        llmEnabled: Bool,
+        mode: PostProcessingMode,
+        translationProvider: TranslationProvider,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage,
         configuration: LLMConfiguration,
         refiner: TranscriptRefining,
+        translator: TranscriptTranslating,
         onPresentation: (AppWorkflowPresentation) -> Void,
         onError: (String) -> Void
     ) async -> String {
-        guard llmEnabled && configuration.isConfigured else {
+        switch mode {
+        case .disabled:
             return text
-        }
+        case .refinement:
+            guard configuration.isConfigured else {
+                return text
+            }
 
-        onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
+            let refinerConfiguration = LLMRefinerConfiguration(
+                baseURL: configuration.baseURL,
+                apiKey: configuration.apiKey,
+                model: configuration.model
+            )
 
-        let refinerConfiguration = LLMRefinerConfiguration(
-            baseURL: configuration.baseURL,
-            apiKey: configuration.apiKey,
-            model: configuration.model
-        )
+            await MainActor.run {
+                onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
+            }
 
-        do {
-            let refined = try await refiner.refine(text: text, configuration: refinerConfiguration)
-            let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? text : trimmed
-        } catch {
-            onError("LLM refinement failed: \(error.localizedDescription)")
-            return text
+            do {
+                let effectiveTargetLanguage = targetLanguage == sourceLanguage ? nil : targetLanguage
+                let refined = try await refiner.refine(
+                    text: text,
+                    configuration: refinerConfiguration,
+                    targetLanguage: effectiveTargetLanguage
+                )
+                let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? text : trimmed
+            } catch {
+                await MainActor.run {
+                    onError("LLM refinement failed: \(error.localizedDescription)")
+                }
+                return text
+            }
+        case .translation:
+            guard targetLanguage != sourceLanguage else {
+                return text
+            }
+
+            let refinerConfiguration = LLMRefinerConfiguration(
+                baseURL: configuration.baseURL,
+                apiKey: configuration.apiKey,
+                model: configuration.model
+            )
+
+            await MainActor.run {
+                onPresentation(.refining(overlayTranscript: "Translating...", statusText: "Translating…"))
+            }
+
+            switch translationProvider {
+            case .llm:
+                guard configuration.isConfigured else {
+                    await MainActor.run {
+                        onError("LLM translation is selected, but LLM is not fully configured.")
+                    }
+                    return text
+                }
+
+                do {
+                    let translated = try await refiner.refine(
+                        text: text,
+                        configuration: refinerConfiguration,
+                        targetLanguage: targetLanguage
+                    )
+                    let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? text : trimmed
+                } catch {
+                    await MainActor.run {
+                        onError("LLM translation failed: \(error.localizedDescription)")
+                    }
+                    return text
+                }
+            case .appleTranslate:
+                do {
+                    let translated = try await translator.translate(
+                        text: text,
+                        sourceLanguage: sourceLanguage,
+                        targetLanguage: targetLanguage
+                    )
+                    let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? text : trimmed
+                } catch {
+                    await MainActor.run {
+                        onError("Translation via \(translationProvider.title) failed: \(error.localizedDescription)")
+                    }
+                    return text
+                }
+            }
         }
     }
 
@@ -107,10 +196,6 @@ enum AppWorkflowSupport {
         backend: ASRBackend,
         remoteConfigurationReady: Bool
     ) -> String? {
-        if !permissions.accessibilityGranted {
-            return "Accessibility permission is required for global key monitoring and paste injection."
-        }
-
         if !permissions.microphoneGranted {
             return "Microphone permission was not granted."
         }

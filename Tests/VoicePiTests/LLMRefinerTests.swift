@@ -17,6 +17,19 @@ struct LLMRefinerTests {
     }
 
     @Test
+    func sanitizeStripsThinkBlocksFromModelOutput() {
+        let content = """
+        <think>
+        The user said "你好" which means hello in Chinese.
+        </think>
+
+        Hello
+        """
+
+        #expect(LLMRefiner.sanitize(content: content, fallback: "fallback") == "Hello")
+    }
+
+    @Test
     func sanitizeFallsBackWhenContentIsEmpty() {
         #expect(LLMRefiner.sanitize(content: "   ", fallback: "fallback") == "fallback")
     }
@@ -44,7 +57,7 @@ struct LLMRefinerTests {
         }
         defer { LLMTestURLProtocol.shared.reset() }
 
-        let result = try await refiner.refine(text: "raw input", configuration: configuration)
+        let result = try await refiner.refine(text: "raw input", configuration: configuration, targetLanguage: nil)
 
         #expect(result == "refined output")
         #expect(capturedRequests.snapshot.count == 1)
@@ -58,7 +71,46 @@ struct LLMRefinerTests {
         let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
         #expect(payload.model == "gpt-test")
         #expect(payload.messages.count == 2)
+        #expect(payload.messages[0].content.contains("Never rewrite, polish, summarize, rephrase, translate") == true)
         #expect(payload.messages[1].content == "raw input")
+    }
+
+    @Test
+    func refineAddsTargetLanguageInstructionWhenRequested() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configuration = LLMRefinerConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "gpt-test"
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"translated output"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        let result = try await refiner.refine(
+            text: "raw input",
+            configuration: configuration,
+            targetLanguage: .japanese
+        )
+
+        #expect(result == "translated output")
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
+        #expect(payload.messages[0].content.contains("Notwithstanding Rule 2") == true)
+        #expect(payload.messages[0].content.contains("translate the final output into Japanese") == true)
     }
 
     @Test
@@ -84,7 +136,7 @@ struct LLMRefinerTests {
         defer { LLMTestURLProtocol.shared.reset() }
 
         await #expect(throws: LLMRefinerError.badStatusCode(401, "bad token")) {
-            try await refiner.refine(text: "raw", configuration: configuration)
+            try await refiner.refine(text: "raw", configuration: configuration, targetLanguage: nil)
         }
     }
 

@@ -7,7 +7,6 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarControllerDidRequestStopRecording(_ controller: StatusBarController)
     func statusBarController(_ controller: StatusBarController, didSelect language: SupportedLanguage)
     func statusBarController(_ controller: StatusBarController, didSelectASRBackend backend: ASRBackend)
-    func statusBarController(_ controller: StatusBarController, didUpdateLLMEnabled enabled: Bool)
     func statusBarController(_ controller: StatusBarController, didSave configuration: LLMConfiguration)
     func statusBarController(_ controller: StatusBarController, didSaveRemoteASRConfiguration configuration: RemoteASRConfiguration)
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut)
@@ -23,6 +22,169 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarControllerDidRequestRefreshPermissions(_ controller: StatusBarController) async
 }
 
+struct LanguageMenuItemPresentation: Equatable {
+    let language: SupportedLanguage
+    let isSelected: Bool
+    let isEnabled: Bool
+}
+
+struct LanguageMenuPresentation: Equatable {
+    let inputItems: [LanguageMenuItemPresentation]
+    let outputItems: [LanguageMenuItemPresentation]
+    let outputSummary: String
+    let outputSelectionEnabled: Bool
+    let effectiveOutputLanguage: SupportedLanguage
+
+    @MainActor
+    static func make(model: AppModel) -> LanguageMenuPresentation {
+        let outputSelectionEnabled = model.postProcessingMode != .disabled
+        let effectiveOutputLanguage = outputSelectionEnabled ? model.targetLanguage : model.selectedLanguage
+        let outputItems: [LanguageMenuItemPresentation]
+        let outputSummary: String
+
+        if outputSelectionEnabled {
+            outputItems = SupportedLanguage.allCases.map { language in
+                LanguageMenuItemPresentation(
+                    language: language,
+                    isSelected: language == effectiveOutputLanguage,
+                    isEnabled: true
+                )
+            }
+            outputSummary = "Current Output: \(effectiveOutputLanguage.menuTitle)"
+        } else {
+            outputItems = []
+            outputSummary = "Output unavailable while text processing is disabled"
+        }
+
+        return LanguageMenuPresentation(
+            inputItems: SupportedLanguage.allCases.map { language in
+                LanguageMenuItemPresentation(
+                    language: language,
+                    isSelected: language == model.selectedLanguage,
+                    isEnabled: true
+                )
+            },
+            outputItems: outputItems,
+            outputSummary: outputSummary,
+            outputSelectionEnabled: outputSelectionEnabled,
+            effectiveOutputLanguage: effectiveOutputLanguage
+        )
+    }
+}
+
+struct StatusMenuPresentation: Equatable {
+    let statusLine: String
+    let languageLine: String
+    let permissionsLine: String
+
+    @MainActor
+    static func make(
+        model: AppModel,
+        transientStatus: String?,
+        isRecording: Bool
+    ) -> StatusMenuPresentation {
+        let languagePresentation = LanguageMenuPresentation.make(model: model)
+
+        let statusText: String
+        if let transientStatus, !transientStatus.isEmpty {
+            statusText = compactStatusLine(transientStatus)
+        } else if isRecording {
+            statusText = "Recording…"
+        } else if model.recordingState == .refining {
+            statusText = "Refining…"
+        } else {
+            statusText = "Ready"
+        }
+
+        return StatusMenuPresentation(
+            statusLine: statusText,
+            languageLine: "Language: \(model.selectedLanguage.menuTitle) → \(languagePresentation.effectiveOutputLanguage.menuTitle)",
+            permissionsLine: "Permissions: Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization)) / IM \(symbol(for: model.inputMonitoringAuthorization))"
+        )
+    }
+
+    private static func compactStatusLine(_ status: String) -> String {
+        let normalized = status
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch normalized {
+        case AppController.shortcutMonitoringFailureMessage:
+            return "Shortcut unavailable"
+        case AppController.shortcutSuppressionWarningMessage:
+            return "Listening only"
+        default:
+            break
+        }
+
+        if normalized.hasPrefix("Translation via "), normalized.contains(" failed") {
+            return "Translation failed"
+        }
+
+        if normalized.contains("permission was not granted") {
+            return "Permission denied"
+        }
+
+        if normalized.count > 44 {
+            return String(normalized.prefix(43)) + "…"
+        }
+
+        return normalized
+    }
+
+    private static func symbol(for state: AuthorizationState) -> String {
+        switch state {
+        case .granted:
+            return "✓"
+        case .denied, .restricted:
+            return "✗"
+        case .unknown:
+            return "…"
+        }
+    }
+}
+
+struct LLMSectionFeedback {
+    static func message(
+        mode: PostProcessingMode,
+        provider: TranslationProvider,
+        configuration: LLMConfiguration,
+        selectedLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage,
+        appleTranslateSupported: Bool
+    ) -> String {
+        switch mode {
+        case .disabled:
+            return "Text processing is disabled. VoicePi will inject the transcript without additional refinement or translation."
+        case .refinement:
+            guard configuration.isConfigured else {
+                return "Refinement is selected, but API Base URL, API Key, and Model are still required."
+            }
+
+            if targetLanguage == selectedLanguage {
+                return "Refinement is active and will use the configured LLM provider."
+            }
+
+            return "Refinement is active. VoicePi will fold translation into the LLM prompt and target \(targetLanguage.recognitionDisplayName)."
+        case .translation:
+            if provider == .appleTranslate {
+                return "Translation is active and defaults to Apple Translate."
+            }
+
+            guard configuration.isConfigured else {
+                if appleTranslateSupported {
+                    return "LLM translation is selected, but the LLM configuration is incomplete. VoicePi will fall back to Apple Translate."
+                }
+
+                return "LLM translation is selected because Apple Translate is unavailable on this macOS version, but the LLM configuration is incomplete. Translation will not work until API Base URL, API Key, and Model are provided."
+            }
+
+            return "Translation is active and will use the configured LLM provider."
+        }
+    }
+}
+
 @MainActor
 final class StatusBarController: NSObject {
     weak var delegate: StatusBarControllerDelegate?
@@ -34,9 +196,11 @@ final class StatusBarController: NSObject {
     private weak var languageMenu: NSMenu?
     private weak var llmMenu: NSMenu?
     private weak var statusMenuItem: NSMenuItem?
-    private weak var llmToggleItem: NSMenuItem?
+    private weak var languageStatusMenuItem: NSMenuItem?
+    private weak var permissionsStatusMenuItem: NSMenuItem?
     private weak var shortcutMenuItem: NSMenuItem?
-    private var languageItems: [SupportedLanguage: NSMenuItem] = [:]
+    private var inputLanguageItems: [SupportedLanguage: NSMenuItem] = [:]
+    private var outputLanguageItems: [SupportedLanguage: NSMenuItem] = [:]
 
     private var settingsWindowController: SettingsWindowController?
 
@@ -134,6 +298,16 @@ final class StatusBarController: NSObject {
         menu.addItem(statusSummaryItem)
         self.statusMenuItem = statusSummaryItem
 
+        let languageSummaryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        languageSummaryItem.isEnabled = false
+        menu.addItem(languageSummaryItem)
+        self.languageStatusMenuItem = languageSummaryItem
+
+        let permissionsSummaryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        permissionsSummaryItem.isEnabled = false
+        menu.addItem(permissionsSummaryItem)
+        self.permissionsStatusMenuItem = permissionsSummaryItem
+
         menu.addItem(.separator())
 
         let holdToTalkItem = NSMenuItem(
@@ -154,8 +328,8 @@ final class StatusBarController: NSObject {
         self.languageMenu = languageMenu
         rebuildLanguageMenu()
 
-        let llmRoot = NSMenuItem(title: "LLM Refinement", action: nil, keyEquivalent: "")
-        let llmMenu = NSMenu(title: "LLM Refinement")
+        let llmRoot = NSMenuItem(title: "Text Processing", action: nil, keyEquivalent: "")
+        let llmMenu = NSMenu(title: "Text Processing")
         llmRoot.submenu = llmMenu
         menu.addItem(llmRoot)
         self.llmMenu = llmMenu
@@ -190,21 +364,58 @@ final class StatusBarController: NSObject {
 
     private func rebuildLanguageMenu() {
         guard let languageMenu else { return }
+        let presentation = LanguageMenuPresentation.make(model: model)
 
         languageMenu.removeAllItems()
-        languageItems.removeAll()
+        inputLanguageItems.removeAll()
+        outputLanguageItems.removeAll()
 
-        for language in SupportedLanguage.allCases {
+        let inputRoot = NSMenuItem(title: "Input", action: nil, keyEquivalent: "")
+        let inputSubmenu = NSMenu(title: "Input")
+        inputRoot.submenu = inputSubmenu
+        languageMenu.addItem(inputRoot)
+
+        for itemPresentation in presentation.inputItems {
             let item = NSMenuItem(
-                title: language.menuTitle,
-                action: #selector(selectLanguage(_:)),
+                title: itemPresentation.language.menuTitle,
+                action: #selector(selectInputLanguage(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = language.rawValue
-            item.state = language == model.selectedLanguage ? .on : .off
-            languageMenu.addItem(item)
-            languageItems[language] = item
+            item.representedObject = itemPresentation.language.rawValue
+            item.state = itemPresentation.isSelected ? .on : .off
+            item.isEnabled = itemPresentation.isEnabled
+            inputSubmenu.addItem(item)
+            inputLanguageItems[itemPresentation.language] = item
+        }
+
+        languageMenu.addItem(.separator())
+
+        let outputRoot = NSMenuItem(title: "Output", action: nil, keyEquivalent: "")
+        let outputSubmenu = NSMenu(title: "Output")
+        outputRoot.submenu = outputSubmenu
+        languageMenu.addItem(outputRoot)
+
+        let outputSummaryItem = NSMenuItem(title: presentation.outputSummary, action: nil, keyEquivalent: "")
+        outputSummaryItem.isEnabled = false
+        outputSubmenu.addItem(outputSummaryItem)
+
+        if !presentation.outputItems.isEmpty {
+            outputSubmenu.addItem(.separator())
+
+            for itemPresentation in presentation.outputItems {
+                let item = NSMenuItem(
+                    title: itemPresentation.language.menuTitle,
+                    action: #selector(selectOutputLanguage(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = itemPresentation.language.rawValue
+                item.state = itemPresentation.isSelected ? .on : .off
+                item.isEnabled = itemPresentation.isEnabled
+                outputSubmenu.addItem(item)
+                outputLanguageItems[itemPresentation.language] = item
+            }
         }
     }
 
@@ -213,15 +424,19 @@ final class StatusBarController: NSObject {
 
         llmMenu.removeAllItems()
 
-        let toggle = NSMenuItem(
-            title: "Enable LLM Refinement",
-            action: #selector(toggleLLMRefinement(_:)),
-            keyEquivalent: ""
-        )
-        toggle.target = self
-        toggle.state = model.llmEnabled ? .on : .off
-        llmMenu.addItem(toggle)
-        llmToggleItem = toggle
+        for mode in PostProcessingMode.allCases {
+            let item = NSMenuItem(
+                title: mode.title,
+                action: #selector(selectPostProcessingModeFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == model.postProcessingMode ? .on : .off
+            llmMenu.addItem(item)
+        }
+
+        llmMenu.addItem(.separator())
 
         let settings = NSMenuItem(
             title: "Settings…",
@@ -231,7 +446,21 @@ final class StatusBarController: NSObject {
         settings.target = self
         llmMenu.addItem(settings)
 
-        llmMenu.addItem(.separator())
+        let providerSummary = NSMenuItem(
+            title: llmProviderSummaryText(),
+            action: nil,
+            keyEquivalent: ""
+        )
+        providerSummary.isEnabled = false
+        llmMenu.addItem(providerSummary)
+
+        let targetSummary = NSMenuItem(
+            title: llmTargetSummaryText(),
+            action: nil,
+            keyEquivalent: ""
+        )
+        targetSummary.isEnabled = false
+        llmMenu.addItem(targetSummary)
 
         let endpointSummary = NSMenuItem(
             title: llmEndpointSummaryText(),
@@ -255,26 +484,11 @@ final class StatusBarController: NSObject {
             rebuildLanguageMenu()
             return
         }
-
-        for (language, item) in languageItems {
-            item.state = language == model.selectedLanguage ? .on : .off
-        }
+        rebuildLanguageMenu()
     }
 
     private func refreshLLMMenuState() {
-        llmToggleItem?.state = model.llmEnabled ? .on : .off
-
-        if let llmMenu {
-            let items = llmMenu.items
-            if items.count >= 5 {
-                items[3].title = llmEndpointSummaryText()
-                items[4].title = llmModelSummaryText()
-            } else {
-                rebuildLLMMenu()
-            }
-        } else {
-            rebuildLLMMenu()
-        }
+        rebuildLLMMenu()
     }
 
     private func shortcutMenuTitle() -> String {
@@ -282,25 +496,15 @@ final class StatusBarController: NSObject {
     }
 
     private func refreshStatusSummary() {
-        let permissionsSummary = permissionsSummaryText()
-        let languageSummary = "Language: \(model.selectedLanguage.menuTitle)"
+        let presentation = StatusMenuPresentation.make(
+            model: model,
+            transientStatus: transientStatus,
+            isRecording: isRecording
+        )
 
-        let statusText: String
-        if let transientStatus, !transientStatus.isEmpty {
-            statusText = transientStatus
-        } else if isRecording {
-            statusText = "Recording…"
-        } else if model.recordingState == .refining {
-            statusText = "Refining…"
-        } else {
-            statusText = "Ready"
-        }
-
-        statusMenuItem?.title = "\(statusText) • \(languageSummary) • \(permissionsSummary)"
-    }
-
-    private func permissionsSummaryText() -> String {
-        "Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization))"
+        statusMenuItem?.title = presentation.statusLine
+        languageStatusMenuItem?.title = presentation.languageLine
+        permissionsStatusMenuItem?.title = presentation.permissionsLine
     }
 
     private func llmEndpointSummaryText() -> String {
@@ -311,6 +515,21 @@ final class StatusBarController: NSObject {
     private func llmModelSummaryText() -> String {
         let text = model.llmConfiguration.trimmedModel
         return text.isEmpty ? "Model: Not configured" : "Model: \(text)"
+    }
+
+    private func llmProviderSummaryText() -> String {
+        switch model.postProcessingMode {
+        case .disabled:
+            return "Provider: Not in use"
+        case .refinement:
+            return "Provider: LLM"
+        case .translation:
+            return "Provider: \(model.effectiveTranslationProvider(appleTranslateSupported: AppleTranslateService.isSupported).title)"
+        }
+    }
+
+    private func llmTargetSummaryText() -> String {
+        "Target Language: \(model.targetLanguage.menuTitle)"
     }
 
     private func symbol(for state: AuthorizationState) -> String {
@@ -325,7 +544,7 @@ final class StatusBarController: NSObject {
     }
 
     @objc
-    private func selectLanguage(_ sender: NSMenuItem) {
+    private func selectInputLanguage(_ sender: NSMenuItem) {
         guard
             let rawValue = sender.representedObject as? String,
             let language = SupportedLanguage(rawValue: rawValue)
@@ -341,12 +560,36 @@ final class StatusBarController: NSObject {
     }
 
     @objc
-    private func toggleLLMRefinement(_ sender: NSMenuItem) {
-        let next = !model.llmEnabled
-        model.llmEnabled = next
+    private func selectOutputLanguage(_ sender: NSMenuItem) {
+        guard model.postProcessingMode != .disabled else { return }
+        guard
+            let rawValue = sender.representedObject as? String,
+            let language = SupportedLanguage(rawValue: rawValue)
+        else {
+            return
+        }
+
+        model.setTargetLanguage(language)
+        refreshLanguageMenuState()
         refreshLLMMenuState()
+        refreshStatusSummary()
         settingsWindowController?.reloadFromModel()
-        delegate?.statusBarController(self, didUpdateLLMEnabled: next)
+    }
+
+    @objc
+    private func selectPostProcessingModeFromMenu(_ sender: NSMenuItem) {
+        guard
+            let rawValue = sender.representedObject as? String,
+            let mode = PostProcessingMode(rawValue: rawValue)
+        else {
+            return
+        }
+
+        model.setPostProcessingMode(mode)
+        refreshLanguageMenuState()
+        refreshLLMMenuState()
+        refreshStatusSummary()
+        settingsWindowController?.reloadFromModel()
     }
 
     @objc
@@ -382,7 +625,7 @@ enum SettingsSection: Int, CaseIterable {
         case .asr:
             return "ASR"
         case .llm:
-            return "LLM"
+            return "Text"
         case .about:
             return "About"
         }
@@ -486,6 +729,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let microphoneStatusLabel = NSTextField(labelWithString: "")
     private let speechStatusLabel = NSTextField(labelWithString: "")
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
+    private let inputMonitoringStatusLabel = NSTextField(labelWithString: "")
     private let permissionsHintLabel = NSTextField(labelWithString: "")
     private let aboutVersionLabel = NSTextField(labelWithString: "")
     private let aboutBuildLabel = NSTextField(labelWithString: "")
@@ -503,9 +747,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let asrAPIKeyField = NSSecureTextField(string: "")
     private let asrModelField = NSTextField(string: "")
     private let asrPromptField = NSTextField(string: "")
-    private let llmEnabledCheckbox = NSButton(checkboxWithTitle: "Enable LLM refinement", target: nil, action: nil)
-    private let asrStatusLabel = NSTextField(labelWithString: "")
-    private let llmStatusLabel = NSTextField(labelWithString: "")
+    private let postProcessingModePopup = ThemedPopUpButton()
+    private let translationProviderPopup = ThemedPopUpButton()
+    private let targetLanguagePopup = ThemedPopUpButton()
+    private let asrStatusView = ConnectionFeedbackView()
+    private let llmStatusView = ConnectionFeedbackView()
 
     private let asrTestButton = NSButton(title: "Test Connection", target: nil, action: nil)
     private let asrSaveButton = NSButton(title: "Save", target: nil, action: nil)
@@ -529,6 +775,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.title = "VoicePi Settings"
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 780, height: 520)
+        window.titlebarAppearsTransparent = true
         if #available(macOS 11.0, *) {
             window.toolbarStyle = .preference
         }
@@ -578,7 +825,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let titleLabel = NSTextField(labelWithString: "VoicePi Settings")
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
 
-        let subtitleLabel = NSTextField(labelWithString: "A cleaner control center for permissions, dictation, and LLM refinement.")
+        let subtitleLabel = NSTextField(labelWithString: "A cleaner control center for permissions, dictation, translation, and LLM processing.")
         subtitleLabel.font = .systemFont(ofSize: 12.5)
         subtitleLabel.textColor = .secondaryLabelColor
 
@@ -678,7 +925,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         shortcutHintLabel.alignment = .left
         shortcutHintLabel.lineBreakMode = .byWordWrapping
         shortcutHintLabel.maximumNumberOfLines = 0
-        shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use."
+        shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use. Input Monitoring listens for it, and Accessibility handles suppression and paste injection."
 
         configureAppearanceControl()
 
@@ -693,15 +940,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "Recognition Language", control: homeLanguageLabel),
             makePreferenceRow(title: "Permissions", control: homePermissionSummaryLabel),
             makePreferenceRow(title: "ASR", control: homeASRLabel),
-            makePreferenceRow(title: "LLM Refinement", control: homeLLMLabel)
+            makePreferenceRow(title: "Text Processing", control: homeLLMLabel)
         ])
 
         let leftStack = NSStackView(views: [
             makeFeatureHeader(
                 icon: "waveform.and.mic",
                 eyebrow: "General",
-                title: "A tighter control center for dictation, permissions, and refinement.",
-                description: "VoicePi stays in the menu bar, records with one shortcut, and pastes into the focused field after transcription."
+                title: "A tighter control center for dictation, translation, and post-processing.",
+                description: "VoicePi stays in the menu bar, listens for one global shortcut, then pastes the final text into the focused field after transcription."
             ),
             overviewSection,
             homeSummaryLabel
@@ -714,12 +961,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makeFeatureCard(
                 icon: "keyboard",
                 title: "Trigger",
-                description: "Start once, stop once, then inject the transcript into the active app."
+                description: "Input Monitoring listens for the shortcut. Accessibility suppresses the shortcut and injects the final paste."
             ),
             makeFeatureCard(
                 icon: "sparkles.rectangle.stack",
                 title: "Flow",
-                description: "Keep ASR local with Apple Speech or switch to a remote large-model backend when accuracy matters more."
+                description: "Keep ASR local with Apple Speech or switch to a remote backend, then optionally refine or translate the final transcript."
             ),
             makeActionCard(
                 title: "Made With Love By pi-dal",
@@ -756,7 +1003,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         permissionsHintLabel.alignment = .left
         permissionsHintLabel.lineBreakMode = .byWordWrapping
         permissionsHintLabel.maximumNumberOfLines = 0
-        permissionsHintLabel.stringValue = "Refresh after changing a permission in System Settings."
+        permissionsHintLabel.stringValue = PermissionsCopy.permissionsHint
 
         microphoneStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         microphoneStatusLabel.alignment = .center
@@ -766,6 +1013,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         accessibilityStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         accessibilityStatusLabel.alignment = .center
+
+        inputMonitoringStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        inputMonitoringStatusLabel.alignment = .center
 
         let permissionGrid = makeTwoColumnGrid([
             makePermissionCard(
@@ -787,27 +1037,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePermissionCard(
                 icon: "figure.wave",
                 title: "Accessibility",
-                description: "Required for global shortcut monitoring and safe paste injection.",
+                description: PermissionsCopy.accessibilityDescription,
                 statusLabel: accessibilityStatusLabel,
                 primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openAccessibilitySettingsFromSettings)),
                 secondaryButtons: []
             ),
             makePermissionCard(
                 icon: "slider.horizontal.3",
-                title: "Other",
-                description: "Input Monitoring is optional today, but useful if VoicePi later expands keyboard-event handling.",
-                statusLabel: nil,
-                primaryButton: makePrimaryActionButton(title: "Input Monitoring", action: #selector(openInputMonitoringSettings)),
+                title: "Input Monitoring",
+                description: PermissionsCopy.inputMonitoringDescription,
+                statusLabel: inputMonitoringStatusLabel,
+                primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openInputMonitoringSettings)),
                 secondaryButtons: []
             )
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Permissions", subtitle: "Manage the permissions VoicePi needs for recording, recognition, and paste injection."))
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Permissions", subtitle: PermissionsCopy.permissionsSectionSubtitle))
         contentStack.addArrangedSubview(permissionsHintLabel)
         contentStack.addArrangedSubview(permissionGrid)
         contentStack.addArrangedSubview(makeActionCard(
             title: "Permission Strategy",
-            description: "VoicePi only needs a small set of macOS permissions. Grant microphone, speech recognition, and accessibility first. If a status changes in System Settings, come back here and refresh to confirm everything is ready.",
+            description: PermissionsCopy.strategyDescription,
             actions: [
                 makePrimaryActionButton(title: "Refresh", action: #selector(refreshPermissions))
             ]
@@ -836,12 +1086,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrModelField.placeholderString = "gpt-4o-mini-transcribe"
         asrPromptField.placeholderString = "Optional hint for terminology or context"
 
-        asrStatusLabel.textColor = .secondaryLabelColor
-        asrStatusLabel.font = .systemFont(ofSize: 12.5)
-        asrStatusLabel.alignment = .left
-        asrStatusLabel.lineBreakMode = .byWordWrapping
-        asrStatusLabel.maximumNumberOfLines = 0
-
         asrTestButton.target = self
         asrTestButton.action = #selector(testRemoteASRConfiguration)
 
@@ -866,7 +1110,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentStack.addArrangedSubview(makeBodyLabel("Use the remote backend when you want stronger large-model transcription quality. VoicePi will record locally, upload the captured audio after release, then inject the returned transcript."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
-        contentStack.addArrangedSubview(asrStatusLabel)
+        contentStack.addArrangedSubview(asrStatusView)
 
         asrView.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -888,15 +1132,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         baseURLField.placeholderString = "https://api.example.com/v1"
         apiKeyField.placeholderString = "sk-..."
         modelField.placeholderString = "gpt-4o-mini"
-
-        llmEnabledCheckbox.target = self
-        llmEnabledCheckbox.action = #selector(toggleLLMCheckbox(_:))
-
-        llmStatusLabel.textColor = .secondaryLabelColor
-        llmStatusLabel.font = .systemFont(ofSize: 12.5)
-        llmStatusLabel.alignment = .left
-        llmStatusLabel.lineBreakMode = .byWordWrapping
-        llmStatusLabel.maximumNumberOfLines = 0
+        configurePostProcessingPopups()
 
         testButton.target = self
         testButton.action = #selector(testConfiguration)
@@ -906,7 +1142,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         saveButton.keyEquivalent = "\r"
 
         let configurationSection = makeGroupedSection(rows: [
-            makePreferenceRow(title: "Enabled", control: llmEnabledCheckbox),
+            makePreferenceRow(title: "Mode", control: postProcessingModePopup),
+            makePreferenceRow(title: "Translate Provider", control: translationProviderPopup),
+            makePreferenceRow(title: "Target Language", control: targetLanguagePopup),
             makePreferenceRow(title: "API Base URL", control: baseURLField),
             makePreferenceRow(title: "API Key", control: apiKeyField),
             makePreferenceRow(title: "Model", control: modelField)
@@ -917,11 +1155,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePrimaryActionButton(title: "Save", action: #selector(saveConfiguration))
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "LLM", subtitle: "Optional conservative cleanup using an OpenAI-compatible endpoint."))
-        contentStack.addArrangedSubview(makeBodyLabel("Only use this to correct obvious ASR mistakes. Text that already looks correct should remain unchanged."))
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, conservative LLM refinement, or explicit translation."))
+        contentStack.addArrangedSubview(makeBodyLabel("Refinement always uses the LLM provider. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
-        contentStack.addArrangedSubview(llmStatusLabel)
+        contentStack.addArrangedSubview(llmStatusView)
 
         llmView.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -930,6 +1168,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             contentStack.topAnchor.constraint(equalTo: llmView.topAnchor),
             contentStack.bottomAnchor.constraint(lessThanOrEqualTo: llmView.bottomAnchor),
 
+            postProcessingModePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
+            translationProviderPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
+            targetLanguagePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
             baseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             apiKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
@@ -985,7 +1226,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let overviewCard = makeAboutOverviewCard(
             title: "VoicePi",
-            description: "VoicePi is a lightweight macOS dictation utility that lives in the menu bar, captures speech with a shortcut, optionally refines transcripts with an OpenAI-compatible LLM, and pastes the final text into the active app."
+            description: "VoicePi is a lightweight macOS dictation utility that lives in the menu bar, captures speech with a shortcut, optionally refines or translates transcripts, and pastes the final text into the active app."
         )
 
         let capabilitiesCard = makeFeatureCard(
@@ -1021,7 +1262,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         baseURLField.stringValue = model.llmConfiguration.baseURL
         apiKeyField.stringValue = model.llmConfiguration.apiKey
         modelField.stringValue = model.llmConfiguration.model
-        llmEnabledCheckbox.state = model.llmEnabled ? .on : .off
+        selectPopupItem(in: postProcessingModePopup, matching: model.postProcessingMode.rawValue)
+        selectPopupItem(
+            in: translationProviderPopup,
+            matching: model.effectiveTranslationProvider(
+                appleTranslateSupported: appleTranslateSupported
+            ).rawValue
+        )
+        selectPopupItem(in: targetLanguagePopup, matching: model.targetLanguage.rawValue)
 
         if !shortcutRecorderField.isRecordingShortcut {
             shortcutRecorderField.shortcut = model.activationShortcut
@@ -1061,11 +1309,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrTestButton.isEnabled = isRemoteBackend
 
         if !isRemoteBackend {
-            asrStatusLabel.stringValue = "Apple Speech is active. VoicePi will use the built-in streaming recognizer."
+            setASRFeedback(.neutral("Apple Speech is active. VoicePi will use the built-in streaming recognizer."))
         } else if configuration.isConfigured {
-            asrStatusLabel.stringValue = "Remote large-model ASR is selected and configured."
+            setASRFeedback(.neutral("Remote large-model ASR is selected and configured."))
         } else {
-            asrStatusLabel.stringValue = "Remote large-model ASR is selected, but API Base URL, API Key, and Model are still required."
+            setASRFeedback(.neutral("Remote large-model ASR is selected, but API Base URL, API Key, and Model are still required."))
         }
     }
 
@@ -1073,19 +1321,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         applyPermissionStatus(model.microphoneAuthorization, to: microphoneStatusLabel)
         applyPermissionStatus(model.speechAuthorization, to: speechStatusLabel)
         applyPermissionStatus(model.accessibilityAuthorization, to: accessibilityStatusLabel)
+        applyPermissionStatus(model.inputMonitoringAuthorization, to: inputMonitoringStatusLabel)
     }
 
     private func refreshLLMSection() {
+        let mode = currentPostProcessingMode()
+        let provider = currentTranslationProvider()
+        let targetLanguage = currentTargetLanguage()
         let configuration = currentConfigurationFromFields()
-        let enabled = llmEnabledCheckbox.state == .on
+        let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
 
-        if enabled && configuration.isConfigured {
-            llmStatusLabel.stringValue = "LLM refinement is enabled and configured."
-        } else if enabled {
-            llmStatusLabel.stringValue = "LLM refinement is enabled, but API Base URL, API Key, and Model are still required."
-        } else {
-            llmStatusLabel.stringValue = "LLM refinement is disabled. Enable it if you want conservative transcript cleanup before paste."
-        }
+        translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
+        testButton.isEnabled = usesLLM
+
+        setLLMFeedback(.neutral(
+            LLMSectionFeedback.message(
+                mode: mode,
+                provider: provider,
+                configuration: configuration,
+                selectedLanguage: model.selectedLanguage,
+                targetLanguage: targetLanguage,
+                appleTranslateSupported: appleTranslateSupported
+            )
+        ))
     }
 
     private func currentConfigurationFromFields() -> LLMConfiguration {
@@ -1094,6 +1352,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             apiKey: apiKeyField.stringValue,
             model: modelField.stringValue
         )
+    }
+
+    private func currentPostProcessingMode() -> PostProcessingMode {
+        let index = max(0, postProcessingModePopup.indexOfSelectedItem)
+        return PostProcessingMode.allCases[index]
+    }
+
+    private func currentTranslationProvider() -> TranslationProvider {
+        let providers = availableTranslationProviders()
+        let index = max(0, translationProviderPopup.indexOfSelectedItem)
+        return providers[min(index, providers.count - 1)]
+    }
+
+    private func currentTargetLanguage() -> SupportedLanguage {
+        let index = max(0, targetLanguagePopup.indexOfSelectedItem)
+        return SupportedLanguage.allCases[index]
     }
 
     private func currentSelectedASRBackend() -> ASRBackend {
@@ -1256,14 +1530,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await delegate?.settingsWindowControllerDidRequestRefreshPermissions(self)
-            self.permissionsHintLabel.stringValue = "Manage permission changes in System Settings, then refresh here."
+            self.permissionsHintLabel.stringValue = PermissionsCopy.permissionsHint
             self.reloadFromModel()
         }
     }
 
     @objc
-    private func toggleLLMCheckbox(_ sender: NSButton) {
-        model.llmEnabled = sender.state == .on
+    private func postProcessingModeChanged(_ sender: NSPopUpButton) {
+        refreshLLMSection()
+    }
+
+    @objc
+    private func translationProviderChanged(_ sender: NSPopUpButton) {
+        refreshLLMSection()
+    }
+
+    @objc
+    private func targetLanguageChanged(_ sender: NSPopUpButton) {
         refreshLLMSection()
     }
 
@@ -1280,7 +1563,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             prompt: configuration.prompt
         )
 
-        asrStatusLabel.stringValue = "Saved."
+        setASRFeedback(.neutral("Saved."))
         delegate?.settingsWindowController(self, didSelectASRBackend: backend)
         delegate?.settingsWindowController(self, didSaveRemoteASRConfiguration: configuration)
         refreshHomeSection()
@@ -1292,31 +1575,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let configuration = currentRemoteASRConfigurationFromFields()
 
         guard currentSelectedASRBackend() == .remoteOpenAICompatible else {
-            asrStatusLabel.stringValue = "Switch to the remote backend before testing the remote ASR connection."
+            setASRFeedback(.error("Switch to the remote backend before testing the remote ASR connection."))
             return
         }
 
         guard configuration.isConfigured else {
-            asrStatusLabel.stringValue = "Please complete API Base URL, API Key, and Model before testing."
+            setASRFeedback(.error("Please complete API Base URL, API Key, and Model before testing."))
             return
         }
 
         setASRButtonsEnabled(false)
-        asrStatusLabel.stringValue = "Testing…"
+        setASRFeedback(.loading())
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             let result = await delegate?.settingsWindowController(self, didRequestRemoteASRTest: configuration)
 
-            switch result {
-            case .success(let response):
-                let preview = response.trimmingCharacters(in: .whitespacesAndNewlines)
-                asrStatusLabel.stringValue = preview.isEmpty ? "Remote ASR test failed: empty response." : preview
-            case .failure(let error):
-                asrStatusLabel.stringValue = "Test failed: \(error.localizedDescription)"
-            case .none:
-                asrStatusLabel.stringValue = "Test unavailable."
-            }
+            self.setASRFeedback(ConnectionTestFeedback.remoteASRTestResult(result), animated: true)
 
             self.setASRButtonsEnabled(true)
         }
@@ -1325,48 +1600,55 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func saveConfiguration() {
         let configuration = currentConfigurationFromFields()
-        model.llmEnabled = llmEnabledCheckbox.state == .on
+        model.setPostProcessingMode(currentPostProcessingMode())
+        model.setTranslationProvider(currentTranslationProvider())
+        model.setTargetLanguage(currentTargetLanguage())
         model.saveLLMConfiguration(
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
             model: configuration.model
         )
-        llmStatusLabel.stringValue = "Saved."
+        setLLMFeedback(.neutral("Saved."))
         delegate?.settingsWindowController(self, didSave: configuration)
+        refreshHomeSection()
+        refreshLLMSection()
     }
 
     @objc
     private func testConfiguration() {
         let configuration = currentConfigurationFromFields()
+        let mode = currentPostProcessingMode()
+        let provider = currentTranslationProvider()
+        let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
+
+        guard usesLLM else {
+            setLLMFeedback(.error("LLM testing is only available when refinement or LLM translation is selected."))
+            return
+        }
 
         guard configuration.isConfigured else {
-            llmStatusLabel.stringValue = "Please complete API Base URL, API Key, and Model before testing."
+            setLLMFeedback(.error("Please complete API Base URL, API Key, and Model before testing."))
             return
         }
 
         setLLMButtonsEnabled(false)
-        llmStatusLabel.stringValue = "Testing…"
+        setLLMFeedback(.loading())
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             let result = await delegate?.settingsWindowController(self, didRequestTest: configuration)
 
-            switch result {
-            case .success(let response):
-                let preview = response.trimmingCharacters(in: .whitespacesAndNewlines)
-                llmStatusLabel.stringValue = preview.isEmpty ? "Test failed: empty response." : "Test succeeded."
-            case .failure(let error):
-                llmStatusLabel.stringValue = "Test failed: \(error.localizedDescription)"
-            case .none:
-                llmStatusLabel.stringValue = "Test unavailable."
-            }
+            self.setLLMFeedback(ConnectionTestFeedback.llmTestResult(result), animated: true)
 
             setLLMButtonsEnabled(true)
         }
     }
 
     private func setLLMButtonsEnabled(_ enabled: Bool) {
-        testButton.isEnabled = enabled
+        let mode = currentPostProcessingMode()
+        let provider = currentTranslationProvider()
+        let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
+        testButton.isEnabled = enabled && usesLLM
         saveButton.isEnabled = enabled
     }
 
@@ -1382,16 +1664,72 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func applyThemeAppearance() {
         window?.appearance = model.interfaceTheme.appearance
+        window?.backgroundColor = pageBackgroundColor
         window?.contentView?.layer?.backgroundColor = pageBackgroundColor.cgColor
         asrBackendPopup.syncTheme()
+        postProcessingModePopup.syncTheme()
+        translationProviderPopup.syncTheme()
+        targetLanguagePopup.syncTheme()
         syncAppearanceControlTheme()
         refreshNavigationAppearance()
+    }
+
+    private func configurePostProcessingPopups() {
+        postProcessingModePopup.removeAllItems()
+        postProcessingModePopup.addItems(withTitles: PostProcessingMode.allCases.map(\.title))
+        postProcessingModePopup.target = self
+        postProcessingModePopup.action = #selector(postProcessingModeChanged(_:))
+
+        translationProviderPopup.removeAllItems()
+        translationProviderPopup.addItems(withTitles: availableTranslationProviders().map(\.title))
+        translationProviderPopup.target = self
+        translationProviderPopup.action = #selector(translationProviderChanged(_:))
+
+        targetLanguagePopup.removeAllItems()
+        targetLanguagePopup.addItems(withTitles: SupportedLanguage.allCases.map(\.recognitionDisplayName))
+        targetLanguagePopup.target = self
+        targetLanguagePopup.action = #selector(targetLanguageChanged(_:))
+    }
+
+    private func selectPopupItem(in popup: NSPopUpButton, matching rawValue: String) {
+        if popup === postProcessingModePopup,
+           let index = PostProcessingMode.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
+            popup.selectItem(at: index)
+            return
+        }
+
+        if popup === translationProviderPopup,
+           let index = availableTranslationProviders().firstIndex(where: { $0.rawValue == rawValue }) {
+            popup.selectItem(at: index)
+            return
+        }
+
+        if popup === targetLanguagePopup,
+           let index = SupportedLanguage.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
+            popup.selectItem(at: index)
+        }
     }
 
     private func refreshNavigationAppearance() {
         for (candidate, button) in sectionButtons {
             (button as? StyledSettingsButton)?.applyAppearance(isSelected: candidate == currentSection)
         }
+    }
+
+    private var appleTranslateSupported: Bool {
+        AppleTranslateService.isSupported
+    }
+
+    private func availableTranslationProviders() -> [TranslationProvider] {
+        TranslationProvider.availableProviders(appleTranslateSupported: appleTranslateSupported)
+    }
+
+    private func setASRFeedback(_ presentation: ConnectionFeedbackPresentation, animated: Bool = false) {
+        asrStatusView.apply(presentation, animated: animated)
+    }
+
+    private func setLLMFeedback(_ presentation: ConnectionFeedbackPresentation, animated: Bool = false) {
+        llmStatusView.apply(presentation, animated: animated)
     }
 
     private func configureAppearanceControl() {
@@ -1943,7 +2281,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private var pageBackgroundColor: NSColor {
         interfaceColor(
-            light: NSColor(calibratedWhite: 0.965, alpha: 1),
+            light: NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 1),
             dark: NSColor(calibratedWhite: 0.16, alpha: 1)
         )
     }

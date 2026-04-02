@@ -46,32 +46,143 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
-    func refineReturnsOriginalTextWhenDisabled() async {
+    func postProcessingReturnsOriginalTextWhenDisabled() async {
         let refiner = RefinerStub(result: .success("refined"))
+        let translator = TranslatorStub(result: .success("translated"))
 
-        let text = await AppWorkflowSupport.refineIfNeeded(
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
             "original",
-            llmEnabled: false,
+            mode: .disabled,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
             configuration: .init(),
             refiner: refiner,
+            translator: translator,
             onPresentation: { _ in },
             onError: { _ in }
         )
 
         #expect(text == "original")
         #expect(refiner.calls == 0)
+        #expect(translator.calls == 0)
     }
 
     @Test
-    func refineReturnsOriginalTextWhenRefinerFails() async {
-        let refiner = RefinerStub(result: .failure(AppWorkflowTestError.sample))
-        var errors: [String] = []
+    func refinementIncorporatesTargetLanguageIntoLLMPath() async {
+        let refiner = RefinerStub(result: .success("日本語の出力"))
+        let translator = TranslatorStub(result: .success("translated"))
 
-        let text = await AppWorkflowSupport.refineIfNeeded(
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
             "original",
-            llmEnabled: true,
+            mode: .refinement,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .japanese,
             configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
             refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(text == "日本語の出力")
+        #expect(refiner.calls == 1)
+        #expect(refiner.lastTargetLanguage == .japanese)
+        #expect(translator.calls == 0)
+    }
+
+    @Test
+    func postProcessingPresentationCallbacksRunOnMainThread() async {
+        let refiner = RefinerStub(result: .success("translated"))
+        let translator = TranslatorStub(result: .success("unused"))
+        let callbackThreadRecorder = ThreadRecorder()
+
+        let text = await Task.detached {
+            await AppWorkflowSupport.postProcessIfNeeded(
+                "original",
+                mode: .translation,
+                translationProvider: .llm,
+                sourceLanguage: .english,
+                targetLanguage: .japanese,
+                configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+                refiner: refiner,
+                translator: translator,
+                onPresentation: { _ in
+                    callbackThreadRecorder.record(Thread.isMainThread)
+                },
+                onError: { _ in }
+            )
+        }.value
+
+        #expect(text == "translated")
+        #expect(callbackThreadRecorder.value == true)
+    }
+
+    @Test
+    func translateModeDefaultsToAppleTranslateWhenLLMProviderIsNotExplicitlySelected() async {
+        let refiner = RefinerStub(result: .success("llm"))
+        let translator = TranslatorStub(result: .success("translated"))
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .translation,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .japanese,
+            configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(text == "translated")
+        #expect(refiner.calls == 0)
+        #expect(translator.calls == 1)
+        #expect(translator.lastTargetLanguage == .japanese)
+    }
+
+    @Test
+    func translationReturnsOriginalTextWhenLLMProviderLacksConfiguration() async {
+        let refiner = RefinerStub(result: .success("llm"))
+        let translator = TranslatorStub(result: .success("apple"))
+        var errors: [String] = []
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .translation,
+            translationProvider: .llm,
+            sourceLanguage: .english,
+            targetLanguage: .japanese,
+            configuration: .init(),
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { errors.append($0) }
+        )
+
+        #expect(text == "original")
+        #expect(errors == ["LLM translation is selected, but LLM is not fully configured."])
+        #expect(refiner.calls == 0)
+        #expect(translator.calls == 0)
+    }
+
+    @Test
+    func refinementReturnsOriginalTextWhenRefinerFails() async {
+        let refiner = RefinerStub(result: .failure(AppWorkflowTestError.sample))
+        let translator = TranslatorStub(result: .success("translated"))
+        var errors: [String] = []
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .refinement,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+            refiner: refiner,
+            translator: translator,
             onPresentation: { _ in },
             onError: { errors.append($0) }
         )
@@ -79,6 +190,7 @@ struct AppWorkflowSupportTests {
         #expect(text == "original")
         #expect(errors == ["LLM refinement failed: sample"])
         #expect(refiner.calls == 1)
+        #expect(translator.calls == 0)
     }
 
     @Test
@@ -88,7 +200,7 @@ struct AppWorkflowSupportTests {
                 permissions: .init(accessibilityGranted: false, microphoneGranted: true, speechGranted: true),
                 backend: .appleSpeech,
                 remoteConfigurationReady: true
-            ) == "Accessibility permission is required for global key monitoring and paste injection."
+            ) == nil
         )
         #expect(
             AppWorkflowSupport.preparationFailureMessage(
@@ -143,6 +255,7 @@ private final class RemoteASRStub: RemoteASRServing, @unchecked Sendable {
 private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
     var result: Result<String, Error>
     private(set) var calls = 0
+    private(set) var lastTargetLanguage: SupportedLanguage?
 
     init(result: Result<String, Error>) {
         self.result = result
@@ -150,9 +263,50 @@ private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
 
     func refine(
         text: String,
-        configuration: LLMRefinerConfiguration
+        configuration: LLMRefinerConfiguration,
+        targetLanguage: SupportedLanguage?
     ) async throws -> String {
         calls += 1
+        lastTargetLanguage = targetLanguage
         return try result.get()
+    }
+}
+
+private final class TranslatorStub: TranscriptTranslating, @unchecked Sendable {
+    var result: Result<String, Error>
+    private(set) var calls = 0
+    private(set) var lastSourceLanguage: SupportedLanguage?
+    private(set) var lastTargetLanguage: SupportedLanguage?
+
+    init(result: Result<String, Error>) {
+        self.result = result
+    }
+
+    func translate(
+        text: String,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage
+    ) async throws -> String {
+        calls += 1
+        lastSourceLanguage = sourceLanguage
+        lastTargetLanguage = targetLanguage
+        return try result.get()
+    }
+}
+
+private final class ThreadRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Bool?
+
+    func record(_ value: Bool) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+
+    var value: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
     }
 }

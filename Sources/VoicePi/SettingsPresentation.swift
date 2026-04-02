@@ -37,6 +37,26 @@ struct AboutSectionPresentation: Equatable {
     let xDisplay: String
 }
 
+enum PermissionsCopy {
+    static let permissionsSectionSubtitle =
+        "Manage the macOS permissions VoicePi uses for shortcut listening, event suppression, recording, and paste injection."
+
+    static let permissionsHint =
+        "VoicePi asks for these at launch while macOS still treats them as undecided. After changing anything in System Settings, refresh here."
+
+    static let accessibilityDescription =
+        "Required for shortcut suppression and paste injection."
+
+    static let inputMonitoringDescription =
+        "Required for listening to the global shortcut. VoicePi asks for it at launch while macOS still treats it as undecided."
+
+    static let strategyDescription =
+        "VoicePi currently splits shortcut handling across two macOS privacy gates: Input Monitoring for listening, Accessibility for suppressing and injecting events. Microphone and Speech Recognition cover recording and local transcription."
+
+    static let shortcutHint =
+        "Current shortcut: %@. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
+}
+
 enum SettingsPresentation {
     static func selectedThemeIndex(for theme: InterfaceTheme) -> Int {
         InterfaceTheme.allCases.firstIndex(of: theme) ?? 0
@@ -55,6 +75,17 @@ enum SettingsPresentation {
 
     @MainActor
     static func homeSectionPresentation(model: AppModel) -> HomeSectionPresentation {
+        homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: AppleTranslateService.isSupported
+        )
+    }
+
+    @MainActor
+    static func homeSectionPresentation(
+        model: AppModel,
+        appleTranslateSupported: Bool
+    ) -> HomeSectionPresentation {
         let statusSummary: String
         let statusTone: SettingsPresentationStatusTone
 
@@ -66,13 +97,28 @@ enum SettingsPresentation {
             statusTone = .secondary
         }
 
+        let llmSummary: String
+        let effectiveTranslationProvider = model.effectiveTranslationProvider(
+            appleTranslateSupported: appleTranslateSupported
+        )
+        switch model.postProcessingMode {
+        case .disabled:
+            llmSummary = "Text processing: Disabled"
+        case .refinement:
+            let target = model.targetLanguage.recognitionDisplayName
+            let suffix = model.llmConfiguration.isConfigured ? "LLM configured" : "LLM not configured"
+            llmSummary = "Text processing: Refinement via LLM • Target \(target) • \(suffix)"
+        case .translation:
+            llmSummary = "Text processing: Translate via \(effectiveTranslationProvider.title) • Target \(model.targetLanguage.recognitionDisplayName)"
+        }
+
         return HomeSectionPresentation(
             shortcutSummary: "Current shortcut: \(model.activationShortcut.menuTitle)",
             languageSummary: "Recognition language: \(model.selectedLanguage.menuTitle)",
-            permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title)",
+            permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title), Input Monitoring \(permissionPresentation(for: model.inputMonitoringAuthorization).title)",
             asrSummary: "ASR backend: \(model.asrBackend.title) • \(model.remoteASRConfiguration.isConfigured ? "Remote configured" : "Remote not configured")",
-            llmSummary: "LLM refinement: \(model.llmEnabled ? "Enabled" : "Disabled") • \(model.llmConfiguration.isConfigured ? "Configured" : "Not configured")",
-            shortcutHint: "Current shortcut: \(model.activationShortcut.displayString). Click the field above and press a new combination to replace it.",
+            llmSummary: llmSummary,
+            shortcutHint: String(format: PermissionsCopy.shortcutHint, model.activationShortcut.displayString),
             statusSummary: statusSummary,
             statusTone: statusTone
         )

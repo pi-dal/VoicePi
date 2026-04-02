@@ -1,11 +1,17 @@
 import AppKit
 import AVFoundation
 import ApplicationServices
+import Combine
 import Foundation
 import Speech
 
 @MainActor
 final class AppController: NSObject {
+    struct HotkeyMonitorPlan: Equatable {
+        let primaryMonitorMode: ShortcutMonitorMode?
+        let statusMessage: String?
+    }
+
     enum PressAction: Equatable {
         case startRecording
         case stopRecording
@@ -18,19 +24,29 @@ final class AppController: NSObject {
     }
 
     private let model = AppModel()
-    private let shortcutMonitor = ShortcutMonitor()
+    private let shortcutListener = ShortcutMonitor(mode: .listenOnly)
+    private let shortcutCombinedMonitor = ShortcutMonitor(mode: .listenAndSuppress)
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let llmRefiner = LLMRefiner()
+    private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
     private let textInjector = TextInjector.shared
 
     private var statusBarController: StatusBarController?
+    private var cancellables: Set<AnyCancellable> = []
     private var isStartingRecording = false
     private var isProcessingRelease = false
     private var processingTask: Task<Void, Never>?
     private var latestTranscript = ""
     private var pendingErrorHideTask: Task<Void, Never>?
+    private var hasAttemptedInputMonitoringRequest = false
+
+    static let shortcutMonitoringFailureMessage =
+        "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
+
+    static let shortcutSuppressionWarningMessage =
+        "Shortcut listening is active, but Accessibility is still required to suppress the shortcut and inject pasted text."
 
     static func pressAction(
         isRecording: Bool,
@@ -60,29 +76,81 @@ final class AppController: NSObject {
         .ignore
     }
 
+    static func shouldPromptAccessibilityOnLaunch(inputMonitoringState: AuthorizationState) -> Bool {
+        inputMonitoringState == .granted
+    }
+
+    static func shouldOpenInputMonitoringSettingsOnLaunch(
+        requestGranted: Bool,
+        inputMonitoringState: AuthorizationState
+    ) -> Bool {
+        !requestGranted && inputMonitoringState != .granted
+    }
+
+    static func hotkeyMonitorPlan(
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        guard inputMonitoringState == .granted else {
+            return HotkeyMonitorPlan(
+                primaryMonitorMode: nil,
+                statusMessage: shortcutMonitoringFailureMessage
+            )
+        }
+
+        if accessibilityState == .granted {
+            return HotkeyMonitorPlan(
+                primaryMonitorMode: .listenAndSuppress,
+                statusMessage: nil
+            )
+        }
+
+        return HotkeyMonitorPlan(
+            primaryMonitorMode: .listenOnly,
+            statusMessage: shortcutSuppressionWarningMessage
+        )
+    }
+
     func start() {
+        floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
+        model.$interfaceTheme
+            .sink { [weak self] theme in
+                self?.floatingPanelController.applyInterfaceTheme(theme)
+            }
+            .store(in: &cancellables)
+
         speechRecorder.delegate = self
-        shortcutMonitor.delegate = self
-        shortcutMonitor.shortcut = model.activationShortcut
+        shortcutListener.delegate = self
+        shortcutCombinedMonitor.delegate = self
+        shortcutListener.shortcut = model.activationShortcut
+        shortcutCombinedMonitor.shortcut = model.activationShortcut
 
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
         statusBarController.start()
         self.statusBarController = statusBarController
 
-        Task {
-            await refreshPermissionStates(
-                promptAccessibility: true,
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let requestGranted = self.requestInputMonitoringPermissionIfNeeded()
+            let inputMonitoringState = self.currentInputMonitoringAuthorizationState()
+            if Self.shouldOpenInputMonitoringSettingsOnLaunch(
+                requestGranted: requestGranted,
+                inputMonitoringState: inputMonitoringState
+            ) {
+                self.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+            }
+            await self.refreshPermissionStates(
+                promptAccessibility: Self.shouldPromptAccessibilityOnLaunch(inputMonitoringState: inputMonitoringState),
                 requestMediaPermissions: true
             )
         }
-
-        ensureHotkeyMonitorRunning()
     }
 
     func stop() {
         pendingErrorHideTask?.cancel()
-        shortcutMonitor.stop()
+        shortcutListener.stop()
+        shortcutCombinedMonitor.stop()
 
         if speechRecorder.isRecording {
             Task { @MainActor [weak self] in
@@ -241,11 +309,17 @@ final class AppController: NSObject {
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
-        await AppWorkflowSupport.refineIfNeeded(
+        await AppWorkflowSupport.postProcessIfNeeded(
             text,
-            llmEnabled: model.llmEnabled,
+            mode: model.postProcessingMode,
+            translationProvider: model.effectiveTranslationProvider(
+                appleTranslateSupported: AppleTranslateService.isSupported
+            ),
+            sourceLanguage: model.selectedLanguage,
+            targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
             refiner: llmRefiner,
+            translator: appleTranslateService,
             onPresentation: { [weak self] presentation in
                 guard let self else { return }
                 switch presentation {
@@ -271,7 +345,8 @@ final class AppController: NSObject {
         updateAuthorizationStates(
             microphoneState: currentMicrophoneAuthorizationState(),
             speechState: currentSpeechAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: false),
+            inputMonitoringState: currentInputMonitoringAuthorizationState()
         )
 
         if let message = AppWorkflowSupport.preparationFailureMessage(
@@ -292,17 +367,23 @@ final class AppController: NSObject {
 
     private func refreshPermissionStates(
         promptAccessibility: Bool,
-        requestMediaPermissions: Bool = false
+        requestMediaPermissions: Bool = false,
+        requestInputMonitoringPermission: Bool = false
     ) async {
         if requestMediaPermissions {
             _ = await requestMicrophonePermissionIfNeeded()
             _ = await requestSpeechPermissionIfNeededIfNeededForBackend()
         }
 
+        if requestInputMonitoringPermission {
+            _ = requestInputMonitoringPermissionIfNeeded()
+        }
+
         updateAuthorizationStates(
             microphoneState: currentMicrophoneAuthorizationState(),
             speechState: currentSpeechAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: promptAccessibility)
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: promptAccessibility),
+            inputMonitoringState: currentInputMonitoringAuthorizationState()
         )
 
         statusBarController?.refreshAll()
@@ -310,20 +391,42 @@ final class AppController: NSObject {
     }
 
     private func ensureHotkeyMonitorRunning() {
-        let accessibilityGranted = currentAccessibilityAuthorizationState(prompt: false) == .granted
+        let plan = Self.hotkeyMonitorPlan(
+            inputMonitoringState: currentInputMonitoringAuthorizationState(),
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+        )
 
-        guard accessibilityGranted else {
-            shortcutMonitor.stop()
+        guard let primaryMonitorMode = plan.primaryMonitorMode else {
+            shortcutListener.stop()
+            shortcutCombinedMonitor.stop()
+            if let statusMessage = plan.statusMessage, statusBarController != nil {
+                statusBarController?.setTransientStatus(statusMessage)
+            }
             return
         }
 
-        guard shortcutMonitor.start() else {
-            statusBarController?.setTransientStatus("Global shortcut monitoring is unavailable. Re-check Accessibility and Input Monitoring.")
+        switch primaryMonitorMode {
+        case .listenOnly:
+            shortcutCombinedMonitor.stop()
+            guard shortcutListener.start() else {
+                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
+                return
+            }
+        case .listenAndSuppress:
+            shortcutListener.stop()
+            guard shortcutCombinedMonitor.start() else {
+                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
+                return
+            }
+        case .suppressOnly:
+            shortcutListener.stop()
+            shortcutCombinedMonitor.stop()
+            statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
             return
         }
 
         if statusBarController != nil, model.errorState == nil {
-            statusBarController?.setTransientStatus(nil)
+            statusBarController?.setTransientStatus(plan.statusMessage)
         }
     }
 
@@ -359,6 +462,14 @@ final class AppController: NSObject {
 
     private func currentAccessibilityAuthorizationState(prompt: Bool) -> AuthorizationState {
         requestAccessibilityPermission(prompt: prompt) ? .granted : .denied
+    }
+
+    private func currentInputMonitoringAuthorizationState() -> AuthorizationState {
+        let state = InputMonitoringAccess.authorizationState()
+        if state == .unknown, hasAttemptedInputMonitoringRequest {
+            return .denied
+        }
+        return state
     }
 
     private func requestMicrophonePermissionIfNeeded() async -> Bool {
@@ -400,6 +511,11 @@ final class AppController: NSObject {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    private func requestInputMonitoringPermissionIfNeeded() -> Bool {
+        hasAttemptedInputMonitoringRequest = true
+        return InputMonitoringAccess.requestIfNeeded()
+    }
+
     private func requestMicrophonePermissionFromSettings() async {
         _ = await requestMicrophonePermissionIfNeeded()
         await refreshPermissionStates(promptAccessibility: false)
@@ -413,11 +529,13 @@ final class AppController: NSObject {
     private func updateAuthorizationStates(
         microphoneState: AuthorizationState,
         speechState: AuthorizationState,
-        accessibilityState: AuthorizationState
+        accessibilityState: AuthorizationState,
+        inputMonitoringState: AuthorizationState
     ) {
         model.setMicrophoneAuthorization(microphoneState)
         model.setSpeechAuthorization(speechState)
         model.setAccessibilityAuthorization(accessibilityState)
+        model.setInputMonitoringAuthorization(inputMonitoringState)
     }
 
     private func presentTransientError(_ message: String) {
@@ -463,12 +581,16 @@ final class AppController: NSObject {
 
 extension AppController: ShortcutMonitorDelegate {
     nonisolated func shortcutMonitorDidPress(_ monitor: ShortcutMonitor) {
+        guard monitor.mode != .suppressOnly else { return }
+
         Task { @MainActor [weak self] in
             self?.beginRecording()
         }
     }
 
     nonisolated func shortcutMonitorDidRelease(_ monitor: ShortcutMonitor) {
+        guard monitor.mode != .suppressOnly else { return }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
 
@@ -526,14 +648,10 @@ extension AppController: StatusBarControllerDelegate {
         handleLanguageChange(language)
     }
 
-    func statusBarController(_ controller: StatusBarController, didUpdateLLMEnabled enabled: Bool) {
-        model.llmEnabled = enabled
-        controller.refreshAll()
-    }
-
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut) {
         model.setActivationShortcut(shortcut)
-        shortcutMonitor.shortcut = shortcut
+        shortcutListener.shortcut = shortcut
+        shortcutCombinedMonitor.shortcut = shortcut
         controller.refreshAll()
     }
 
@@ -588,6 +706,19 @@ extension AppController: StatusBarControllerDelegate {
     }
 
     func statusBarControllerDidRequestOpenInputMonitoringSettings(_ controller: StatusBarController) {
+        if currentInputMonitoringAuthorizationState() == .unknown {
+            _ = requestInputMonitoringPermissionIfNeeded()
+
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await self?.refreshPermissionStates(promptAccessibility: false)
+            }
+
+            if currentInputMonitoringAuthorizationState() == .granted {
+                return
+            }
+        }
+
         openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
     }
 
