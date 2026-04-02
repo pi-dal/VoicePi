@@ -37,6 +37,14 @@ struct AboutSectionPresentation: Equatable {
     let xDisplay: String
 }
 
+enum PermissionsCopy {
+    static let inputMonitoringDescription =
+        "Input Monitoring is required for the current global shortcut implementation on some macOS setups. If the shortcut does not trigger, grant it here and refresh."
+
+    static let strategyDescription =
+        "VoicePi needs microphone, speech recognition, and accessibility. For the current global shortcut implementation, Input Monitoring may also be required on your macOS setup. If a status changes in System Settings, come back here and refresh to confirm everything is ready."
+}
+
 enum SettingsPresentation {
     static func selectedThemeIndex(for theme: InterfaceTheme) -> Int {
         InterfaceTheme.allCases.firstIndex(of: theme) ?? 0

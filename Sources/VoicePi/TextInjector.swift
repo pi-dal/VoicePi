@@ -53,52 +53,34 @@ final class TextInjector {
         let trimmed = text.trimmingCharacters(in: .newlines)
         guard !trimmed.isEmpty else { return }
 
-        let originalPasteboard = try await Self.performOnMainThread {
-            capturePasteboardItems()
-        }
-        let originalInputSource = try await Self.performOnMainThread {
-            currentInputSourceSnapshot()
-        }
+        let originalPasteboard = capturePasteboardItems()
+        let originalInputSource = currentInputSourceSnapshot()
 
         var switchedToASCII = false
 
         do {
             if let originalInputSource, originalInputSource.isCJK {
-                switchedToASCII = try await Self.performOnMainThread {
-                    try switchToASCIIInputSource()
-                }
+                switchedToASCII = try switchToASCIIInputSource()
                 try await Task.sleep(for: .milliseconds(90))
             }
 
-            try await Self.performOnMainThread {
-                try setClipboard(text: text)
-            }
+            try setClipboard(text: text)
             try await Task.sleep(for: .milliseconds(40))
 
-            try await Self.performOnMainThread {
-                try simulateCommandV()
-            }
+            try simulateCommandV()
             try await Task.sleep(for: .milliseconds(220))
 
-            try await Self.performOnMainThread {
-                restorePasteboardItems(originalPasteboard)
-            }
+            restorePasteboardItems(originalPasteboard)
 
             if switchedToASCII {
                 try await Task.sleep(for: .milliseconds(120))
-                try await Self.performOnMainThread {
-                    try restoreInputSource(originalInputSource)
-                }
+                try restoreInputSource(originalInputSource)
             }
         } catch {
-            try await Self.performOnMainThread {
-                restorePasteboardItems(originalPasteboard)
-            }
+            restorePasteboardItems(originalPasteboard)
 
             if switchedToASCII {
-                _ = try? await Self.performOnMainThread {
-                    try restoreInputSource(originalInputSource)
-                }
+                _ = try? restoreInputSource(originalInputSource)
             }
 
             throw error

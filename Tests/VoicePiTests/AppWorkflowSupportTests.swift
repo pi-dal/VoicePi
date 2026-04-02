@@ -93,6 +93,33 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
+    func postProcessingPresentationCallbacksRunOnMainThread() async {
+        let refiner = RefinerStub(result: .success("translated"))
+        let translator = TranslatorStub(result: .success("unused"))
+        let callbackThreadRecorder = ThreadRecorder()
+
+        let text = await Task.detached {
+            await AppWorkflowSupport.postProcessIfNeeded(
+                "original",
+                mode: .translation,
+                translationProvider: .llm,
+                sourceLanguage: .english,
+                targetLanguage: .japanese,
+                configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+                refiner: refiner,
+                translator: translator,
+                onPresentation: { _ in
+                    callbackThreadRecorder.record(Thread.isMainThread)
+                },
+                onError: { _ in }
+            )
+        }.value
+
+        #expect(text == "translated")
+        #expect(callbackThreadRecorder.value == true)
+    }
+
+    @Test
     func translateModeDefaultsToAppleTranslateWhenLLMProviderIsNotExplicitlySelected() async {
         let refiner = RefinerStub(result: .success("llm"))
         let translator = TranslatorStub(result: .success("translated"))
@@ -117,9 +144,10 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
-    func translationFallsBackToAppleTranslateWhenLLMProviderLacksConfiguration() async {
+    func translationReturnsOriginalTextWhenLLMProviderLacksConfiguration() async {
         let refiner = RefinerStub(result: .success("llm"))
         let translator = TranslatorStub(result: .success("apple"))
+        var errors: [String] = []
 
         let text = await AppWorkflowSupport.postProcessIfNeeded(
             "original",
@@ -131,12 +159,13 @@ struct AppWorkflowSupportTests {
             refiner: refiner,
             translator: translator,
             onPresentation: { _ in },
-            onError: { _ in }
+            onError: { errors.append($0) }
         )
 
-        #expect(text == "apple")
+        #expect(text == "original")
+        #expect(errors == ["LLM translation is selected, but LLM is not fully configured."])
         #expect(refiner.calls == 0)
-        #expect(translator.calls == 1)
+        #expect(translator.calls == 0)
     }
 
     @Test
@@ -262,5 +291,22 @@ private final class TranslatorStub: TranscriptTranslating, @unchecked Sendable {
         lastSourceLanguage = sourceLanguage
         lastTargetLanguage = targetLanguage
         return try result.get()
+    }
+}
+
+private final class ThreadRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Bool?
+
+    func record(_ value: Bool) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+
+    var value: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
     }
 }

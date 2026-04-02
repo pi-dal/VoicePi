@@ -33,6 +33,9 @@ final class AppController: NSObject {
     private var latestTranscript = ""
     private var pendingErrorHideTask: Task<Void, Never>?
 
+    static let shortcutMonitoringFailureMessage =
+        "Global shortcut monitoring is unavailable. Accessibility is required, and on current macOS Input Monitoring may also be required."
+
     static func pressAction(
         isRecording: Bool,
         isStartingRecording: Bool,
@@ -325,7 +328,7 @@ final class AppController: NSObject {
         }
 
         guard shortcutMonitor.start() else {
-            statusBarController?.setTransientStatus("Global shortcut monitoring is unavailable. Re-check Accessibility and Input Monitoring.")
+            statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
             return
         }
 

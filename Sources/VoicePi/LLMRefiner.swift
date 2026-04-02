@@ -173,7 +173,7 @@ final class LLMRefiner {
         \(conservativeSystemPrompt)
 
         Additional rule:
-        10. Translate the final output into \(targetLanguage.recognitionDisplayName). Keep the meaning exact and stay just as conservative about corrections before translating.
+        10. Notwithstanding Rule 2, translate the final output into \(targetLanguage.recognitionDisplayName). Keep the meaning exact and stay just as conservative about corrections before translating.
         """
     }
 

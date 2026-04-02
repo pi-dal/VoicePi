@@ -96,7 +96,8 @@ struct LLMRefinerTests {
         let request = try #require(capturedRequests.snapshot.first)
         let body = try #require(requestBody(from: request))
         let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
-        #expect(payload.messages[0].content.contains("Translate the final output into Japanese.") == true)
+        #expect(payload.messages[0].content.contains("Notwithstanding Rule 2") == true)
+        #expect(payload.messages[0].content.contains("translate the final output into Japanese") == true)
     }
 
     @Test

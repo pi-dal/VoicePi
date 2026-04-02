@@ -55,16 +55,22 @@ enum AppWorkflowSupport {
 
         case .remoteOpenAICompatible:
             guard configuration.isConfigured else {
-                onError("Remote ASR is selected, but API Base URL, API Key, and Model are not fully configured.")
+                await MainActor.run {
+                    onError("Remote ASR is selected, but API Base URL, API Key, and Model are not fully configured.")
+                }
                 return localFallback
             }
 
             guard let audioURL else {
-                onError("Remote ASR could not find the recorded audio file.")
+                await MainActor.run {
+                    onError("Remote ASR could not find the recorded audio file.")
+                }
                 return localFallback
             }
 
-            onPresentation(.transcribing(overlayTranscript: "Transcribing...", statusText: "Remote ASR…"))
+            await MainActor.run {
+                onPresentation(.transcribing(overlayTranscript: "Transcribing...", statusText: "Remote ASR…"))
+            }
 
             do {
                 let transcript = try await remoteASR.transcribe(
@@ -75,7 +81,9 @@ enum AppWorkflowSupport {
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? localFallback : trimmed
             } catch {
-                onError("Remote ASR failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    onError("Remote ASR failed: \(error.localizedDescription)")
+                }
                 return localFallback
             }
         }
@@ -93,16 +101,6 @@ enum AppWorkflowSupport {
         onPresentation: (AppWorkflowPresentation) -> Void,
         onError: (String) -> Void
     ) async -> String {
-        guard mode != .disabled else {
-            return text
-        }
-
-        let refinerConfiguration = LLMRefinerConfiguration(
-            baseURL: configuration.baseURL,
-            apiKey: configuration.apiKey,
-            model: configuration.model
-        )
-
         switch mode {
         case .disabled:
             return text
@@ -111,7 +109,15 @@ enum AppWorkflowSupport {
                 return text
             }
 
-            onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
+            let refinerConfiguration = LLMRefinerConfiguration(
+                baseURL: configuration.baseURL,
+                apiKey: configuration.apiKey,
+                model: configuration.model
+            )
+
+            await MainActor.run {
+                onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
+            }
 
             do {
                 let effectiveTargetLanguage = targetLanguage == sourceLanguage ? nil : targetLanguage
@@ -123,7 +129,9 @@ enum AppWorkflowSupport {
                 let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? text : trimmed
             } catch {
-                onError("LLM refinement failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    onError("LLM refinement failed: \(error.localizedDescription)")
+                }
                 return text
             }
         case .translation:
@@ -131,9 +139,25 @@ enum AppWorkflowSupport {
                 return text
             }
 
-            onPresentation(.refining(overlayTranscript: "Translating...", statusText: "Translating…"))
+            let refinerConfiguration = LLMRefinerConfiguration(
+                baseURL: configuration.baseURL,
+                apiKey: configuration.apiKey,
+                model: configuration.model
+            )
 
-            if translationProvider == .llm && configuration.isConfigured {
+            await MainActor.run {
+                onPresentation(.refining(overlayTranscript: "Translating...", statusText: "Translating…"))
+            }
+
+            switch translationProvider {
+            case .llm:
+                guard configuration.isConfigured else {
+                    await MainActor.run {
+                        onError("LLM translation is selected, but LLM is not fully configured.")
+                    }
+                    return text
+                }
+
                 do {
                     let translated = try await refiner.refine(
                         text: text,
@@ -143,22 +167,26 @@ enum AppWorkflowSupport {
                     let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
                     return trimmed.isEmpty ? text : trimmed
                 } catch {
-                    onError("LLM translation failed: \(error.localizedDescription)")
+                    await MainActor.run {
+                        onError("LLM translation failed: \(error.localizedDescription)")
+                    }
                     return text
                 }
-            }
-
-            do {
-                let translated = try await translator.translate(
-                    text: text,
-                    sourceLanguage: sourceLanguage,
-                    targetLanguage: targetLanguage
-                )
-                let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? text : trimmed
-            } catch {
-                onError("Apple Translate failed: \(error.localizedDescription)")
-                return text
+            case .appleTranslate:
+                do {
+                    let translated = try await translator.translate(
+                        text: text,
+                        sourceLanguage: sourceLanguage,
+                        targetLanguage: targetLanguage
+                    )
+                    let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? text : trimmed
+                } catch {
+                    await MainActor.run {
+                        onError("Translation via \(translationProvider.title) failed: \(error.localizedDescription)")
+                    }
+                    return text
+                }
             }
         }
     }

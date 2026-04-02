@@ -61,4 +61,13 @@ struct AppControllerInteractionTests {
             ) == .stopRecording
         )
     }
+
+    @Test
+    @MainActor
+    func shortcutMonitoringFailureMessageCallsOutInputMonitoringRequirement() {
+        #expect(
+            AppController.shortcutMonitoringFailureMessage
+                == "Global shortcut monitoring is unavailable. Accessibility is required, and on current macOS Input Monitoring may also be required."
+        )
+    }
 }

@@ -13,9 +13,6 @@ enum AppleTranslateServiceError: LocalizedError, Equatable {
 
 final class AppleTranslateService: TranscriptTranslating {
     static var isSupported: Bool {
-        if #available(macOS 15.0, *) {
-            return true
-        }
         return false
     }
 

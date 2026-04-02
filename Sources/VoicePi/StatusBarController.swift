@@ -451,7 +451,7 @@ final class StatusBarController: NSObject {
 
     @objc
     private func selectOutputLanguage(_ sender: NSMenuItem) {
-        guard model.postProcessingMode == .translation else { return }
+        guard model.postProcessingMode != .disabled else { return }
         guard
             let rawValue = sender.representedObject as? String,
             let language = SupportedLanguage(rawValue: rawValue)
@@ -930,7 +930,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePermissionCard(
                 icon: "slider.horizontal.3",
                 title: "Other",
-                description: "Input Monitoring is optional today, but useful if VoicePi later expands keyboard-event handling.",
+                description: PermissionsCopy.inputMonitoringDescription,
                 statusLabel: nil,
                 primaryButton: makePrimaryActionButton(title: "Input Monitoring", action: #selector(openInputMonitoringSettings)),
                 secondaryButtons: []
@@ -942,7 +942,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentStack.addArrangedSubview(permissionGrid)
         contentStack.addArrangedSubview(makeActionCard(
             title: "Permission Strategy",
-            description: "VoicePi only needs a small set of macOS permissions. Grant microphone, speech recognition, and accessibility first. If a status changes in System Settings, come back here and refresh to confirm everything is ready.",
+            description: PermissionsCopy.strategyDescription,
             actions: [
                 makePrimaryActionButton(title: "Refresh", action: #selector(refreshPermissions))
             ]
