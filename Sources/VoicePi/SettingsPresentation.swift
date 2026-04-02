@@ -38,11 +38,23 @@ struct AboutSectionPresentation: Equatable {
 }
 
 enum PermissionsCopy {
+    static let permissionsSectionSubtitle =
+        "Manage the macOS permissions VoicePi uses for recording, global shortcut monitoring, and paste injection."
+
+    static let permissionsHint =
+        "VoicePi requests the needed permissions at launch when macOS allows it. After changing anything in System Settings, refresh here."
+
+    static let accessibilityDescription =
+        "Required for paste injection. VoicePi also depends on it for the current global shortcut flow."
+
     static let inputMonitoringDescription =
-        "Input Monitoring is required for the current global shortcut implementation on some macOS setups. If the shortcut does not trigger, grant it here and refresh."
+        "VoicePi requests Input Monitoring at launch for its current global shortcut monitor. If the shortcut does not trigger, enable it here and refresh."
 
     static let strategyDescription =
-        "VoicePi needs microphone, speech recognition, and accessibility. For the current global shortcut implementation, Input Monitoring may also be required on your macOS setup. If a status changes in System Settings, come back here and refresh to confirm everything is ready."
+        "VoicePi needs microphone, speech recognition, accessibility, and Input Monitoring for the current shortcut and paste flow. The app requests what it can at launch, but macOS may still require you to confirm access in System Settings and then refresh here."
+
+    static let shortcutHint =
+        "Current shortcut: %@. Click the field above and press a new combination to replace it. Global shortcut monitoring also depends on Accessibility and Input Monitoring."
 }
 
 enum SettingsPresentation {
@@ -103,10 +115,10 @@ enum SettingsPresentation {
         return HomeSectionPresentation(
             shortcutSummary: "Current shortcut: \(model.activationShortcut.menuTitle)",
             languageSummary: "Recognition language: \(model.selectedLanguage.menuTitle)",
-            permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title)",
+            permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title), Input Monitoring \(permissionPresentation(for: model.inputMonitoringAuthorization).title)",
             asrSummary: "ASR backend: \(model.asrBackend.title) • \(model.remoteASRConfiguration.isConfigured ? "Remote configured" : "Remote not configured")",
             llmSummary: llmSummary,
-            shortcutHint: "Current shortcut: \(model.activationShortcut.displayString). Click the field above and press a new combination to replace it.",
+            shortcutHint: String(format: PermissionsCopy.shortcutHint, model.activationShortcut.displayString),
             statusSummary: statusSummary,
             statusTone: statusTone
         )

@@ -34,7 +34,7 @@ final class AppController: NSObject {
     private var pendingErrorHideTask: Task<Void, Never>?
 
     static let shortcutMonitoringFailureMessage =
-        "Global shortcut monitoring is unavailable. Accessibility is required, and on current macOS Input Monitoring may also be required."
+        "Global shortcut monitoring is unavailable. Accessibility and Input Monitoring are required for VoicePi's current shortcut monitor."
 
     static func pressAction(
         isRecording: Bool,
@@ -77,11 +77,10 @@ final class AppController: NSObject {
         Task {
             await refreshPermissionStates(
                 promptAccessibility: true,
-                requestMediaPermissions: true
+                requestMediaPermissions: true,
+                requestInputMonitoringPermission: true
             )
         }
-
-        ensureHotkeyMonitorRunning()
     }
 
     func stop() {
@@ -281,7 +280,8 @@ final class AppController: NSObject {
         updateAuthorizationStates(
             microphoneState: currentMicrophoneAuthorizationState(),
             speechState: currentSpeechAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: false),
+            inputMonitoringState: currentInputMonitoringAuthorizationState()
         )
 
         if let message = AppWorkflowSupport.preparationFailureMessage(
@@ -302,17 +302,23 @@ final class AppController: NSObject {
 
     private func refreshPermissionStates(
         promptAccessibility: Bool,
-        requestMediaPermissions: Bool = false
+        requestMediaPermissions: Bool = false,
+        requestInputMonitoringPermission: Bool = false
     ) async {
         if requestMediaPermissions {
             _ = await requestMicrophonePermissionIfNeeded()
             _ = await requestSpeechPermissionIfNeededIfNeededForBackend()
         }
 
+        if requestInputMonitoringPermission {
+            _ = requestInputMonitoringPermissionIfNeeded()
+        }
+
         updateAuthorizationStates(
             microphoneState: currentMicrophoneAuthorizationState(),
             speechState: currentSpeechAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: promptAccessibility)
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: promptAccessibility),
+            inputMonitoringState: currentInputMonitoringAuthorizationState()
         )
 
         statusBarController?.refreshAll()
@@ -371,6 +377,10 @@ final class AppController: NSObject {
         requestAccessibilityPermission(prompt: prompt) ? .granted : .denied
     }
 
+    private func currentInputMonitoringAuthorizationState() -> AuthorizationState {
+        InputMonitoringAccess.authorizationState()
+    }
+
     private func requestMicrophonePermissionIfNeeded() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -410,6 +420,10 @@ final class AppController: NSObject {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    private func requestInputMonitoringPermissionIfNeeded() -> Bool {
+        InputMonitoringAccess.requestIfNeeded()
+    }
+
     private func requestMicrophonePermissionFromSettings() async {
         _ = await requestMicrophonePermissionIfNeeded()
         await refreshPermissionStates(promptAccessibility: false)
@@ -423,11 +437,13 @@ final class AppController: NSObject {
     private func updateAuthorizationStates(
         microphoneState: AuthorizationState,
         speechState: AuthorizationState,
-        accessibilityState: AuthorizationState
+        accessibilityState: AuthorizationState,
+        inputMonitoringState: AuthorizationState
     ) {
         model.setMicrophoneAuthorization(microphoneState)
         model.setSpeechAuthorization(speechState)
         model.setAccessibilityAuthorization(accessibilityState)
+        model.setInputMonitoringAuthorization(inputMonitoringState)
     }
 
     private func presentTransientError(_ message: String) {
@@ -593,6 +609,19 @@ extension AppController: StatusBarControllerDelegate {
     }
 
     func statusBarControllerDidRequestOpenInputMonitoringSettings(_ controller: StatusBarController) {
+        if currentInputMonitoringAuthorizationState() == .unknown {
+            _ = requestInputMonitoringPermissionIfNeeded()
+
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await self?.refreshPermissionStates(promptAccessibility: false)
+            }
+
+            if currentInputMonitoringAuthorizationState() == .granted {
+                return
+            }
+        }
+
         openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
     }
 

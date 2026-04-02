@@ -619,6 +619,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let microphoneStatusLabel = NSTextField(labelWithString: "")
     private let speechStatusLabel = NSTextField(labelWithString: "")
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
+    private let inputMonitoringStatusLabel = NSTextField(labelWithString: "")
     private let permissionsHintLabel = NSTextField(labelWithString: "")
     private let aboutVersionLabel = NSTextField(labelWithString: "")
     private let aboutBuildLabel = NSTextField(labelWithString: "")
@@ -849,7 +850,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makeFeatureCard(
                 icon: "keyboard",
                 title: "Trigger",
-                description: "Start once, stop once, then inject the transcript into the active app."
+                description: "Start once, stop once, then inject the transcript into the active app. If the shortcut does not respond, check Accessibility and Input Monitoring."
             ),
             makeFeatureCard(
                 icon: "sparkles.rectangle.stack",
@@ -891,7 +892,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         permissionsHintLabel.alignment = .left
         permissionsHintLabel.lineBreakMode = .byWordWrapping
         permissionsHintLabel.maximumNumberOfLines = 0
-        permissionsHintLabel.stringValue = "Refresh after changing a permission in System Settings."
+        permissionsHintLabel.stringValue = PermissionsCopy.permissionsHint
 
         microphoneStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         microphoneStatusLabel.alignment = .center
@@ -901,6 +902,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         accessibilityStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         accessibilityStatusLabel.alignment = .center
+
+        inputMonitoringStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        inputMonitoringStatusLabel.alignment = .center
 
         let permissionGrid = makeTwoColumnGrid([
             makePermissionCard(
@@ -922,22 +926,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePermissionCard(
                 icon: "figure.wave",
                 title: "Accessibility",
-                description: "Required for global shortcut monitoring and safe paste injection.",
+                description: PermissionsCopy.accessibilityDescription,
                 statusLabel: accessibilityStatusLabel,
                 primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openAccessibilitySettingsFromSettings)),
                 secondaryButtons: []
             ),
             makePermissionCard(
                 icon: "slider.horizontal.3",
-                title: "Other",
+                title: "Input Monitoring",
                 description: PermissionsCopy.inputMonitoringDescription,
-                statusLabel: nil,
-                primaryButton: makePrimaryActionButton(title: "Input Monitoring", action: #selector(openInputMonitoringSettings)),
+                statusLabel: inputMonitoringStatusLabel,
+                primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openInputMonitoringSettings)),
                 secondaryButtons: []
             )
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Permissions", subtitle: "Manage the permissions VoicePi needs for recording, recognition, and paste injection."))
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Permissions", subtitle: PermissionsCopy.permissionsSectionSubtitle))
         contentStack.addArrangedSubview(permissionsHintLabel)
         contentStack.addArrangedSubview(permissionGrid)
         contentStack.addArrangedSubview(makeActionCard(
@@ -1206,6 +1210,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         applyPermissionStatus(model.microphoneAuthorization, to: microphoneStatusLabel)
         applyPermissionStatus(model.speechAuthorization, to: speechStatusLabel)
         applyPermissionStatus(model.accessibilityAuthorization, to: accessibilityStatusLabel)
+        applyPermissionStatus(model.inputMonitoringAuthorization, to: inputMonitoringStatusLabel)
     }
 
     private func refreshLLMSection() {
@@ -1430,7 +1435,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await delegate?.settingsWindowControllerDidRequestRefreshPermissions(self)
-            self.permissionsHintLabel.stringValue = "Manage permission changes in System Settings, then refresh here."
+            self.permissionsHintLabel.stringValue = PermissionsCopy.permissionsHint
             self.reloadFromModel()
         }
     }

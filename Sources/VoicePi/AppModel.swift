@@ -797,6 +797,7 @@ final class AppModel: ObservableObject {
     @Published var microphoneAuthorization: AuthorizationState = .unknown
     @Published var speechAuthorization: AuthorizationState = .unknown
     @Published var accessibilityAuthorization: AuthorizationState = .unknown
+    @Published var inputMonitoringAuthorization: AuthorizationState = .unknown
 
     private let defaults: UserDefaults
     private let encoder = JSONEncoder()
@@ -985,6 +986,10 @@ final class AppModel: ObservableObject {
 
     func setAccessibilityAuthorization(_ state: AuthorizationState) {
         accessibilityAuthorization = state
+    }
+
+    func setInputMonitoringAuthorization(_ state: AuthorizationState) {
+        inputMonitoringAuthorization = state
     }
 
     func setActivationShortcut(_ shortcut: ActivationShortcut) {

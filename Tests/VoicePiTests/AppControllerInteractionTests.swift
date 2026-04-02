@@ -67,7 +67,7 @@ struct AppControllerInteractionTests {
     func shortcutMonitoringFailureMessageCallsOutInputMonitoringRequirement() {
         #expect(
             AppController.shortcutMonitoringFailureMessage
-                == "Global shortcut monitoring is unavailable. Accessibility is required, and on current macOS Input Monitoring may also be required."
+                == "Global shortcut monitoring is unavailable. Accessibility and Input Monitoring are required for VoicePi's current shortcut monitor."
         )
     }
 }

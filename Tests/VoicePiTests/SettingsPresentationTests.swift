@@ -13,6 +13,7 @@ struct SettingsPresentationTests {
         model.setMicrophoneAuthorization(.granted)
         model.setSpeechAuthorization(.denied)
         model.setAccessibilityAuthorization(.unknown)
+        model.setInputMonitoringAuthorization(.granted)
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://api.example.com", apiKey: "sk", model: "whisper", prompt: "")
         model.setPostProcessingMode(.translation)
@@ -27,9 +28,13 @@ struct SettingsPresentationTests {
 
         #expect(presentation.shortcutSummary == "Current shortcut: A + S")
         #expect(presentation.languageSummary == "Recognition language: English")
-        #expect(presentation.permissionSummary == "Permissions: Mic Granted, Speech Denied, Accessibility Unknown")
+        #expect(presentation.permissionSummary == "Permissions: Mic Granted, Speech Denied, Accessibility Unknown, Input Monitoring Granted")
         #expect(presentation.asrSummary == "ASR backend: Remote OpenAI-Compatible ASR • Remote configured")
         #expect(presentation.llmSummary == "Text processing: Translate via Apple Translate • Target Japanese")
+        #expect(
+            presentation.shortcutHint
+                == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Global shortcut monitoring also depends on Accessibility and Input Monitoring."
+        )
         #expect(presentation.statusTone == .secondary)
     }
 
@@ -43,6 +48,7 @@ struct SettingsPresentationTests {
         model.setMicrophoneAuthorization(.granted)
         model.setSpeechAuthorization(.denied)
         model.setAccessibilityAuthorization(.unknown)
+        model.setInputMonitoringAuthorization(.unknown)
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://api.example.com", apiKey: "sk", model: "whisper", prompt: "")
         model.setPostProcessingMode(.translation)
@@ -106,12 +112,28 @@ struct SettingsPresentationTests {
     @Test
     func permissionCopyReflectsCurrentInputMonitoringRequirement() {
         #expect(
+            PermissionsCopy.permissionsSectionSubtitle
+                == "Manage the macOS permissions VoicePi uses for recording, global shortcut monitoring, and paste injection."
+        )
+        #expect(
+            PermissionsCopy.permissionsHint
+                == "VoicePi requests the needed permissions at launch when macOS allows it. After changing anything in System Settings, refresh here."
+        )
+        #expect(
+            PermissionsCopy.accessibilityDescription
+                == "Required for paste injection. VoicePi also depends on it for the current global shortcut flow."
+        )
+        #expect(
             PermissionsCopy.inputMonitoringDescription
-                == "Input Monitoring is required for the current global shortcut implementation on some macOS setups. If the shortcut does not trigger, grant it here and refresh."
+                == "VoicePi requests Input Monitoring at launch for its current global shortcut monitor. If the shortcut does not trigger, enable it here and refresh."
         )
         #expect(
             PermissionsCopy.strategyDescription
-                == "VoicePi needs microphone, speech recognition, and accessibility. For the current global shortcut implementation, Input Monitoring may also be required on your macOS setup. If a status changes in System Settings, come back here and refresh to confirm everything is ready."
+                == "VoicePi needs microphone, speech recognition, accessibility, and Input Monitoring for the current shortcut and paste flow. The app requests what it can at launch, but macOS may still require you to confirm access in System Settings and then refresh here."
+        )
+        #expect(
+            PermissionsCopy.shortcutHint
+                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Global shortcut monitoring also depends on Accessibility and Input Monitoring."
         )
     }
 }
