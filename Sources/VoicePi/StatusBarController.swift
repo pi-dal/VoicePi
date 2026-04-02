@@ -87,7 +87,7 @@ struct StatusMenuPresentation: Equatable {
 
         let statusText: String
         if let transientStatus, !transientStatus.isEmpty {
-            statusText = transientStatus
+            statusText = compactStatusLine(transientStatus)
         } else if isRecording {
             statusText = "Recording…"
         } else if model.recordingState == .refining {
@@ -101,6 +101,36 @@ struct StatusMenuPresentation: Equatable {
             languageLine: "Language: \(model.selectedLanguage.menuTitle) → \(languagePresentation.effectiveOutputLanguage.menuTitle)",
             permissionsLine: "Permissions: Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization)) / IM \(symbol(for: model.inputMonitoringAuthorization))"
         )
+    }
+
+    private static func compactStatusLine(_ status: String) -> String {
+        let normalized = status
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch normalized {
+        case AppController.shortcutMonitoringFailureMessage:
+            return "Shortcut unavailable"
+        case AppController.shortcutSuppressionWarningMessage:
+            return "Listening only"
+        default:
+            break
+        }
+
+        if normalized.hasPrefix("Translation via "), normalized.contains(" failed") {
+            return "Translation failed"
+        }
+
+        if normalized.contains("permission was not granted") {
+            return "Permission denied"
+        }
+
+        if normalized.count > 44 {
+            return String(normalized.prefix(43)) + "…"
+        }
+
+        return normalized
     }
 
     private static func symbol(for state: AuthorizationState) -> String {

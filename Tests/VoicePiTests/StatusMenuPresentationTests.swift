@@ -41,4 +41,39 @@ struct StatusMenuPresentationTests {
 
         #expect(presentation.statusLine == "Ready")
     }
+
+    @Test
+    @MainActor
+    func statusMenuPresentationCompactsKnownAndLongErrorMessages() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.statusMenuPresentationCompactsKnownAndLongErrorMessages.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        let shortcutPresentation = StatusMenuPresentation.make(
+            model: model,
+            transientStatus: AppController.shortcutMonitoringFailureMessage,
+            isRecording: false
+        )
+        #expect(shortcutPresentation.statusLine == "Shortcut unavailable")
+
+        let accessibilityPresentation = StatusMenuPresentation.make(
+            model: model,
+            transientStatus: AppController.shortcutSuppressionWarningMessage,
+            isRecording: false
+        )
+        #expect(accessibilityPresentation.statusLine == "Listening only")
+
+        let translationPresentation = StatusMenuPresentation.make(
+            model: model,
+            transientStatus: "Translation via LLM failed: timeout while contacting upstream provider",
+            isRecording: false
+        )
+        #expect(translationPresentation.statusLine == "Translation failed")
+
+        let longPresentation = StatusMenuPresentation.make(
+            model: model,
+            transientStatus: "This is a very long status line that should be truncated before it stretches the menu too much.",
+            isRecording: false
+        )
+        #expect(longPresentation.statusLine == "This is a very long status line that should…")
+    }
 }
