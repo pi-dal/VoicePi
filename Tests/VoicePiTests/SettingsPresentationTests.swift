@@ -33,7 +33,7 @@ struct SettingsPresentationTests {
         #expect(presentation.llmSummary == "Text processing: Translate via Apple Translate • Target Japanese")
         #expect(
             presentation.shortcutHint
-                == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Global shortcut monitoring also depends on Accessibility and Input Monitoring."
+                == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
         )
         #expect(presentation.statusTone == .secondary)
     }
@@ -113,27 +113,27 @@ struct SettingsPresentationTests {
     func permissionCopyReflectsCurrentInputMonitoringRequirement() {
         #expect(
             PermissionsCopy.permissionsSectionSubtitle
-                == "Manage the macOS permissions VoicePi uses for recording, global shortcut monitoring, and paste injection."
+                == "Manage the macOS permissions VoicePi uses for shortcut listening, event suppression, recording, and paste injection."
         )
         #expect(
             PermissionsCopy.permissionsHint
-                == "VoicePi requests the needed permissions at launch when macOS allows it. After changing anything in System Settings, refresh here."
+                == "VoicePi asks for these at launch while macOS still treats them as undecided. After changing anything in System Settings, refresh here."
         )
         #expect(
             PermissionsCopy.accessibilityDescription
-                == "Required for paste injection. VoicePi also depends on it for the current global shortcut flow."
+                == "Required for shortcut suppression and paste injection."
         )
         #expect(
             PermissionsCopy.inputMonitoringDescription
-                == "VoicePi requests Input Monitoring at launch for its current global shortcut monitor. If the shortcut does not trigger, enable it here and refresh."
+                == "Required for listening to the global shortcut. VoicePi asks for it at launch while macOS still treats it as undecided."
         )
         #expect(
             PermissionsCopy.strategyDescription
-                == "VoicePi needs microphone, speech recognition, accessibility, and Input Monitoring for the current shortcut and paste flow. The app requests what it can at launch, but macOS may still require you to confirm access in System Settings and then refresh here."
+                == "VoicePi currently splits shortcut handling across two macOS privacy gates: Input Monitoring for listening, Accessibility for suppressing and injecting events. Microphone and Speech Recognition cover recording and local transcription."
         )
         #expect(
             PermissionsCopy.shortcutHint
-                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Global shortcut monitoring also depends on Accessibility and Input Monitoring."
+                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
         )
     }
 }

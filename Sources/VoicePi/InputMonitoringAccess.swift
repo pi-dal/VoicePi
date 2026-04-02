@@ -1,13 +1,20 @@
+import CoreGraphics
 import Foundation
 import IOKit.hidsystem
 
 enum InputMonitoringAccess {
     typealias CheckAccess = (IOHIDRequestType) -> IOHIDAccessType
-    typealias RequestAccess = (IOHIDRequestType) -> Bool
+    typealias PreflightAccess = () -> Bool
+    typealias RequestAccess = () -> Bool
 
     static func authorizationState(
+        preflightAccess: PreflightAccess = CGPreflightListenEventAccess,
         checkAccess: CheckAccess = IOHIDCheckAccess
     ) -> AuthorizationState {
+        if preflightAccess() {
+            return .granted
+        }
+
         switch checkAccess(kIOHIDRequestTypeListenEvent) {
         case kIOHIDAccessTypeGranted:
             return .granted
@@ -21,16 +28,9 @@ enum InputMonitoringAccess {
     }
 
     static func requestIfNeeded(
-        checkAccess: CheckAccess = IOHIDCheckAccess,
-        requestAccess: RequestAccess = IOHIDRequestAccess
+        preflightAccess: PreflightAccess = CGPreflightListenEventAccess,
+        requestAccess: RequestAccess = CGRequestListenEventAccess
     ) -> Bool {
-        switch authorizationState(checkAccess: checkAccess) {
-        case .granted:
-            return true
-        case .denied, .restricted:
-            return false
-        case .unknown:
-            return requestAccess(kIOHIDRequestTypeListenEvent)
-        }
+        preflightAccess() || requestAccess()
     }
 }

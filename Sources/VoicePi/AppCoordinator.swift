@@ -32,9 +32,10 @@ final class AppController: NSObject {
     private var processingTask: Task<Void, Never>?
     private var latestTranscript = ""
     private var pendingErrorHideTask: Task<Void, Never>?
+    private var hasAttemptedInputMonitoringRequest = false
 
     static let shortcutMonitoringFailureMessage =
-        "Global shortcut monitoring is unavailable. Accessibility and Input Monitoring are required for VoicePi's current shortcut monitor."
+        "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
 
     static func pressAction(
         isRecording: Bool,
@@ -74,11 +75,12 @@ final class AppController: NSObject {
         statusBarController.start()
         self.statusBarController = statusBarController
 
-        Task {
-            await refreshPermissionStates(
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = self.requestInputMonitoringPermissionIfNeeded()
+            await self.refreshPermissionStates(
                 promptAccessibility: true,
-                requestMediaPermissions: true,
-                requestInputMonitoringPermission: true
+                requestMediaPermissions: true
             )
         }
     }
@@ -327,9 +329,13 @@ final class AppController: NSObject {
 
     private func ensureHotkeyMonitorRunning() {
         let accessibilityGranted = currentAccessibilityAuthorizationState(prompt: false) == .granted
+        let inputMonitoringGranted = currentInputMonitoringAuthorizationState() == .granted
 
-        guard accessibilityGranted else {
+        guard accessibilityGranted, inputMonitoringGranted else {
             shortcutMonitor.stop()
+            if statusBarController != nil {
+                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
+            }
             return
         }
 
@@ -378,7 +384,11 @@ final class AppController: NSObject {
     }
 
     private func currentInputMonitoringAuthorizationState() -> AuthorizationState {
-        InputMonitoringAccess.authorizationState()
+        let state = InputMonitoringAccess.authorizationState()
+        if state == .unknown, hasAttemptedInputMonitoringRequest {
+            return .denied
+        }
+        return state
     }
 
     private func requestMicrophonePermissionIfNeeded() async -> Bool {
@@ -421,7 +431,8 @@ final class AppController: NSObject {
     }
 
     private func requestInputMonitoringPermissionIfNeeded() -> Bool {
-        InputMonitoringAccess.requestIfNeeded()
+        hasAttemptedInputMonitoringRequest = true
+        return InputMonitoringAccess.requestIfNeeded()
     }
 
     private func requestMicrophonePermissionFromSettings() async {

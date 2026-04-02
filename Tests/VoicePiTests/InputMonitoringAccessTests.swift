@@ -6,23 +6,32 @@ struct InputMonitoringAccessTests {
     @Test
     func authorizationStateMapsGrantedDeniedAndUnknown() {
         #expect(
-            InputMonitoringAccess.authorizationState(checkAccess: { _ in kIOHIDAccessTypeGranted }) == .granted
+            InputMonitoringAccess.authorizationState(
+                preflightAccess: { true },
+                checkAccess: { _ in kIOHIDAccessTypeUnknown }
+            ) == .granted
         )
         #expect(
-            InputMonitoringAccess.authorizationState(checkAccess: { _ in kIOHIDAccessTypeDenied }) == .denied
+            InputMonitoringAccess.authorizationState(
+                preflightAccess: { false },
+                checkAccess: { _ in kIOHIDAccessTypeDenied }
+            ) == .denied
         )
         #expect(
-            InputMonitoringAccess.authorizationState(checkAccess: { _ in kIOHIDAccessTypeUnknown }) == .unknown
+            InputMonitoringAccess.authorizationState(
+                preflightAccess: { false },
+                checkAccess: { _ in kIOHIDAccessTypeUnknown }
+            ) == .unknown
         )
     }
 
     @Test
-    func requestIfNeededOnlyPromptsWhenStateIsUnknown() {
+    func requestIfNeededOnlyPromptsWhenPreflightFails() {
         var requested = false
 
         let granted = InputMonitoringAccess.requestIfNeeded(
-            checkAccess: { _ in kIOHIDAccessTypeGranted },
-            requestAccess: { _ in
+            preflightAccess: { true },
+            requestAccess: {
                 requested = true
                 return false
             }
@@ -30,24 +39,14 @@ struct InputMonitoringAccessTests {
         #expect(granted)
         #expect(!requested)
 
-        let denied = InputMonitoringAccess.requestIfNeeded(
-            checkAccess: { _ in kIOHIDAccessTypeDenied },
-            requestAccess: { _ in
+        let prompted = InputMonitoringAccess.requestIfNeeded(
+            preflightAccess: { false },
+            requestAccess: {
                 requested = true
                 return true
             }
         )
-        #expect(!denied)
-        #expect(!requested)
-
-        let unknown = InputMonitoringAccess.requestIfNeeded(
-            checkAccess: { _ in kIOHIDAccessTypeUnknown },
-            requestAccess: { requestType in
-                requested = true
-                return requestType == kIOHIDRequestTypeListenEvent
-            }
-        )
-        #expect(unknown)
+        #expect(prompted)
         #expect(requested)
     }
 }

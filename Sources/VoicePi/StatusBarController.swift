@@ -394,7 +394,7 @@ final class StatusBarController: NSObject {
     }
 
     private func permissionsSummaryText() -> String {
-        "Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization))"
+        "Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization)) / IM \(symbol(for: model.inputMonitoringAuthorization))"
     }
 
     private func llmEndpointSummaryText() -> String {
@@ -814,7 +814,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         shortcutHintLabel.alignment = .left
         shortcutHintLabel.lineBreakMode = .byWordWrapping
         shortcutHintLabel.maximumNumberOfLines = 0
-        shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use."
+        shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use. Input Monitoring listens for it, and Accessibility handles suppression and paste injection."
 
         configureAppearanceControl()
 
@@ -837,7 +837,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 icon: "waveform.and.mic",
                 eyebrow: "General",
                 title: "A tighter control center for dictation, translation, and post-processing.",
-                description: "VoicePi stays in the menu bar, records with one shortcut, and pastes into the focused field after transcription."
+                description: "VoicePi stays in the menu bar, listens for one global shortcut, then pastes the final text into the focused field after transcription."
             ),
             overviewSection,
             homeSummaryLabel
@@ -850,7 +850,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makeFeatureCard(
                 icon: "keyboard",
                 title: "Trigger",
-                description: "Start once, stop once, then inject the transcript into the active app. If the shortcut does not respond, check Accessibility and Input Monitoring."
+                description: "Input Monitoring listens for the shortcut. Accessibility suppresses the shortcut and injects the final paste."
             ),
             makeFeatureCard(
                 icon: "sparkles.rectangle.stack",
