@@ -85,30 +85,17 @@ final class SpeechRecorder: NSObject {
 
     func requestAuthorizations(requiresSpeechRecognition: Bool) async throws {
         if requiresSpeechRecognition {
-            let speechStatus = await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { status in
-                    continuation.resume(returning: status)
-                }
-            }
-
-            guard speechStatus == .authorized else {
+            guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
                 throw SpeechRecorderError.speechAuthorizationDenied
             }
         }
 
-        let micGranted: Bool
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            micGranted = true
-        case .notDetermined:
-            micGranted = await AVCaptureDevice.requestAccess(for: .audio)
-        case .denied, .restricted:
-            micGranted = false
+            break
+        case .notDetermined, .denied, .restricted:
+            throw SpeechRecorderError.microphoneAuthorizationDenied
         @unknown default:
-            micGranted = false
-        }
-
-        guard micGranted else {
             throw SpeechRecorderError.microphoneAuthorizationDenied
         }
     }
@@ -361,7 +348,7 @@ final class SpeechRecorder: NSObject {
                 }
             }
 
-            let normalizedLevel = Self.normalizedLevel(from: buffer)
+            let normalizedLevel = SpeechRecorderMath.normalizedLevel(from: buffer)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.applyEnvelopeAndPublish(normalizedLevel)
@@ -391,37 +378,6 @@ final class SpeechRecorder: NSObject {
         let timestamp = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
 
         return directory.appendingPathComponent("voicepi-\(timestamp).caf")
-    }
-
-    nonisolated private static func normalizedLevel(from buffer: AVAudioPCMBuffer) -> CGFloat {
-        guard let channelData = buffer.floatChannelData else {
-            return 0
-        }
-
-        let channelCount = Int(buffer.format.channelCount)
-        let frameLength = Int(buffer.frameLength)
-
-        guard channelCount > 0, frameLength > 0 else {
-            return 0
-        }
-
-        var sumSquares: Float = 0
-
-        for channel in 0..<channelCount {
-            let samples = channelData[channel]
-            var channelSum: Float = 0
-
-            for index in 0..<frameLength {
-                let sample = samples[index]
-                channelSum += sample * sample
-            }
-
-            sumSquares += channelSum / Float(frameLength)
-        }
-
-        let rms = sqrt(sumSquares / Float(channelCount))
-        let decibels = 20.0 * log10(max(rms, 0.000_01))
-        return SpeechRecorderMath.normalizeDecibels(decibels)
     }
 
     private func applyEnvelopeAndPublish(_ target: CGFloat) {

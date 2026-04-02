@@ -12,6 +12,40 @@ final class AppController: NSObject {
         let statusMessage: String?
     }
 
+    enum PermissionSettingsDestination {
+        case accessibility
+        case microphone
+        case speech
+        case inputMonitoring
+    }
+
+    struct PermissionSettingsPrompt: Equatable {
+        let messageText: String
+        let informativeText: String
+        let settingsURL: String
+    }
+
+    struct MediaPermissionPrePrompt: Equatable {
+        let messageText: String
+        let informativeText: String
+        let continueTitle: String
+    }
+
+    enum PermissionPromptSource {
+        case accessibilityFollowUp
+        case launchFollowUp
+        case manualSettingsButton
+    }
+
+    enum PermissionSettingsTransitionStyle: Equatable {
+        case customPrompt
+    }
+
+    enum MediaPermissionTransitionStyle: Equatable {
+        case customPrePromptThenSystemRequest
+        case customSettingsPrompt
+    }
+
     enum PermissionRefreshStep: Equatable {
         case mediaPermissions
         case accessibility
@@ -46,7 +80,7 @@ final class AppController: NSObject {
     private var processingTask: Task<Void, Never>?
     private var latestTranscript = ""
     private var pendingErrorHideTask: Task<Void, Never>?
-    private var hasAttemptedInputMonitoringRequest = false
+    private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -86,7 +120,7 @@ final class AppController: NSObject {
         true
     }
 
-    static func shouldOpenInputMonitoringSettingsOnLaunch(
+    static func shouldOfferInputMonitoringSettingsOnLaunch(
         requestGranted: Bool,
         inputMonitoringState: AuthorizationState
     ) -> Bool {
@@ -140,6 +174,96 @@ final class AppController: NSObject {
         return steps
     }
 
+    static func shouldAwaitAccessibilityAuthorization(
+        promptAccessibility: Bool,
+        requestInputMonitoringPermission: Bool,
+        accessibilityStateAfterPrompt: AuthorizationState
+    ) -> Bool {
+        promptAccessibility &&
+        requestInputMonitoringPermission &&
+        accessibilityStateAfterPrompt != .granted
+    }
+
+    static func permissionSettingsPrompt(for destination: PermissionSettingsDestination) -> PermissionSettingsPrompt {
+        switch destination {
+        case .accessibility:
+            return PermissionSettingsPrompt(
+                messageText: "Accessibility Still Needs Approval",
+                informativeText: "VoicePi can continue setup by opening the Accessibility settings page. Open System Settings now?",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            )
+        case .microphone:
+            return PermissionSettingsPrompt(
+                messageText: "Microphone Still Needs Approval",
+                informativeText: "VoicePi can continue setup by opening the Microphone settings page. Open System Settings now?",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            )
+        case .speech:
+            return PermissionSettingsPrompt(
+                messageText: "Speech Recognition Still Needs Approval",
+                informativeText: "VoicePi can continue setup by opening the Speech Recognition settings page. Open System Settings now?",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
+            )
+        case .inputMonitoring:
+            return PermissionSettingsPrompt(
+                messageText: "Input Monitoring Still Needs Approval",
+                informativeText: "VoicePi can continue setup by opening the Input Monitoring settings page. Open System Settings now?",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            )
+        }
+    }
+
+    static func permissionSettingsTransitionStyle(
+        for destination: PermissionSettingsDestination
+    ) -> PermissionSettingsTransitionStyle {
+        _ = destination
+        return .customPrompt
+    }
+
+    static func mediaPermissionTransitionStyle(
+        for destination: PermissionSettingsDestination,
+        authorizationState: AuthorizationState
+    ) -> MediaPermissionTransitionStyle {
+        switch authorizationState {
+        case .unknown:
+            return .customPrePromptThenSystemRequest
+        case .granted, .denied, .restricted:
+            return .customSettingsPrompt
+        }
+    }
+
+    static func mediaPermissionPrePrompt(for destination: PermissionSettingsDestination) -> MediaPermissionPrePrompt {
+        switch destination {
+        case .microphone:
+            return MediaPermissionPrePrompt(
+                messageText: "Microphone Permission",
+                informativeText: "VoicePi uses the microphone to capture your dictation. Continue to the macOS permission prompt?",
+                continueTitle: "Continue"
+            )
+        case .speech:
+            return MediaPermissionPrePrompt(
+                messageText: "Speech Recognition Permission",
+                informativeText: "VoicePi uses Speech Recognition for on-device and Apple speech transcription. Continue to the macOS permission prompt?",
+                continueTitle: "Continue"
+            )
+        case .accessibility, .inputMonitoring:
+            return MediaPermissionPrePrompt(
+                messageText: "Permission Required",
+                informativeText: "Continue to the macOS permission prompt?",
+                continueTitle: "Continue"
+            )
+        }
+    }
+
+    static func shouldActivateAppForPermissionPrompt(source: PermissionPromptSource) -> Bool {
+        switch source {
+        case .accessibilityFollowUp, .launchFollowUp:
+            return true
+        case .manualSettingsButton:
+            return false
+        }
+    }
+
     func start() {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         model.$interfaceTheme
@@ -168,20 +292,11 @@ final class AppController: NSObject {
                 requestMediaPermissions: true,
                 requestInputMonitoringPermission: true
             )
-
-            let accessibilityState = self.currentAccessibilityAuthorizationState(prompt: false)
-            let inputMonitoringState = self.currentInputMonitoringAuthorizationState()
-            if accessibilityState == .granted,
-               Self.shouldOpenInputMonitoringSettingsOnLaunch(
-                   requestGranted: inputMonitoringState == .granted,
-                   inputMonitoringState: inputMonitoringState
-               ) {
-                self.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
-            }
         }
     }
 
     func stop() {
+        accessibilityAuthorizationFollowUpTask?.cancel()
         pendingErrorHideTask?.cancel()
         shortcutListener.stop()
         shortcutCombinedMonitor.stop()
@@ -372,7 +487,7 @@ final class AppController: NSObject {
     }
 
     private func prepareForRecording() async -> Bool {
-        let accessibilityGranted = requestAccessibilityPermission(prompt: true)
+        let accessibilityGranted = currentAccessibilityAuthorizationState(prompt: false) == .granted
         let microphoneGranted = await requestMicrophonePermissionIfNeeded()
         let speechGranted = await requestSpeechPermissionIfNeededIfNeededForBackend()
 
@@ -411,10 +526,24 @@ final class AppController: NSObject {
 
         let accessibilityStateAfterPrompt: AuthorizationState
         if promptAccessibility {
-            _ = requestAccessibilityPermission(prompt: true)
+            let currentAccessibilityState = currentAccessibilityAuthorizationState(prompt: false)
+            if currentAccessibilityState != .granted {
+                offerPermissionSettingsPrompt(for: .accessibility, source: .manualSettingsButton)
+            }
             accessibilityStateAfterPrompt = currentAccessibilityAuthorizationState(prompt: false)
         } else {
             accessibilityStateAfterPrompt = currentAccessibilityAuthorizationState(prompt: false)
+        }
+
+        if Self.shouldAwaitAccessibilityAuthorization(
+            promptAccessibility: promptAccessibility,
+            requestInputMonitoringPermission: requestInputMonitoringPermission,
+            accessibilityStateAfterPrompt: accessibilityStateAfterPrompt
+        ) {
+            scheduleAccessibilityAuthorizationFollowUp(requestInputMonitoringPermission: requestInputMonitoringPermission)
+        } else {
+            accessibilityAuthorizationFollowUpTask?.cancel()
+            accessibilityAuthorizationFollowUpTask = nil
         }
 
         if Self.permissionRefreshSequence(
@@ -423,7 +552,9 @@ final class AppController: NSObject {
             requestInputMonitoringPermission: requestInputMonitoringPermission,
             accessibilityStateAfterPrompt: accessibilityStateAfterPrompt
         ).contains(.inputMonitoring) {
-            _ = requestInputMonitoringPermissionIfNeeded()
+            if currentInputMonitoringAuthorizationState() != .granted {
+                offerInputMonitoringSettingsPrompt(source: .accessibilityFollowUp)
+            }
         }
 
         updateAuthorizationStates(
@@ -435,6 +566,35 @@ final class AppController: NSObject {
 
         statusBarController?.refreshAll()
         ensureHotkeyMonitorRunning()
+    }
+
+    private func scheduleAccessibilityAuthorizationFollowUp(requestInputMonitoringPermission: Bool) {
+        accessibilityAuthorizationFollowUpTask?.cancel()
+        accessibilityAuthorizationFollowUpTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.accessibilityAuthorizationFollowUpTask = nil
+            }
+
+            let deadline = Date().addingTimeInterval(120)
+            while !Task.isCancelled {
+                let accessibilityState = self.currentAccessibilityAuthorizationState(prompt: false)
+                if accessibilityState == .granted {
+                    await self.refreshPermissionStates(
+                        promptAccessibility: false,
+                        requestInputMonitoringPermission: requestInputMonitoringPermission
+                    )
+                    return
+                }
+
+                if Date() >= deadline {
+                    await self.refreshPermissionStates(promptAccessibility: false)
+                    return
+                }
+
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
     }
 
     private func ensureHotkeyMonitorRunning() {
@@ -512,20 +672,31 @@ final class AppController: NSObject {
     }
 
     private func currentInputMonitoringAuthorizationState() -> AuthorizationState {
-        let state = InputMonitoringAccess.authorizationState()
-        if state == .unknown, hasAttemptedInputMonitoringRequest {
-            return .denied
-        }
-        return state
+        InputMonitoringAccess.authorizationState()
     }
 
     private func requestMicrophonePermissionIfNeeded() async -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
+        let authorizationState = currentMicrophoneAuthorizationState()
+        switch authorizationState {
+        case .granted:
             return true
-        case .notDetermined:
-            return await AVCaptureDevice.requestAccess(for: .audio)
+        case .unknown:
+            let transitionStyle = Self.mediaPermissionTransitionStyle(
+                for: .microphone,
+                authorizationState: authorizationState
+            )
+            switch transitionStyle {
+            case .customPrePromptThenSystemRequest:
+                guard offerMediaPermissionPrePrompt(for: .microphone) else {
+                    return false
+                }
+                return await AVCaptureDevice.requestAccess(for: .audio)
+            case .customSettingsPrompt:
+                offerPermissionSettingsPrompt(for: .microphone, source: .manualSettingsButton)
+                return false
+            }
         case .denied, .restricted:
+            offerPermissionSettingsPrompt(for: .microphone, source: .manualSettingsButton)
             return false
         @unknown default:
             return false
@@ -534,19 +705,34 @@ final class AppController: NSObject {
 
     private func requestSpeechPermissionIfNeededIfNeededForBackend() async -> Bool {
         guard model.asrBackend == .appleSpeech else {
-            return currentSpeechAuthorizationState() == .granted || currentSpeechAuthorizationState() == .unknown
+            return currentSpeechAuthorizationState() != .denied && currentSpeechAuthorizationState() != .restricted
         }
 
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
+        let authorizationState = currentSpeechAuthorizationState()
+        switch authorizationState {
+        case .granted:
             return true
-        case .notDetermined:
-            return await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { status in
-                    continuation.resume(returning: status == .authorized)
+        case .unknown:
+            let transitionStyle = Self.mediaPermissionTransitionStyle(
+                for: .speech,
+                authorizationState: authorizationState
+            )
+            switch transitionStyle {
+            case .customPrePromptThenSystemRequest:
+                guard offerMediaPermissionPrePrompt(for: .speech) else {
+                    return false
                 }
+                return await withCheckedContinuation { continuation in
+                    SFSpeechRecognizer.requestAuthorization { status in
+                        continuation.resume(returning: status == .authorized)
+                    }
+                }
+            case .customSettingsPrompt:
+                offerPermissionSettingsPrompt(for: .speech, source: .manualSettingsButton)
+                return false
             }
         case .denied, .restricted:
+            offerPermissionSettingsPrompt(for: .speech, source: .manualSettingsButton)
             return false
         @unknown default:
             return false
@@ -558,19 +744,15 @@ final class AppController: NSObject {
         return AXIsProcessTrustedWithOptions(options)
     }
 
-    private func requestInputMonitoringPermissionIfNeeded() -> Bool {
-        hasAttemptedInputMonitoringRequest = true
-        return InputMonitoringAccess.requestIfNeeded()
-    }
-
-    private func requestMicrophonePermissionFromSettings() async {
-        _ = await requestMicrophonePermissionIfNeeded()
-        await refreshPermissionStates(promptAccessibility: false)
-    }
-
-    private func requestSpeechPermissionFromSettings() async {
-        _ = await requestSpeechPermissionIfNeededIfNeededForBackend()
-        await refreshPermissionStates(promptAccessibility: false)
+    private func offerMediaPermissionPrePrompt(for destination: PermissionSettingsDestination) -> Bool {
+        let prompt = Self.mediaPermissionPrePrompt(for: destination)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = prompt.messageText
+        alert.informativeText = prompt.informativeText
+        alert.addButton(withTitle: prompt.continueTitle)
+        alert.addButton(withTitle: "Not Now")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func updateAuthorizationStates(
@@ -735,38 +917,46 @@ extension AppController: StatusBarControllerDelegate {
     }
 
     func statusBarControllerDidRequestOpenAccessibilitySettings(_ controller: StatusBarController) {
-        openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        Task { @MainActor [weak self] in
+            await self?.refreshPermissionStates(
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true
+            )
+        }
     }
 
     func statusBarControllerDidRequestOpenMicrophoneSettings(_ controller: StatusBarController) {
-        Task { @MainActor [weak self] in
-            await self?.requestMicrophonePermissionFromSettings()
+        switch Self.mediaPermissionTransitionStyle(
+            for: .microphone,
+            authorizationState: currentMicrophoneAuthorizationState()
+        ) {
+        case .customPrePromptThenSystemRequest:
+            Task { @MainActor [weak self] in
+                _ = await self?.requestMicrophonePermissionIfNeeded()
+                await self?.refreshPermissionStates(promptAccessibility: false)
+            }
+        case .customSettingsPrompt:
+            offerPermissionSettingsPrompt(for: .microphone, source: .manualSettingsButton)
         }
-        openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
     }
 
     func statusBarControllerDidRequestOpenSpeechSettings(_ controller: StatusBarController) {
-        Task { @MainActor [weak self] in
-            await self?.requestSpeechPermissionFromSettings()
+        switch Self.mediaPermissionTransitionStyle(
+            for: .speech,
+            authorizationState: currentSpeechAuthorizationState()
+        ) {
+        case .customPrePromptThenSystemRequest:
+            Task { @MainActor [weak self] in
+                _ = await self?.requestSpeechPermissionIfNeededIfNeededForBackend()
+                await self?.refreshPermissionStates(promptAccessibility: false)
+            }
+        case .customSettingsPrompt:
+            offerPermissionSettingsPrompt(for: .speech, source: .manualSettingsButton)
         }
-        openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
     }
 
     func statusBarControllerDidRequestOpenInputMonitoringSettings(_ controller: StatusBarController) {
-        if currentInputMonitoringAuthorizationState() == .unknown {
-            _ = requestInputMonitoringPermissionIfNeeded()
-
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                await self?.refreshPermissionStates(promptAccessibility: false)
-            }
-
-            if currentInputMonitoringAuthorizationState() == .granted {
-                return
-            }
-        }
-
-        openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+        offerPermissionSettingsPrompt(for: .inputMonitoring, source: .manualSettingsButton)
     }
 
     func statusBarControllerDidRequestRefreshPermissions(_ controller: StatusBarController) async {
@@ -774,10 +964,11 @@ extension AppController: StatusBarControllerDelegate {
     }
 
     func statusBarControllerDidRequestPromptAccessibilityPermission(_ controller: StatusBarController) {
-        _ = requestAccessibilityPermission(prompt: true)
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            await self?.refreshPermissionStates(promptAccessibility: false)
+            await self?.refreshPermissionStates(
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true
+            )
         }
     }
 
@@ -790,5 +981,31 @@ extension AppController: StatusBarControllerDelegate {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    private func offerInputMonitoringSettingsPrompt(source: PermissionPromptSource) {
+        offerPermissionSettingsPrompt(for: .inputMonitoring, source: source)
+    }
+
+    private func offerPermissionSettingsPrompt(
+        for destination: PermissionSettingsDestination,
+        source: PermissionPromptSource,
+        beforeOpen: (() -> Void)? = nil
+    ) {
+        let prompt = Self.permissionSettingsPrompt(for: destination)
+        if Self.shouldActivateAppForPermissionPrompt(source: source) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = prompt.messageText
+        alert.informativeText = prompt.informativeText
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Not Now")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            beforeOpen?()
+            openSystemSettingsPane(prompt.settingsURL)
+        }
     }
 }

@@ -138,7 +138,7 @@ struct SettingsPresentationTests {
         )
         #expect(
             PermissionsCopy.permissionsHint
-                == "VoicePi asks for these at launch while macOS still treats them as undecided. After changing anything in System Settings, refresh here."
+                == "VoicePi shows a guided permission flow first, then hands off to macOS only when you choose to continue. After changing anything in System Settings, refresh here."
         )
         #expect(
             PermissionsCopy.accessibilityDescription
@@ -146,11 +146,11 @@ struct SettingsPresentationTests {
         )
         #expect(
             PermissionsCopy.inputMonitoringDescription
-                == "Required for listening to the global shortcut. VoicePi asks for it at launch while macOS still treats it as undecided."
+                == "Required for listening to the global shortcut."
         )
         #expect(
             PermissionsCopy.strategyDescription
-                == "VoicePi currently splits shortcut handling across two macOS privacy gates: Input Monitoring for listening, Accessibility for suppressing and injecting events. Microphone and Speech Recognition cover recording and local transcription."
+                == "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring open the matching System Settings pages."
         )
         #expect(
             PermissionsCopy.shortcutHint

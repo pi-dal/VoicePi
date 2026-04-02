@@ -1,3 +1,4 @@
+import AVFoundation
 import Testing
 @testable import VoicePi
 
@@ -16,5 +17,27 @@ struct SpeechRecorderMathTests {
         #expect(attackValue > 0.2)
         #expect(releaseValue < 0.8)
         #expect(attackValue - 0.2 > 0.8 - releaseValue)
+    }
+
+    @Test
+    func normalizedLevelReadsInt16PCMBufferData() throws {
+        let format = try #require(
+            AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 44_100,
+                channels: 1,
+                interleaved: false
+            )
+        )
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4))
+        buffer.frameLength = 4
+
+        let samples = try #require(buffer.int16ChannelData?[0])
+        samples[0] = 0
+        samples[1] = Int16.max / 2
+        samples[2] = -Int16.max / 2
+        samples[3] = 0
+
+        #expect(SpeechRecorderMath.normalizedLevel(from: buffer) > 0)
     }
 }

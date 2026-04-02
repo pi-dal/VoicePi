@@ -130,21 +130,123 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func accessibilityPromptStartsFollowUpWhileWaitingToAdvanceToInputMonitoring() {
+        #expect(
+            AppController.shouldAwaitAccessibilityAuthorization(
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                accessibilityStateAfterPrompt: .denied
+            )
+        )
+        #expect(
+            !AppController.shouldAwaitAccessibilityAuthorization(
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                accessibilityStateAfterPrompt: .granted
+            )
+        )
+        #expect(
+            !AppController.shouldAwaitAccessibilityAuthorization(
+                promptAccessibility: false,
+                requestInputMonitoringPermission: true,
+                accessibilityStateAfterPrompt: .denied
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func permissionSettingsPromptsUseConsistentCopyAndDestinations() {
+        #expect(
+            AppController.permissionSettingsPrompt(for: .accessibility) == .init(
+                messageText: "Accessibility Still Needs Approval",
+                informativeText: "VoicePi can continue setup by opening the Accessibility settings page. Open System Settings now?",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            )
+        )
+        #expect(
+            AppController.permissionSettingsPrompt(for: .inputMonitoring) == .init(
+                messageText: "Input Monitoring Still Needs Approval",
+                informativeText: "VoicePi can continue setup by opening the Input Monitoring settings page. Open System Settings now?",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func followUpPermissionPromptsBringVoicePiToFront() {
+        #expect(AppController.shouldActivateAppForPermissionPrompt(source: .accessibilityFollowUp))
+        #expect(AppController.shouldActivateAppForPermissionPrompt(source: .launchFollowUp))
+        #expect(!AppController.shouldActivateAppForPermissionPrompt(source: .manualSettingsButton))
+    }
+
+    @Test
+    @MainActor
+    func permissionSettingsTransitionsPreferCustomSettingsPrompts() {
+        #expect(AppController.permissionSettingsTransitionStyle(for: .accessibility) == .customPrompt)
+        #expect(AppController.permissionSettingsTransitionStyle(for: .inputMonitoring) == .customPrompt)
+    }
+
+    @Test
+    @MainActor
+    func firstRunMediaPermissionsUseCustomPrePromptsBeforeSystemSheets() {
+        #expect(
+            AppController.mediaPermissionTransitionStyle(
+                for: .microphone,
+                authorizationState: .unknown
+            ) == .customPrePromptThenSystemRequest
+        )
+        #expect(
+            AppController.mediaPermissionTransitionStyle(
+                for: .speech,
+                authorizationState: .unknown
+            ) == .customPrePromptThenSystemRequest
+        )
+        #expect(
+            AppController.mediaPermissionTransitionStyle(
+                for: .microphone,
+                authorizationState: .denied
+            ) == .customSettingsPrompt
+        )
+    }
+
+    @Test
+    @MainActor
+    func mediaPermissionPrePromptsUseGuidedCopy() {
+        #expect(
+            AppController.mediaPermissionPrePrompt(for: .microphone) == .init(
+                messageText: "Microphone Permission",
+                informativeText: "VoicePi uses the microphone to capture your dictation. Continue to the macOS permission prompt?",
+                continueTitle: "Continue"
+            )
+        )
+        #expect(
+            AppController.mediaPermissionPrePrompt(for: .speech) == .init(
+                messageText: "Speech Recognition Permission",
+                informativeText: "VoicePi uses Speech Recognition for on-device and Apple speech transcription. Continue to the macOS permission prompt?",
+                continueTitle: "Continue"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func launchOpensInputMonitoringSettingsWhenRequestDoesNotGrantAccess() {
         #expect(
-            AppController.shouldOpenInputMonitoringSettingsOnLaunch(
+            AppController.shouldOfferInputMonitoringSettingsOnLaunch(
                 requestGranted: false,
                 inputMonitoringState: .unknown
             )
         )
         #expect(
-            AppController.shouldOpenInputMonitoringSettingsOnLaunch(
+            AppController.shouldOfferInputMonitoringSettingsOnLaunch(
                 requestGranted: false,
                 inputMonitoringState: .denied
             )
         )
         #expect(
-            !AppController.shouldOpenInputMonitoringSettingsOnLaunch(
+            !AppController.shouldOfferInputMonitoringSettingsOnLaunch(
                 requestGranted: true,
                 inputMonitoringState: .granted
             )
