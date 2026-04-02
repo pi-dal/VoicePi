@@ -62,6 +62,77 @@ struct FloatingPanelControllerTests {
         controller.applyInterfaceTheme(.system)
         #expect(controller.window?.appearance == nil)
     }
+
+    @Test
+    @MainActor
+    func floatingPanelKeepsNewestTranscriptCharactersVisibleWhenWidthCaps() {
+        let controller = FloatingPanelController()
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        let label = findLabel(in: window?.contentView)
+
+        #expect(label?.maximumNumberOfLines == 1)
+        #expect(label?.lineBreakMode == .byTruncatingHead)
+    }
+
+    @Test
+    @MainActor
+    func floatingPanelSoftensTheDisappearingLeadingEdge() {
+        let controller = FloatingPanelController()
+
+        controller.showRecording(transcript: String(repeating: "Long transcript ", count: 32))
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let label = findLabel(in: window?.contentView)
+        let mask = label?.layer?.mask as? CAGradientLayer
+        let locations = mask?.locations as? [NSNumber]
+
+        #expect(mask != nil)
+        #expect(locations?.count == 3)
+        #expect(locations?[0].doubleValue == 0)
+    }
+
+    @Test
+    @MainActor
+    func floatingPanelDoesNotFadeWhenTranscriptFitsWithinAvailableWidth() {
+        let controller = FloatingPanelController()
+
+        controller.showRefining(transcript: "Short")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let label = findLabel(in: window?.contentView)
+        let mask = label?.layer?.mask as? CAGradientLayer
+
+        #expect(label?.stringValue == "Refining...")
+        #expect(mask == nil)
+    }
+
+    @Test
+    @MainActor
+    func floatingPanelDoesNotAnimateShortLiveTranscriptUpdates() {
+        let controller = FloatingPanelController()
+
+        controller.showRecording(transcript: "")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        controller.updateLive(transcript: "Hello", level: 0.25)
+
+        let label = findLabel(in: window?.contentView)
+        let animationKeys = label?.layer?.animationKeys() ?? []
+
+        #expect(label?.stringValue == "Hello")
+        #expect(animationKeys.contains("voicepi.transcriptUpdate") == false)
+    }
 }
 
 private func findSubview<T: NSView>(in root: NSView?, ofType type: T.Type) -> T? {

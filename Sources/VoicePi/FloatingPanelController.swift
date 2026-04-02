@@ -145,8 +145,8 @@ final class FloatingPanelController: NSWindowController {
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 1, 0.5, 1)
             panel.animator().setFrame(targetFrame, display: true)
         }
     }
@@ -182,9 +182,18 @@ private final class FloatingPanelContentViewController: NSViewController {
     private let stackView = NSStackView()
     private let waveformView = WaveformBarsView(frame: .zero)
     private let transcriptLabel = NSTextField(labelWithString: "")
+    private let transcriptFadeMask = CAGradientLayer()
 
     private(set) var preferredPanelWidth: CGFloat = 260
     private var phase: Phase = .recording
+    private let transcriptFadeWidth: CGFloat = 28
+    private let maximumVisibleTranscriptWidth: CGFloat = 560
+    private let transcriptUpdateAnimationKey = "voicepi.transcriptUpdate"
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateTranscriptFadeMask()
+    }
 
     override func loadView() {
         view = rootView
@@ -210,8 +219,9 @@ private final class FloatingPanelContentViewController: NSViewController {
         transcriptLabel.translatesAutoresizingMaskIntoConstraints = false
         transcriptLabel.font = .systemFont(ofSize: 15, weight: .medium)
         transcriptLabel.textColor = NSColor.white.withAlphaComponent(0.96)
-        transcriptLabel.lineBreakMode = .byTruncatingTail
+        transcriptLabel.lineBreakMode = .byTruncatingHead
         transcriptLabel.maximumNumberOfLines = 1
+        transcriptLabel.wantsLayer = true
         transcriptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         transcriptLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -261,14 +271,16 @@ private final class FloatingPanelContentViewController: NSViewController {
 
     func updateTranscript(_ transcript: String) {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextText: String
 
         switch phase {
         case .recording:
-            transcriptLabel.stringValue = trimmed.isEmpty ? "正在聆听…" : transcript
+            nextText = trimmed.isEmpty ? "正在聆听…" : transcript
         case .refining:
-            transcriptLabel.stringValue = "Refining..."
+            nextText = "Refining..."
         }
 
+        setTranscriptText(nextText, animated: shouldAnimateTranscriptUpdate(to: nextText))
         recalculatePreferredWidth()
     }
 
@@ -280,6 +292,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         phase = .recording
         transcriptLabel.stringValue = ""
         waveformView.update(level: 0.02)
+        updateTranscriptFadeMask()
         recalculatePreferredWidth()
     }
 
@@ -288,23 +301,96 @@ private final class FloatingPanelContentViewController: NSViewController {
 
         switch phase {
         case .recording:
-            transcriptLabel.stringValue = currentText.isEmpty || currentText == "Refining..." ? "正在聆听…" : currentText
+            setTranscriptText(
+                currentText.isEmpty || currentText == "Refining..." ? "正在聆听…" : currentText,
+                animated: false
+            )
         case .refining:
-            transcriptLabel.stringValue = "Refining..."
+            setTranscriptText("Refining...", animated: false)
         }
 
         recalculatePreferredWidth()
     }
 
+    private func setTranscriptText(_ text: String, animated: Bool) {
+        guard transcriptLabel.stringValue != text else {
+            updateTranscriptFadeMask()
+            return
+        }
+
+        if animated {
+            animateTranscriptUpdate()
+        }
+
+        transcriptLabel.stringValue = text
+        updateTranscriptFadeMask()
+    }
+
     private func recalculatePreferredWidth() {
-        let text = transcriptLabel.stringValue as NSString
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: transcriptLabel.font ?? NSFont.systemFont(ofSize: 15, weight: .medium)
-        ]
-        let measuredTextWidth = ceil(text.size(withAttributes: attributes).width)
+        let measuredTextWidth = measuredTranscriptWidth()
         let elasticTextWidth = max(160, min(560, measuredTextWidth + 8))
         preferredPanelWidth = 18 + 44 + 14 + elasticTextWidth + 18
         widthDidChange?(preferredPanelWidth)
+    }
+
+    private func shouldAnimateTranscriptUpdate(to text: String) -> Bool {
+        phase == .recording && transcriptNeedsFade(for: text)
+    }
+
+    private func animateTranscriptUpdate() {
+        guard view.window?.isVisible == true, let layer = transcriptLabel.layer else { return }
+
+        layer.removeAnimation(forKey: transcriptUpdateAnimationKey)
+
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = 0.78
+        opacity.toValue = 1
+
+        let translation = CABasicAnimation(keyPath: "transform.translation.x")
+        translation.fromValue = 5
+        translation.toValue = 0
+
+        let group = CAAnimationGroup()
+        group.animations = [opacity, translation]
+        group.duration = 0.14
+        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+
+        layer.add(group, forKey: transcriptUpdateAnimationKey)
+    }
+
+    private func updateTranscriptFadeMask() {
+        guard let layer = transcriptLabel.layer else { return }
+
+        let bounds = transcriptLabel.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        guard transcriptNeedsFade() else {
+            layer.mask = nil
+            return
+        }
+
+        let fadeFraction = max(0.08, min(0.22, transcriptFadeWidth / bounds.width))
+        transcriptFadeMask.frame = bounds
+        transcriptFadeMask.startPoint = CGPoint(x: 0, y: 0.5)
+        transcriptFadeMask.endPoint = CGPoint(x: 1, y: 0.5)
+        transcriptFadeMask.colors = [
+            NSColor.clear.cgColor,
+            NSColor.white.cgColor,
+            NSColor.white.cgColor
+        ]
+        transcriptFadeMask.locations = [0, NSNumber(value: Double(fadeFraction)), 1]
+        layer.mask = transcriptFadeMask
+    }
+
+    private func transcriptNeedsFade(for text: String? = nil) -> Bool {
+        measuredTranscriptWidth(for: text) > maximumVisibleTranscriptWidth
+    }
+
+    private func measuredTranscriptWidth(for text: String? = nil) -> CGFloat {
+        let text = (text ?? transcriptLabel.stringValue) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: transcriptLabel.font ?? NSFont.systemFont(ofSize: 15, weight: .medium)
+        ]
+        return ceil(text.size(withAttributes: attributes).width)
     }
 
     private func syncAppearance() {
