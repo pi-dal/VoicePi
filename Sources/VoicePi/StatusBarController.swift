@@ -145,6 +145,46 @@ struct StatusMenuPresentation: Equatable {
     }
 }
 
+struct LLMSectionFeedback {
+    static func message(
+        mode: PostProcessingMode,
+        provider: TranslationProvider,
+        configuration: LLMConfiguration,
+        selectedLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage,
+        appleTranslateSupported: Bool
+    ) -> String {
+        switch mode {
+        case .disabled:
+            return "Text processing is disabled. VoicePi will inject the transcript without additional refinement or translation."
+        case .refinement:
+            guard configuration.isConfigured else {
+                return "Refinement is selected, but API Base URL, API Key, and Model are still required."
+            }
+
+            if targetLanguage == selectedLanguage {
+                return "Refinement is active and will use the configured LLM provider."
+            }
+
+            return "Refinement is active. VoicePi will fold translation into the LLM prompt and target \(targetLanguage.recognitionDisplayName)."
+        case .translation:
+            if provider == .appleTranslate {
+                return "Translation is active and defaults to Apple Translate."
+            }
+
+            guard configuration.isConfigured else {
+                if appleTranslateSupported {
+                    return "LLM translation is selected, but the LLM configuration is incomplete. VoicePi will fall back to Apple Translate."
+                }
+
+                return "LLM translation is selected because Apple Translate is unavailable on this macOS version, but the LLM configuration is incomplete. Translation will not work until API Base URL, API Key, and Model are provided."
+            }
+
+            return "Translation is active and will use the configured LLM provider."
+        }
+    }
+}
+
 @MainActor
 final class StatusBarController: NSObject {
     weak var delegate: StatusBarControllerDelegate?
@@ -158,7 +198,6 @@ final class StatusBarController: NSObject {
     private weak var statusMenuItem: NSMenuItem?
     private weak var languageStatusMenuItem: NSMenuItem?
     private weak var permissionsStatusMenuItem: NSMenuItem?
-    private weak var llmToggleItem: NSMenuItem?
     private weak var shortcutMenuItem: NSMenuItem?
     private var inputLanguageItems: [SupportedLanguage: NSMenuItem] = [:]
     private var outputLanguageItems: [SupportedLanguage: NSMenuItem] = [:]
@@ -395,9 +434,6 @@ final class StatusBarController: NSObject {
             item.representedObject = mode.rawValue
             item.state = mode == model.postProcessingMode ? .on : .off
             llmMenu.addItem(item)
-            if mode == .refinement {
-                llmToggleItem = item
-            }
         }
 
         llmMenu.addItem(.separator())
@@ -1298,32 +1334,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
         testButton.isEnabled = usesLLM
 
-        switch mode {
-        case .disabled:
-            setLLMFeedback(.neutral("Text processing is disabled. VoicePi will inject the transcript without additional refinement or translation."))
-        case .refinement:
-            if configuration.isConfigured {
-                if targetLanguage == model.selectedLanguage {
-                    setLLMFeedback(.neutral("Refinement is active and will use the configured LLM provider."))
-                } else {
-                    setLLMFeedback(.neutral("Refinement is active. VoicePi will fold translation into the LLM prompt and target \(targetLanguage.recognitionDisplayName)."))
-                }
-            } else {
-                setLLMFeedback(.neutral("Refinement is selected, but API Base URL, API Key, and Model are still required."))
-            }
-        case .translation:
-            if provider == .appleTranslate {
-                setLLMFeedback(.neutral("Translation is active and defaults to Apple Translate."))
-            } else if configuration.isConfigured {
-                setLLMFeedback(.neutral("Translation is active and will use the configured LLM provider."))
-            } else {
-                setLLMFeedback(.neutral(
-                    appleTranslateSupported
-                        ? "LLM translation is selected, but the LLM configuration is incomplete. VoicePi will fall back to Apple Translate."
-                        : "Translation is active with the LLM provider only because Apple Translate is unavailable on this macOS version."
-                ))
-            }
-        }
+        setLLMFeedback(.neutral(
+            LLMSectionFeedback.message(
+                mode: mode,
+                provider: provider,
+                configuration: configuration,
+                selectedLanguage: model.selectedLanguage,
+                targetLanguage: targetLanguage,
+                appleTranslateSupported: appleTranslateSupported
+            )
+        ))
     }
 
     private func currentConfigurationFromFields() -> LLMConfiguration {

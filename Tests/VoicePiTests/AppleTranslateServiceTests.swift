@@ -4,12 +4,13 @@ import Testing
 
 struct AppleTranslateServiceTests {
     @Test
-    func supportRequiresMacOS15OrLater() {
+    func supportRequiresTranslationFrameworkAndMacOS15OrLater() {
         #expect(
             AppleTranslateService.isSupported(
                 operatingSystemVersion: .init(majorVersion: 14, minorVersion: 6, patchVersion: 0)
             ) == false
         )
+#if canImport(Translation)
         #expect(
             AppleTranslateService.isSupported(
                 operatingSystemVersion: .init(majorVersion: 15, minorVersion: 0, patchVersion: 0)
@@ -20,6 +21,18 @@ struct AppleTranslateServiceTests {
                 operatingSystemVersion: .init(majorVersion: 16, minorVersion: 0, patchVersion: 0)
             ) == true
         )
+#else
+        #expect(
+            AppleTranslateService.isSupported(
+                operatingSystemVersion: .init(majorVersion: 15, minorVersion: 0, patchVersion: 0)
+            ) == false
+        )
+        #expect(
+            AppleTranslateService.isSupported(
+                operatingSystemVersion: .init(majorVersion: 16, minorVersion: 0, patchVersion: 0)
+            ) == false
+        )
+#endif
     }
 
     @Test
