@@ -109,8 +109,17 @@ struct LLMRefinerTests {
         let request = try #require(capturedRequests.snapshot.first)
         let body = try #require(requestBody(from: request))
         let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
-        #expect(payload.messages[0].content.contains("Notwithstanding Rule 2") == true)
-        #expect(payload.messages[0].content.contains("translate the final output into Japanese") == true)
+        #expect(payload.messages[0].content.contains("Translate the entire final output into Japanese.") == true)
+        #expect(payload.messages[0].content.contains("Output only the final translated text in Japanese.") == true)
+    }
+
+    @Test
+    func translationPromptDoesNotContainConflictingRefinementOnlyRules() {
+        let prompt = LLMRefiner.systemPrompt(targetLanguage: .japanese)
+
+        #expect(prompt.contains("Never rewrite, polish, summarize, rephrase, translate") == false)
+        #expect(prompt.contains("If the input already looks correct, return it exactly as-is.") == false)
+        #expect(prompt.contains("Output only the final translated text in Japanese.") == true)
     }
 
     @Test

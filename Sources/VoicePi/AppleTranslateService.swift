@@ -27,8 +27,22 @@ enum AppleTranslateServiceError: LocalizedError, Equatable {
 }
 
 final class AppleTranslateService: TranscriptTranslating {
+    struct TranslationSegment: Equatable {
+        let text: String
+        let separatorAfter: String
+    }
+
     static var isSupported: Bool {
         isSupported(operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersion)
+    }
+
+    static func translationSegments(
+        for text: String,
+        maxSegmentLength: Int = 1_200
+    ) -> [TranslationSegment] {
+        let segmentLength = max(1, maxSegmentLength)
+        let paragraphUnits = translationUnits(in: text, option: .byParagraphs)
+        return packedSegments(from: paragraphUnits, maxSegmentLength: segmentLength)
     }
 
     static func isSupported(operatingSystemVersion: OperatingSystemVersion) -> Bool {
@@ -84,7 +98,7 @@ final class AppleTranslateService: TranscriptTranslating {
         }
 
         let translated = try await AppleTranslationBridge.shared.translate(
-            text: input,
+            segments: Self.translationSegments(for: input),
             source: source,
             target: target
         )
@@ -100,6 +114,186 @@ final class AppleTranslateService: TranscriptTranslating {
 #else
     private static let canUseTranslationFramework = false
 #endif
+
+    private struct TranslationUnit {
+        let text: String
+        let separatorAfter: String
+    }
+
+    private static func packedSegments(
+        from units: [TranslationUnit],
+        maxSegmentLength: Int
+    ) -> [TranslationSegment] {
+        guard !units.isEmpty else {
+            return []
+        }
+
+        var segments: [TranslationSegment] = []
+        var currentText = ""
+        var currentSeparator = ""
+
+        for unit in units {
+            guard !unit.text.isEmpty else {
+                currentSeparator += unit.separatorAfter
+                continue
+            }
+
+            if unit.text.count > maxSegmentLength {
+                if !currentText.isEmpty {
+                    segments.append(.init(text: currentText, separatorAfter: currentSeparator))
+                    currentText = ""
+                    currentSeparator = ""
+                }
+                segments.append(contentsOf: splitOversizedUnit(unit, maxSegmentLength: maxSegmentLength))
+                continue
+            }
+
+            if currentText.isEmpty {
+                currentText = unit.text
+                currentSeparator = unit.separatorAfter
+                continue
+            }
+
+            let candidateText = currentText + currentSeparator + unit.text
+            if candidateText.count <= maxSegmentLength {
+                currentText = candidateText
+                currentSeparator = unit.separatorAfter
+            } else {
+                segments.append(.init(text: currentText, separatorAfter: currentSeparator))
+                currentText = unit.text
+                currentSeparator = unit.separatorAfter
+            }
+        }
+
+        if !currentText.isEmpty {
+            segments.append(.init(text: currentText, separatorAfter: currentSeparator))
+        }
+
+        return segments
+    }
+
+    private static func splitOversizedUnit(
+        _ unit: TranslationUnit,
+        maxSegmentLength: Int
+    ) -> [TranslationSegment] {
+        let sentenceUnits = translationUnits(in: unit.text, option: .bySentences)
+        if sentenceUnits.count > 1 {
+            var segments = packedSegments(from: sentenceUnits, maxSegmentLength: maxSegmentLength)
+            guard !segments.isEmpty else {
+                return [.init(text: unit.text, separatorAfter: unit.separatorAfter)]
+            }
+
+            let lastIndex = segments.index(before: segments.endIndex)
+            segments[lastIndex] = .init(
+                text: segments[lastIndex].text,
+                separatorAfter: unit.separatorAfter
+            )
+            return segments
+        }
+
+        return hardWrappedSegments(for: unit, maxSegmentLength: maxSegmentLength)
+    }
+
+    private static func hardWrappedSegments(
+        for unit: TranslationUnit,
+        maxSegmentLength: Int
+    ) -> [TranslationSegment] {
+        let characters = Array(unit.text)
+        guard !characters.isEmpty else {
+            return [.init(text: "", separatorAfter: unit.separatorAfter)]
+        }
+
+        var segments: [TranslationSegment] = []
+        var cursor = 0
+
+        while cursor < characters.count {
+            let remaining = characters.count - cursor
+            if remaining <= maxSegmentLength {
+                segments.append(
+                    .init(
+                        text: String(characters[cursor..<characters.count]),
+                        separatorAfter: unit.separatorAfter
+                    )
+                )
+                break
+            }
+
+            let searchEnd = min(cursor + maxSegmentLength, characters.count)
+            var whitespaceIndex: Int?
+            var index = searchEnd - 1
+            while index >= cursor {
+                if characters[index].isWhitespace {
+                    whitespaceIndex = index
+                    break
+                }
+                index -= 1
+            }
+
+            if let whitespaceIndex, whitespaceIndex > cursor {
+                let chunk = String(characters[cursor..<whitespaceIndex])
+                var nextCursor = whitespaceIndex
+                var separator = ""
+                while nextCursor < characters.count, characters[nextCursor].isWhitespace {
+                    separator.append(characters[nextCursor])
+                    nextCursor += 1
+                }
+                segments.append(.init(text: chunk, separatorAfter: separator))
+                cursor = nextCursor
+            } else {
+                segments.append(
+                    .init(
+                        text: String(characters[cursor..<searchEnd]),
+                        separatorAfter: ""
+                    )
+                )
+                cursor = searchEnd
+            }
+        }
+
+        return segments
+    }
+
+    private static func translationUnits(
+        in text: String,
+        option: NSString.EnumerationOptions
+    ) -> [TranslationUnit] {
+        guard !text.isEmpty else {
+            return []
+        }
+
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var units: [TranslationUnit] = []
+
+        nsText.enumerateSubstrings(
+            in: fullRange,
+            options: [option, .substringNotRequired]
+        ) { _, substringRange, enclosingRange, _ in
+            let content = nsText.substring(with: substringRange)
+            let separatorLocation = substringRange.location + substringRange.length
+            let separatorLength = enclosingRange.location + enclosingRange.length - separatorLocation
+            var separatorAfter = separatorLength > 0
+                ? nsText.substring(with: NSRange(location: separatorLocation, length: separatorLength))
+                : ""
+            var contentEnd = content.endIndex
+            while contentEnd > content.startIndex {
+                let previousIndex = content.index(before: contentEnd)
+                guard content[previousIndex].isWhitespace else {
+                    break
+                }
+                contentEnd = previousIndex
+            }
+            let trimmedContent = String(content[..<contentEnd])
+
+            if contentEnd < content.endIndex {
+                separatorAfter = String(content[contentEnd...]) + separatorAfter
+            }
+
+            units.append(.init(text: trimmedContent, separatorAfter: separatorAfter))
+        }
+
+        return units.isEmpty ? [.init(text: text, separatorAfter: "")] : units
+    }
 }
 
 private extension SupportedLanguage {
@@ -139,12 +333,12 @@ private final class AppleTranslationBridge {
     }
 
     func translate(
-        text: String,
+        segments: [AppleTranslateService.TranslationSegment],
         source: Locale.Language,
         target: Locale.Language
     ) async throws -> String {
         try await driver.translate(
-            text: text,
+            segments: segments,
             source: source,
             target: target
         )
@@ -156,7 +350,7 @@ private final class AppleTranslationBridge {
 private final class AppleTranslationDriver: ObservableObject {
     struct Request {
         let id: UUID
-        let text: String
+        let segments: [AppleTranslateService.TranslationSegment]
         let source: Locale.Language
         let target: Locale.Language
     }
@@ -167,7 +361,7 @@ private final class AppleTranslationDriver: ObservableObject {
     private var continuation: CheckedContinuation<String, Error>?
 
     func translate(
-        text: String,
+        segments: [AppleTranslateService.TranslationSegment],
         source: Locale.Language,
         target: Locale.Language
     ) async throws -> String {
@@ -177,7 +371,7 @@ private final class AppleTranslationDriver: ObservableObject {
 
         let request = Request(
             id: UUID(),
-            text: text,
+            segments: segments,
             source: source,
             target: target
         )
@@ -204,8 +398,13 @@ private final class AppleTranslationDriver: ObservableObject {
         }
 
         do {
-            let response = try await session.translate(request.text)
-            complete(requestID: request.id, result: .success(response.targetText))
+            var translatedText = ""
+            for segment in request.segments {
+                let response = try await session.translate(segment.text)
+                translatedText += response.targetText
+                translatedText += segment.separatorAfter
+            }
+            complete(requestID: request.id, result: .success(translatedText))
         } catch {
             complete(requestID: request.id, result: .failure(error))
         }

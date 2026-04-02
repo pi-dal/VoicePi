@@ -101,10 +101,31 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func launchPromptsAccessibilityOnlyAfterInputMonitoringIsGranted() {
-        #expect(!AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .unknown))
-        #expect(!AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .denied))
+    func launchPromptsAccessibilityBeforeInputMonitoringStateIsResolved() {
+        #expect(AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .unknown))
+        #expect(AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .denied))
         #expect(AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .granted))
+    }
+
+    @Test
+    @MainActor
+    func permissionRefreshSequenceSkipsInputMonitoringUntilAccessibilityIsGranted() {
+        #expect(
+            AppController.permissionRefreshSequence(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                accessibilityStateAfterPrompt: .denied
+            ) == [.mediaPermissions, .accessibility]
+        )
+        #expect(
+            AppController.permissionRefreshSequence(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                accessibilityStateAfterPrompt: .granted
+            ) == [.mediaPermissions, .accessibility, .inputMonitoring]
+        )
     }
 
     @Test

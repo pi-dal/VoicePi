@@ -42,4 +42,35 @@ struct AppleTranslateServiceTests {
         #expect(AppleTranslateService.canTranslateImmediately(for: .supported) == false)
         #expect(AppleTranslateService.canTranslateImmediately(for: .unsupported) == false)
     }
+
+    @Test
+    func longTextSplitsIntoSentenceBoundariesBeforeTranslation() {
+        let segments = AppleTranslateService.translationSegments(
+            for: "Aaa bbb ccc. Ddd eee fff. Ggg hhh iii.",
+            maxSegmentLength: 12
+        )
+
+        #expect(
+            segments == [
+                .init(text: "Aaa bbb ccc.", separatorAfter: " "),
+                .init(text: "Ddd eee fff.", separatorAfter: " "),
+                .init(text: "Ggg hhh iii.", separatorAfter: "")
+            ]
+        )
+    }
+
+    @Test
+    func paragraphBoundariesArePreservedWhenChunkingLongText() {
+        let segments = AppleTranslateService.translationSegments(
+            for: "Short one.\n\nShort two.",
+            maxSegmentLength: 10
+        )
+
+        #expect(
+            segments == [
+                .init(text: "Short one.", separatorAfter: "\n\n"),
+                .init(text: "Short two.", separatorAfter: "")
+            ]
+        )
+    }
 }

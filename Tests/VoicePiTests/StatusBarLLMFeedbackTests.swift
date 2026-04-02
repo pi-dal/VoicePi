@@ -4,6 +4,17 @@ import Testing
 
 struct StatusBarLLMFeedbackTests {
     @Test
+    func displayProviderUsesLLMWhileRefinementIsSelected() {
+        #expect(
+            TranslationProvider.displayProvider(
+                mode: .refinement,
+                storedProvider: .appleTranslate,
+                appleTranslateSupported: true
+            ) == .llm
+        )
+    }
+
+    @Test
     func translationWithIncompleteLLMConfigFallsBackToAppleTranslateWhenAvailable() {
         let message = LLMSectionFeedback.message(
             mode: .translation,

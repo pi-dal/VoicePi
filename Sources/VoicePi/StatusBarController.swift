@@ -1265,7 +1265,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         selectPopupItem(in: postProcessingModePopup, matching: model.postProcessingMode.rawValue)
         selectPopupItem(
             in: translationProviderPopup,
-            matching: model.effectiveTranslationProvider(
+            matching: TranslationProvider.displayProvider(
+                mode: model.postProcessingMode,
+                storedProvider: model.translationProvider,
                 appleTranslateSupported: appleTranslateSupported
             ).rawValue
         )
@@ -1330,6 +1332,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let targetLanguage = currentTargetLanguage()
         let configuration = currentConfigurationFromFields()
         let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
+
+        selectPopupItem(
+            in: translationProviderPopup,
+            matching: TranslationProvider.displayProvider(
+                mode: mode,
+                storedProvider: model.translationProvider,
+                appleTranslateSupported: appleTranslateSupported
+            ).rawValue
+        )
 
         translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
         testButton.isEnabled = usesLLM
@@ -1600,8 +1611,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func saveConfiguration() {
         let configuration = currentConfigurationFromFields()
-        model.setPostProcessingMode(currentPostProcessingMode())
-        model.setTranslationProvider(currentTranslationProvider())
+        let mode = currentPostProcessingMode()
+        model.setPostProcessingMode(mode)
+        if mode == .translation {
+            model.setTranslationProvider(currentTranslationProvider())
+        }
         model.setTargetLanguage(currentTargetLanguage())
         model.saveLLMConfiguration(
             baseURL: configuration.baseURL,

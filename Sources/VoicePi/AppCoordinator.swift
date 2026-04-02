@@ -12,6 +12,12 @@ final class AppController: NSObject {
         let statusMessage: String?
     }
 
+    enum PermissionRefreshStep: Equatable {
+        case mediaPermissions
+        case accessibility
+        case inputMonitoring
+    }
+
     enum PressAction: Equatable {
         case startRecording
         case stopRecording
@@ -76,8 +82,8 @@ final class AppController: NSObject {
         .ignore
     }
 
-    static func shouldPromptAccessibilityOnLaunch(inputMonitoringState: AuthorizationState) -> Bool {
-        inputMonitoringState == .granted
+    static func shouldPromptAccessibilityOnLaunch(inputMonitoringState _: AuthorizationState) -> Bool {
+        true
     }
 
     static func shouldOpenInputMonitoringSettingsOnLaunch(
@@ -111,6 +117,29 @@ final class AppController: NSObject {
         )
     }
 
+    static func permissionRefreshSequence(
+        requestMediaPermissions: Bool,
+        promptAccessibility: Bool,
+        requestInputMonitoringPermission: Bool,
+        accessibilityStateAfterPrompt: AuthorizationState
+    ) -> [PermissionRefreshStep] {
+        var steps: [PermissionRefreshStep] = []
+
+        if requestMediaPermissions {
+            steps.append(.mediaPermissions)
+        }
+
+        if promptAccessibility {
+            steps.append(.accessibility)
+        }
+
+        if requestInputMonitoringPermission, accessibilityStateAfterPrompt == .granted {
+            steps.append(.inputMonitoring)
+        }
+
+        return steps
+    }
+
     func start() {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         model.$interfaceTheme
@@ -132,18 +161,23 @@ final class AppController: NSObject {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let requestGranted = self.requestInputMonitoringPermissionIfNeeded()
+            await self.refreshPermissionStates(
+                promptAccessibility: Self.shouldPromptAccessibilityOnLaunch(
+                    inputMonitoringState: self.currentInputMonitoringAuthorizationState()
+                ),
+                requestMediaPermissions: true,
+                requestInputMonitoringPermission: true
+            )
+
+            let accessibilityState = self.currentAccessibilityAuthorizationState(prompt: false)
             let inputMonitoringState = self.currentInputMonitoringAuthorizationState()
-            if Self.shouldOpenInputMonitoringSettingsOnLaunch(
-                requestGranted: requestGranted,
-                inputMonitoringState: inputMonitoringState
-            ) {
+            if accessibilityState == .granted,
+               Self.shouldOpenInputMonitoringSettingsOnLaunch(
+                   requestGranted: inputMonitoringState == .granted,
+                   inputMonitoringState: inputMonitoringState
+               ) {
                 self.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
             }
-            await self.refreshPermissionStates(
-                promptAccessibility: Self.shouldPromptAccessibilityOnLaunch(inputMonitoringState: inputMonitoringState),
-                requestMediaPermissions: true
-            )
         }
     }
 
@@ -375,14 +409,27 @@ final class AppController: NSObject {
             _ = await requestSpeechPermissionIfNeededIfNeededForBackend()
         }
 
-        if requestInputMonitoringPermission {
+        let accessibilityStateAfterPrompt: AuthorizationState
+        if promptAccessibility {
+            _ = requestAccessibilityPermission(prompt: true)
+            accessibilityStateAfterPrompt = currentAccessibilityAuthorizationState(prompt: false)
+        } else {
+            accessibilityStateAfterPrompt = currentAccessibilityAuthorizationState(prompt: false)
+        }
+
+        if Self.permissionRefreshSequence(
+            requestMediaPermissions: requestMediaPermissions,
+            promptAccessibility: promptAccessibility,
+            requestInputMonitoringPermission: requestInputMonitoringPermission,
+            accessibilityStateAfterPrompt: accessibilityStateAfterPrompt
+        ).contains(.inputMonitoring) {
             _ = requestInputMonitoringPermissionIfNeeded()
         }
 
         updateAuthorizationStates(
             microphoneState: currentMicrophoneAuthorizationState(),
             speechState: currentSpeechAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: promptAccessibility),
+            accessibilityState: accessibilityStateAfterPrompt,
             inputMonitoringState: currentInputMonitoringAuthorizationState()
         )
 

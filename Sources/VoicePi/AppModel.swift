@@ -540,6 +540,21 @@ enum TranslationProvider: String, CaseIterable, Identifiable, Codable {
         let available = availableProviders(appleTranslateSupported: appleTranslateSupported)
         return available.contains(selected) ? selected : available[0]
     }
+
+    static func displayProvider(
+        mode: PostProcessingMode,
+        storedProvider: TranslationProvider,
+        appleTranslateSupported: Bool
+    ) -> TranslationProvider {
+        switch mode {
+        case .refinement:
+            return .llm
+        case .translation:
+            return sanitized(storedProvider, appleTranslateSupported: appleTranslateSupported)
+        case .disabled:
+            return sanitized(storedProvider, appleTranslateSupported: appleTranslateSupported)
+        }
+    }
 }
 
 struct RemoteASRConfiguration: Codable, Equatable {

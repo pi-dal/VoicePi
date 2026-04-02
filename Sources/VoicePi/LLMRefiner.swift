@@ -170,10 +170,17 @@ final class LLMRefiner {
         }
 
         return """
-        \(conservativeSystemPrompt)
+        You are translating automatic speech recognition output.
 
-        Additional rule:
-        10. Notwithstanding Rule 2, translate the final output into \(targetLanguage.recognitionDisplayName). Keep the meaning exact and stay just as conservative about corrections before translating.
+        Your behavior must be extremely conservative.
+
+        Rules:
+        1. Only fix obvious speech recognition mistakes before translating.
+        2. Preserve the original meaning, tone, order, formatting intent, punctuation intent, and technical terms when they are already correct.
+        3. Do not add explanations, markdown, JSON, quotes, or commentary.
+        4. Translate the entire final output into \(targetLanguage.recognitionDisplayName).
+        5. If some parts are already in \(targetLanguage.recognitionDisplayName), keep them natural and consistent with the final translated output.
+        6. Output only the final translated text in \(targetLanguage.recognitionDisplayName).
         """
     }
 
