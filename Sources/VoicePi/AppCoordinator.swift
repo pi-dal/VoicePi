@@ -6,6 +6,12 @@ import Speech
 
 @MainActor
 final class AppController: NSObject {
+    struct HotkeyMonitorPlan: Equatable {
+        let shouldStartListener: Bool
+        let shouldStartSuppressor: Bool
+        let statusMessage: String?
+    }
+
     enum PressAction: Equatable {
         case startRecording
         case stopRecording
@@ -18,7 +24,8 @@ final class AppController: NSObject {
     }
 
     private let model = AppModel()
-    private let shortcutMonitor = ShortcutMonitor()
+    private let shortcutListener = ShortcutMonitor(mode: .listenOnly)
+    private let shortcutSuppressor = ShortcutMonitor(mode: .suppressOnly)
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let llmRefiner = LLMRefiner()
@@ -36,6 +43,9 @@ final class AppController: NSObject {
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
+
+    static let shortcutSuppressionWarningMessage =
+        "Shortcut listening is active, but Accessibility is still required to suppress the shortcut and inject pasted text."
 
     static func pressAction(
         isRecording: Bool,
@@ -69,10 +79,38 @@ final class AppController: NSObject {
         inputMonitoringState == .granted
     }
 
+    static func hotkeyMonitorPlan(
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        guard inputMonitoringState == .granted else {
+            return HotkeyMonitorPlan(
+                shouldStartListener: false,
+                shouldStartSuppressor: false,
+                statusMessage: shortcutMonitoringFailureMessage
+            )
+        }
+
+        if accessibilityState == .granted {
+            return HotkeyMonitorPlan(
+                shouldStartListener: true,
+                shouldStartSuppressor: true,
+                statusMessage: nil
+            )
+        }
+
+        return HotkeyMonitorPlan(
+            shouldStartListener: true,
+            shouldStartSuppressor: false,
+            statusMessage: shortcutSuppressionWarningMessage
+        )
+    }
+
     func start() {
         speechRecorder.delegate = self
-        shortcutMonitor.delegate = self
-        shortcutMonitor.shortcut = model.activationShortcut
+        shortcutListener.delegate = self
+        shortcutListener.shortcut = model.activationShortcut
+        shortcutSuppressor.shortcut = model.activationShortcut
 
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
@@ -92,7 +130,8 @@ final class AppController: NSObject {
 
     func stop() {
         pendingErrorHideTask?.cancel()
-        shortcutMonitor.stop()
+        shortcutListener.stop()
+        shortcutSuppressor.stop()
 
         if speechRecorder.isRecording {
             Task { @MainActor [weak self] in
@@ -333,24 +372,37 @@ final class AppController: NSObject {
     }
 
     private func ensureHotkeyMonitorRunning() {
-        let accessibilityGranted = currentAccessibilityAuthorizationState(prompt: false) == .granted
-        let inputMonitoringGranted = currentInputMonitoringAuthorizationState() == .granted
+        let plan = Self.hotkeyMonitorPlan(
+            inputMonitoringState: currentInputMonitoringAuthorizationState(),
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+        )
 
-        guard accessibilityGranted, inputMonitoringGranted else {
-            shortcutMonitor.stop()
-            if statusBarController != nil {
-                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
+        if !plan.shouldStartListener {
+            shortcutListener.stop()
+            shortcutSuppressor.stop()
+            if let statusMessage = plan.statusMessage, statusBarController != nil {
+                statusBarController?.setTransientStatus(statusMessage)
             }
             return
         }
 
-        guard shortcutMonitor.start() else {
+        guard shortcutListener.start() else {
+            shortcutSuppressor.stop()
             statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
             return
         }
 
+        if plan.shouldStartSuppressor {
+            if !shortcutSuppressor.start() {
+                statusBarController?.setTransientStatus(Self.shortcutSuppressionWarningMessage)
+                return
+            }
+        } else {
+            shortcutSuppressor.stop()
+        }
+
         if statusBarController != nil, model.errorState == nil {
-            statusBarController?.setTransientStatus(nil)
+            statusBarController?.setTransientStatus(plan.statusMessage)
         }
     }
 
@@ -505,12 +557,16 @@ final class AppController: NSObject {
 
 extension AppController: ShortcutMonitorDelegate {
     nonisolated func shortcutMonitorDidPress(_ monitor: ShortcutMonitor) {
+        guard monitor.mode != .suppressOnly else { return }
+
         Task { @MainActor [weak self] in
             self?.beginRecording()
         }
     }
 
     nonisolated func shortcutMonitorDidRelease(_ monitor: ShortcutMonitor) {
+        guard monitor.mode != .suppressOnly else { return }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
 
@@ -570,7 +626,8 @@ extension AppController: StatusBarControllerDelegate {
 
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut) {
         model.setActivationShortcut(shortcut)
-        shortcutMonitor.shortcut = shortcut
+        shortcutListener.shortcut = shortcut
+        shortcutSuppressor.shortcut = shortcut
         controller.refreshAll()
     }
 

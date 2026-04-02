@@ -4,6 +4,28 @@ import Testing
 struct ShortcutMonitorTests {
     @Test
     @MainActor
+    func listenOnlyMonitorUsesListenOnlyTapAndReportsMatches() {
+        let monitor = ShortcutMonitor(mode: .listenOnly)
+
+        #expect(monitor.mode == .listenOnly)
+        #expect(monitor.tapCreateOptions == .listenOnly)
+        #expect(monitor.reportsMatchedEvents)
+        #expect(!monitor.suppressesMatchedEvents)
+    }
+
+    @Test
+    @MainActor
+    func suppressOnlyMonitorUsesDefaultTapAndOnlySuppresses() {
+        let monitor = ShortcutMonitor(mode: .suppressOnly)
+
+        #expect(monitor.mode == .suppressOnly)
+        #expect(monitor.tapCreateOptions == .defaultTap)
+        #expect(!monitor.reportsMatchedEvents)
+        #expect(monitor.suppressesMatchedEvents)
+    }
+
+    @Test
+    @MainActor
     func startCanRecoverAfterInitialTapCreationFailure() {
         var attempts = 0
 

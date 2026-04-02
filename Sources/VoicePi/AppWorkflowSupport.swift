@@ -197,7 +197,7 @@ enum AppWorkflowSupport {
         remoteConfigurationReady: Bool
     ) -> String? {
         if !permissions.accessibilityGranted {
-            return "Accessibility permission is required for global key monitoring and paste injection."
+            return "Accessibility permission is required to suppress the shortcut and paste injected text."
         }
 
         if !permissions.microphoneGranted {

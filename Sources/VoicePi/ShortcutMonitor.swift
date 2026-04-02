@@ -7,8 +7,43 @@ protocol ShortcutMonitorDelegate: AnyObject {
     func shortcutMonitorDidRelease(_ monitor: ShortcutMonitor)
 }
 
+enum ShortcutMonitorMode: Equatable {
+    case listenAndSuppress
+    case listenOnly
+    case suppressOnly
+
+    var tapCreateOptions: CGEventTapOptions {
+        switch self {
+        case .listenOnly:
+            return .listenOnly
+        case .listenAndSuppress, .suppressOnly:
+            return .defaultTap
+        }
+    }
+
+    var reportsMatchedEvents: Bool {
+        switch self {
+        case .listenAndSuppress, .listenOnly:
+            return true
+        case .suppressOnly:
+            return false
+        }
+    }
+
+    var suppressesMatchedEvents: Bool {
+        switch self {
+        case .listenAndSuppress, .suppressOnly:
+            return true
+        case .listenOnly:
+            return false
+        }
+    }
+}
+
 final class ShortcutMonitor {
     weak var delegate: ShortcutMonitorDelegate?
+
+    let mode: ShortcutMonitorMode
 
     var shortcut: ActivationShortcut = .default {
         didSet {
@@ -33,11 +68,25 @@ final class ShortcutMonitor {
         (1 << CGEventType.keyUp.rawValue)
 
     init(
+        mode: ShortcutMonitorMode = .listenAndSuppress,
         tapBootstrapper: ((ShortcutMonitor) -> Bool)? = nil,
         tapDisabler: ((ShortcutMonitor) -> Void)? = nil
     ) {
+        self.mode = mode
         self.tapBootstrapper = tapBootstrapper
         self.tapDisabler = tapDisabler
+    }
+
+    var tapCreateOptions: CGEventTapOptions {
+        mode.tapCreateOptions
+    }
+
+    var reportsMatchedEvents: Bool {
+        mode.reportsMatchedEvents
+    }
+
+    var suppressesMatchedEvents: Bool {
+        mode.suppressesMatchedEvents
     }
 
     @discardableResult
@@ -66,7 +115,7 @@ final class ShortcutMonitor {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            options: tapCreateOptions,
             eventsOfInterest: eventMask,
             callback: callback,
             userInfo: userInfo
@@ -220,6 +269,10 @@ final class ShortcutMonitor {
     }
 
     private func shouldSuppressFlagsChangedEvent(_ event: CGEvent, flags: CGEventFlags) -> Bool {
+        guard suppressesMatchedEvents else {
+            return false
+        }
+
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
 
         if keyCode == CGKeyCode(kVK_Function) && shortcut.modifierFlags.contains(.function) {
@@ -266,6 +319,10 @@ final class ShortcutMonitor {
     }
 
     private func shouldSuppressKeyEvent(keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
+        guard suppressesMatchedEvents else {
+            return false
+        }
+
         guard shortcut.keyCodes.contains(UInt16(keyCode)) else {
             return false
         }
@@ -274,6 +331,10 @@ final class ShortcutMonitor {
     }
 
     private func handleMonitorResult(_ result: ShortcutMonitorResult) {
+        guard reportsMatchedEvents else {
+            return
+        }
+
         if result.didPress {
             delegate?.shortcutMonitorDidPress(self)
         }
