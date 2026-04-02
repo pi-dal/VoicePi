@@ -8,8 +8,7 @@ import Speech
 @MainActor
 final class AppController: NSObject {
     struct HotkeyMonitorPlan: Equatable {
-        let shouldStartListener: Bool
-        let shouldStartSuppressor: Bool
+        let primaryMonitorMode: ShortcutMonitorMode?
         let statusMessage: String?
     }
 
@@ -26,7 +25,7 @@ final class AppController: NSObject {
 
     private let model = AppModel()
     private let shortcutListener = ShortcutMonitor(mode: .listenOnly)
-    private let shortcutSuppressor = ShortcutMonitor(mode: .suppressOnly)
+    private let shortcutCombinedMonitor = ShortcutMonitor(mode: .listenAndSuppress)
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let llmRefiner = LLMRefiner()
@@ -94,23 +93,20 @@ final class AppController: NSObject {
     ) -> HotkeyMonitorPlan {
         guard inputMonitoringState == .granted else {
             return HotkeyMonitorPlan(
-                shouldStartListener: false,
-                shouldStartSuppressor: false,
+                primaryMonitorMode: nil,
                 statusMessage: shortcutMonitoringFailureMessage
             )
         }
 
         if accessibilityState == .granted {
             return HotkeyMonitorPlan(
-                shouldStartListener: true,
-                shouldStartSuppressor: true,
+                primaryMonitorMode: .listenAndSuppress,
                 statusMessage: nil
             )
         }
 
         return HotkeyMonitorPlan(
-            shouldStartListener: true,
-            shouldStartSuppressor: false,
+            primaryMonitorMode: .listenOnly,
             statusMessage: shortcutSuppressionWarningMessage
         )
     }
@@ -125,8 +121,9 @@ final class AppController: NSObject {
 
         speechRecorder.delegate = self
         shortcutListener.delegate = self
+        shortcutCombinedMonitor.delegate = self
         shortcutListener.shortcut = model.activationShortcut
-        shortcutSuppressor.shortcut = model.activationShortcut
+        shortcutCombinedMonitor.shortcut = model.activationShortcut
 
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
@@ -153,7 +150,7 @@ final class AppController: NSObject {
     func stop() {
         pendingErrorHideTask?.cancel()
         shortcutListener.stop()
-        shortcutSuppressor.stop()
+        shortcutCombinedMonitor.stop()
 
         if speechRecorder.isRecording {
             Task { @MainActor [weak self] in
@@ -399,28 +396,33 @@ final class AppController: NSObject {
             accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
         )
 
-        if !plan.shouldStartListener {
+        guard let primaryMonitorMode = plan.primaryMonitorMode else {
             shortcutListener.stop()
-            shortcutSuppressor.stop()
+            shortcutCombinedMonitor.stop()
             if let statusMessage = plan.statusMessage, statusBarController != nil {
                 statusBarController?.setTransientStatus(statusMessage)
             }
             return
         }
 
-        guard shortcutListener.start() else {
-            shortcutSuppressor.stop()
-            statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
-            return
-        }
-
-        if plan.shouldStartSuppressor {
-            if !shortcutSuppressor.start() {
-                statusBarController?.setTransientStatus(Self.shortcutSuppressionWarningMessage)
+        switch primaryMonitorMode {
+        case .listenOnly:
+            shortcutCombinedMonitor.stop()
+            guard shortcutListener.start() else {
+                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
                 return
             }
-        } else {
-            shortcutSuppressor.stop()
+        case .listenAndSuppress:
+            shortcutListener.stop()
+            guard shortcutCombinedMonitor.start() else {
+                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
+                return
+            }
+        case .suppressOnly:
+            shortcutListener.stop()
+            shortcutCombinedMonitor.stop()
+            statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
+            return
         }
 
         if statusBarController != nil, model.errorState == nil {
@@ -649,7 +651,7 @@ extension AppController: StatusBarControllerDelegate {
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut) {
         model.setActivationShortcut(shortcut)
         shortcutListener.shortcut = shortcut
-        shortcutSuppressor.shortcut = shortcut
+        shortcutCombinedMonitor.shortcut = shortcut
         controller.refreshAll()
     }
 
