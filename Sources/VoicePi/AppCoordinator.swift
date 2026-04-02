@@ -65,6 +65,10 @@ final class AppController: NSObject {
         .ignore
     }
 
+    static func shouldPromptAccessibilityOnLaunch(inputMonitoringState: AuthorizationState) -> Bool {
+        inputMonitoringState == .granted
+    }
+
     func start() {
         speechRecorder.delegate = self
         shortcutMonitor.delegate = self
@@ -78,8 +82,9 @@ final class AppController: NSObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             _ = self.requestInputMonitoringPermissionIfNeeded()
+            let inputMonitoringState = self.currentInputMonitoringAuthorizationState()
             await self.refreshPermissionStates(
-                promptAccessibility: true,
+                promptAccessibility: Self.shouldPromptAccessibilityOnLaunch(inputMonitoringState: inputMonitoringState),
                 requestMediaPermissions: true
             )
         }

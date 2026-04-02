@@ -70,4 +70,12 @@ struct AppControllerInteractionTests {
                 == "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
         )
     }
+
+    @Test
+    @MainActor
+    func launchPromptsAccessibilityOnlyAfterInputMonitoringIsGranted() {
+        #expect(!AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .unknown))
+        #expect(!AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .denied))
+        #expect(AppController.shouldPromptAccessibilityOnLaunch(inputMonitoringState: .granted))
+    }
 }
