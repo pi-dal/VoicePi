@@ -79,6 +79,13 @@ final class AppController: NSObject {
         inputMonitoringState == .granted
     }
 
+    static func shouldOpenInputMonitoringSettingsOnLaunch(
+        requestGranted: Bool,
+        inputMonitoringState: AuthorizationState
+    ) -> Bool {
+        !requestGranted && inputMonitoringState != .granted
+    }
+
     static func hotkeyMonitorPlan(
         inputMonitoringState: AuthorizationState,
         accessibilityState: AuthorizationState
@@ -119,8 +126,14 @@ final class AppController: NSObject {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            _ = self.requestInputMonitoringPermissionIfNeeded()
+            let requestGranted = self.requestInputMonitoringPermissionIfNeeded()
             let inputMonitoringState = self.currentInputMonitoringAuthorizationState()
+            if Self.shouldOpenInputMonitoringSettingsOnLaunch(
+                requestGranted: requestGranted,
+                inputMonitoringState: inputMonitoringState
+            ) {
+                self.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+            }
             await self.refreshPermissionStates(
                 promptAccessibility: Self.shouldPromptAccessibilityOnLaunch(inputMonitoringState: inputMonitoringState),
                 requestMediaPermissions: true

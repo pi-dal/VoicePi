@@ -81,6 +81,29 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func launchOpensInputMonitoringSettingsWhenRequestDoesNotGrantAccess() {
+        #expect(
+            AppController.shouldOpenInputMonitoringSettingsOnLaunch(
+                requestGranted: false,
+                inputMonitoringState: .unknown
+            )
+        )
+        #expect(
+            AppController.shouldOpenInputMonitoringSettingsOnLaunch(
+                requestGranted: false,
+                inputMonitoringState: .denied
+            )
+        )
+        #expect(
+            !AppController.shouldOpenInputMonitoringSettingsOnLaunch(
+                requestGranted: true,
+                inputMonitoringState: .granted
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func hotkeyMonitorPlanRequiresInputMonitoringForListeningAndAccessibilityForSuppression() {
         #expect(
             AppController.hotkeyMonitorPlan(
