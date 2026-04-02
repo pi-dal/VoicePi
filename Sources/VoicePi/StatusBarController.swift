@@ -37,8 +37,24 @@ struct LanguageMenuPresentation: Equatable {
 
     @MainActor
     static func make(model: AppModel) -> LanguageMenuPresentation {
-        let outputSelectionEnabled = model.postProcessingMode == .translation
+        let outputSelectionEnabled = model.postProcessingMode != .disabled
         let effectiveOutputLanguage = outputSelectionEnabled ? model.targetLanguage : model.selectedLanguage
+        let outputItems: [LanguageMenuItemPresentation]
+        let outputSummary: String
+
+        if outputSelectionEnabled {
+            outputItems = SupportedLanguage.allCases.map { language in
+                LanguageMenuItemPresentation(
+                    language: language,
+                    isSelected: language == effectiveOutputLanguage,
+                    isEnabled: true
+                )
+            }
+            outputSummary = "Current Output: \(effectiveOutputLanguage.menuTitle)"
+        } else {
+            outputItems = []
+            outputSummary = "Output unavailable while text processing is disabled"
+        }
 
         return LanguageMenuPresentation(
             inputItems: SupportedLanguage.allCases.map { language in
@@ -48,16 +64,8 @@ struct LanguageMenuPresentation: Equatable {
                     isEnabled: true
                 )
             },
-            outputItems: SupportedLanguage.allCases.map { language in
-                LanguageMenuItemPresentation(
-                    language: language,
-                    isSelected: language == effectiveOutputLanguage,
-                    isEnabled: outputSelectionEnabled
-                )
-            },
-            outputSummary: outputSelectionEnabled
-                ? "Current Output: \(effectiveOutputLanguage.menuTitle)"
-                : "Follow Input: \(model.selectedLanguage.menuTitle)",
+            outputItems: outputItems,
+            outputSummary: outputSummary,
             outputSelectionEnabled: outputSelectionEnabled,
             effectiveOutputLanguage: effectiveOutputLanguage
         )
@@ -267,20 +275,23 @@ final class StatusBarController: NSObject {
         let outputSummaryItem = NSMenuItem(title: presentation.outputSummary, action: nil, keyEquivalent: "")
         outputSummaryItem.isEnabled = false
         outputSubmenu.addItem(outputSummaryItem)
-        outputSubmenu.addItem(.separator())
 
-        for itemPresentation in presentation.outputItems {
-            let item = NSMenuItem(
-                title: itemPresentation.language.menuTitle,
-                action: #selector(selectOutputLanguage(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = itemPresentation.language.rawValue
-            item.state = itemPresentation.isSelected ? .on : .off
-            item.isEnabled = itemPresentation.isEnabled
-            outputSubmenu.addItem(item)
-            outputLanguageItems[itemPresentation.language] = item
+        if !presentation.outputItems.isEmpty {
+            outputSubmenu.addItem(.separator())
+
+            for itemPresentation in presentation.outputItems {
+                let item = NSMenuItem(
+                    title: itemPresentation.language.menuTitle,
+                    action: #selector(selectOutputLanguage(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = itemPresentation.language.rawValue
+                item.state = itemPresentation.isSelected ? .on : .off
+                item.isEnabled = itemPresentation.isEnabled
+                outputSubmenu.addItem(item)
+                outputLanguageItems[itemPresentation.language] = item
+            }
         }
     }
 
