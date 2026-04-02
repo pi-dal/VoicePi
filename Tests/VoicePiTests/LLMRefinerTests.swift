@@ -17,6 +17,19 @@ struct LLMRefinerTests {
     }
 
     @Test
+    func sanitizeStripsThinkBlocksFromModelOutput() {
+        let content = """
+        <think>
+        The user said "你好" which means hello in Chinese.
+        </think>
+
+        Hello
+        """
+
+        #expect(LLMRefiner.sanitize(content: content, fallback: "fallback") == "Hello")
+    }
+
+    @Test
     func sanitizeFallsBackWhenContentIsEmpty() {
         #expect(LLMRefiner.sanitize(content: "   ", fallback: "fallback") == "fallback")
     }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import VoicePi
@@ -110,6 +111,26 @@ struct SettingsPresentationTests {
     }
 
     @Test
+    @MainActor
+    func settingsWindowUsesWarmOuterBackgroundInLightTheme() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.settingsWindowUsesTintedOuterBackgroundInLightTheme.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.interfaceTheme = .light
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        let expectedBackground = NSColor(
+            calibratedRed: 0xF5 / 255.0,
+            green: 0xF3 / 255.0,
+            blue: 0xED / 255.0,
+            alpha: 1
+        )
+
+        #expect(controller.window?.titlebarAppearsTransparent == true)
+        #expect(controller.window?.backgroundColor.isApproximatelyEqual(to: expectedBackground) == true)
+        #expect(color(from: controller.window?.contentView?.layer?.backgroundColor)?.isApproximatelyEqual(to: expectedBackground) == true)
+    }
+
+    @Test
     func permissionCopyReflectsCurrentInputMonitoringRequirement() {
         #expect(
             PermissionsCopy.permissionsSectionSubtitle
@@ -135,5 +156,24 @@ struct SettingsPresentationTests {
             PermissionsCopy.shortcutHint
                 == "Current shortcut: %@. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
         )
+    }
+}
+
+private func color(from cgColor: CGColor?) -> NSColor? {
+    guard let cgColor else { return nil }
+    return NSColor(cgColor: cgColor)
+}
+
+private extension NSColor {
+    func isApproximatelyEqual(to other: NSColor, tolerance: CGFloat = 0.002) -> Bool {
+        guard let lhs = usingColorSpace(.deviceRGB),
+              let rhs = other.usingColorSpace(.deviceRGB) else {
+            return false
+        }
+
+        return abs(lhs.redComponent - rhs.redComponent) <= tolerance
+            && abs(lhs.greenComponent - rhs.greenComponent) <= tolerance
+            && abs(lhs.blueComponent - rhs.blueComponent) <= tolerance
+            && abs(lhs.alphaComponent - rhs.alphaComponent) <= tolerance
     }
 }

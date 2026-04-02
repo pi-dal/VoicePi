@@ -739,6 +739,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.title = "VoicePi Settings"
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 780, height: 520)
+        window.titlebarAppearsTransparent = true
         if #available(macOS 11.0, *) {
             window.toolbarStyle = .preference
         }
@@ -1643,6 +1644,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func applyThemeAppearance() {
         window?.appearance = model.interfaceTheme.appearance
+        window?.backgroundColor = pageBackgroundColor
         window?.contentView?.layer?.backgroundColor = pageBackgroundColor.cgColor
         asrBackendPopup.syncTheme()
         postProcessingModePopup.syncTheme()
@@ -2259,7 +2261,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private var pageBackgroundColor: NSColor {
         interfaceColor(
-            light: NSColor(calibratedWhite: 0.965, alpha: 1),
+            light: NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 1),
             dark: NSColor(calibratedWhite: 0.16, alpha: 1)
         )
     }

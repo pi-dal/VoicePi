@@ -196,10 +196,6 @@ enum AppWorkflowSupport {
         backend: ASRBackend,
         remoteConfigurationReady: Bool
     ) -> String? {
-        if !permissions.accessibilityGranted {
-            return "Accessibility permission is required to suppress the shortcut and paste injected text."
-        }
-
         if !permissions.microphoneGranted {
             return "Microphone permission was not granted."
         }

@@ -192,7 +192,8 @@ final class LLMRefiner {
     }
 
     static func sanitize(content: String, fallback: String) -> String {
-        var value = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        var value = stripThinkBlocks(from: content)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         if value.hasPrefix("```") {
             value = stripCodeFence(value)
@@ -210,6 +211,23 @@ final class LLMRefiner {
         }
 
         return value
+    }
+
+    private static func stripThinkBlocks(from value: String) -> String {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"<think\b[^>]*>[\s\S]*?</think>"#,
+            options: [.caseInsensitive]
+        ) else {
+            return value
+        }
+
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.stringByReplacingMatches(
+            in: value,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
     }
 
     private static func stripCodeFence(_ value: String) -> String {

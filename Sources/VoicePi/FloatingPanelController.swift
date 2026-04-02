@@ -106,6 +106,10 @@ final class FloatingPanelController: NSWindowController {
         contentController.resetForNextSession()
     }
 
+    func applyInterfaceTheme(_ theme: InterfaceTheme) {
+        window?.appearance = theme.appearance
+    }
+
     private func presentIfNeeded() {
         guard let panel = window else { return }
 
@@ -173,7 +177,7 @@ private final class FloatingPanelContentViewController: NSViewController {
 
     var widthDidChange: ((CGFloat) -> Void)?
 
-    private let rootView = NSView()
+    private let rootView = AppearanceAwareView()
     private let blurView = NSVisualEffectView()
     private let stackView = NSStackView()
     private let waveformView = WaveformBarsView(frame: .zero)
@@ -189,11 +193,14 @@ private final class FloatingPanelContentViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        rootView.onAppearanceChange = { [weak self] in
+            self?.syncAppearance()
+        }
         rootView.wantsLayer = true
         rootView.layer?.masksToBounds = false
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
-        blurView.material = .hudWindow
+        blurView.material = .underWindowBackground
         blurView.state = .active
         blurView.blendingMode = .withinWindow
         blurView.wantsLayer = true
@@ -244,6 +251,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         setPhase(.recording)
         updateTranscript("")
         waveformView.update(level: 0.02)
+        syncAppearance()
     }
 
     func setPhase(_ phase: Phase) {
@@ -297,6 +305,25 @@ private final class FloatingPanelContentViewController: NSViewController {
         let elasticTextWidth = max(160, min(560, measuredTextWidth + 8))
         preferredPanelWidth = 18 + 44 + 14 + elasticTextWidth + 18
         widthDidChange?(preferredPanelWidth)
+    }
+
+    private func syncAppearance() {
+        let palette = FloatingPanelPalette(appearance: view.effectiveAppearance)
+        blurView.material = palette.material
+        blurView.layer?.backgroundColor = palette.backgroundColor.cgColor
+        blurView.layer?.borderWidth = 1
+        blurView.layer?.borderColor = palette.borderColor.cgColor
+        transcriptLabel.textColor = palette.textColor
+        waveformView.applyAppearance(barColor: palette.waveformColor)
+    }
+}
+
+private final class AppearanceAwareView: NSView {
+    var onAppearanceChange: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChange?()
     }
 }
 
@@ -356,6 +383,12 @@ private final class WaveformBarsView: NSView {
             bar.cornerRadius = 3
             bar.masksToBounds = true
             rootLayer.addSublayer(bar)
+        }
+    }
+
+    func applyAppearance(barColor: NSColor) {
+        for bar in barLayers {
+            bar.backgroundColor = barColor.cgColor
         }
     }
 
@@ -421,6 +454,31 @@ private final class WaveformBarsView: NSView {
             CATransaction.setDisableActions(true)
             bar.frame = CGRect(x: x, y: y, width: barWidth, height: finalHeight)
             CATransaction.commit()
+        }
+    }
+}
+
+private struct FloatingPanelPalette {
+    let material: NSVisualEffectView.Material
+    let backgroundColor: NSColor
+    let borderColor: NSColor
+    let textColor: NSColor
+    let waveformColor: NSColor
+
+    init(appearance: NSAppearance) {
+        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        material = .underWindowBackground
+
+        if isDarkTheme {
+            backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 0.96)
+            borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
+            textColor = NSColor.white.withAlphaComponent(0.96)
+            waveformColor = NSColor.white.withAlphaComponent(0.95)
+        } else {
+            backgroundColor = NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 0.96)
+            borderColor = NSColor(calibratedWhite: 0.0, alpha: 0.08)
+            textColor = NSColor(calibratedWhite: 0.16, alpha: 1)
+            waveformColor = NSColor(calibratedWhite: 0.18, alpha: 0.92)
         }
     }
 }

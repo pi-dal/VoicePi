@@ -200,7 +200,7 @@ struct AppWorkflowSupportTests {
                 permissions: .init(accessibilityGranted: false, microphoneGranted: true, speechGranted: true),
                 backend: .appleSpeech,
                 remoteConfigurationReady: true
-            ) == "Accessibility permission is required to suppress the shortcut and paste injected text."
+            ) == nil
         )
         #expect(
             AppWorkflowSupport.preparationFailureMessage(

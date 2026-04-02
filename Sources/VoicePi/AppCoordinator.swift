@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import ApplicationServices
+import Combine
 import Foundation
 import Speech
 
@@ -34,6 +35,7 @@ final class AppController: NSObject {
     private let textInjector = TextInjector.shared
 
     private var statusBarController: StatusBarController?
+    private var cancellables: Set<AnyCancellable> = []
     private var isStartingRecording = false
     private var isProcessingRelease = false
     private var processingTask: Task<Void, Never>?
@@ -114,6 +116,13 @@ final class AppController: NSObject {
     }
 
     func start() {
+        floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
+        model.$interfaceTheme
+            .sink { [weak self] theme in
+                self?.floatingPanelController.applyInterfaceTheme(theme)
+            }
+            .store(in: &cancellables)
+
         speechRecorder.delegate = self
         shortcutListener.delegate = self
         shortcutListener.shortcut = model.activationShortcut
