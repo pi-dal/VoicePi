@@ -55,6 +55,17 @@ enum SettingsPresentation {
 
     @MainActor
     static func homeSectionPresentation(model: AppModel) -> HomeSectionPresentation {
+        homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: AppleTranslateService.isSupported
+        )
+    }
+
+    @MainActor
+    static func homeSectionPresentation(
+        model: AppModel,
+        appleTranslateSupported: Bool
+    ) -> HomeSectionPresentation {
         let statusSummary: String
         let statusTone: SettingsPresentationStatusTone
 
@@ -66,12 +77,27 @@ enum SettingsPresentation {
             statusTone = .secondary
         }
 
+        let llmSummary: String
+        let effectiveTranslationProvider = model.effectiveTranslationProvider(
+            appleTranslateSupported: appleTranslateSupported
+        )
+        switch model.postProcessingMode {
+        case .disabled:
+            llmSummary = "Text processing: Disabled"
+        case .refinement:
+            let target = model.targetLanguage.recognitionDisplayName
+            let suffix = model.llmConfiguration.isConfigured ? "LLM configured" : "LLM not configured"
+            llmSummary = "Text processing: Refinement via LLM • Target \(target) • \(suffix)"
+        case .translation:
+            llmSummary = "Text processing: Translate via \(effectiveTranslationProvider.title) • Target \(model.targetLanguage.recognitionDisplayName)"
+        }
+
         return HomeSectionPresentation(
             shortcutSummary: "Current shortcut: \(model.activationShortcut.menuTitle)",
             languageSummary: "Recognition language: \(model.selectedLanguage.menuTitle)",
             permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title)",
             asrSummary: "ASR backend: \(model.asrBackend.title) • \(model.remoteASRConfiguration.isConfigured ? "Remote configured" : "Remote not configured")",
-            llmSummary: "LLM refinement: \(model.llmEnabled ? "Enabled" : "Disabled") • \(model.llmConfiguration.isConfigured ? "Configured" : "Not configured")",
+            llmSummary: llmSummary,
             shortcutHint: "Current shortcut: \(model.activationShortcut.displayString). Click the field above and press a new combination to replace it.",
             statusSummary: statusSummary,
             statusTone: statusTone

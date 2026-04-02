@@ -5,8 +5,8 @@ import Testing
 struct SettingsPresentationTests {
     @Test
     @MainActor
-    func homePresentationReflectsModelState() {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationReflectsModelState.\(UUID().uuidString)")!
+    func homePresentationReflectsModelStateWhenAppleTranslateIsAvailable() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationReflectsModelStateWhenAppleTranslateIsAvailable.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
         model.setActivationShortcut(ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
         model.selectedLanguage = .english
@@ -15,17 +15,47 @@ struct SettingsPresentationTests {
         model.setAccessibilityAuthorization(.unknown)
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://api.example.com", apiKey: "sk", model: "whisper", prompt: "")
-        model.llmEnabled = true
+        model.setPostProcessingMode(.translation)
+        model.setTranslationProvider(.appleTranslate)
+        model.setTargetLanguage(.japanese)
         model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "sk", model: "gpt")
 
-        let presentation = SettingsPresentation.homeSectionPresentation(model: model)
+        let presentation = SettingsPresentation.homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: true
+        )
 
         #expect(presentation.shortcutSummary == "Current shortcut: A + S")
         #expect(presentation.languageSummary == "Recognition language: English")
         #expect(presentation.permissionSummary == "Permissions: Mic Granted, Speech Denied, Accessibility Unknown")
         #expect(presentation.asrSummary == "ASR backend: Remote OpenAI-Compatible ASR • Remote configured")
-        #expect(presentation.llmSummary == "LLM refinement: Enabled • Configured")
+        #expect(presentation.llmSummary == "Text processing: Translate via Apple Translate • Target Japanese")
         #expect(presentation.statusTone == .secondary)
+    }
+
+    @Test
+    @MainActor
+    func homePresentationFallsBackToLLMWhenAppleTranslateIsUnavailable() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationFallsBackToLLMWhenAppleTranslateIsUnavailable.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setActivationShortcut(ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
+        model.selectedLanguage = .english
+        model.setMicrophoneAuthorization(.granted)
+        model.setSpeechAuthorization(.denied)
+        model.setAccessibilityAuthorization(.unknown)
+        model.setASRBackend(.remoteOpenAICompatible)
+        model.saveRemoteASRConfiguration(baseURL: "https://api.example.com", apiKey: "sk", model: "whisper", prompt: "")
+        model.setPostProcessingMode(.translation)
+        model.setTranslationProvider(.appleTranslate)
+        model.setTargetLanguage(.japanese)
+        model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "sk", model: "gpt")
+
+        let presentation = SettingsPresentation.homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: false
+        )
+
+        #expect(presentation.llmSummary == "Text processing: Translate via LLM • Target Japanese")
     }
 
     @Test

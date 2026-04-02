@@ -11,7 +11,16 @@ protocol RemoteASRServing {
 protocol TranscriptRefining {
     func refine(
         text: String,
-        configuration: LLMRefinerConfiguration
+        configuration: LLMRefinerConfiguration,
+        targetLanguage: SupportedLanguage?
+    ) async throws -> String
+}
+
+protocol TranscriptTranslating {
+    func translate(
+        text: String,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage
     ) async throws -> String
 }
 
@@ -72,19 +81,21 @@ enum AppWorkflowSupport {
         }
     }
 
-    static func refineIfNeeded(
+    static func postProcessIfNeeded(
         _ text: String,
-        llmEnabled: Bool,
+        mode: PostProcessingMode,
+        translationProvider: TranslationProvider,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage,
         configuration: LLMConfiguration,
         refiner: TranscriptRefining,
+        translator: TranscriptTranslating,
         onPresentation: (AppWorkflowPresentation) -> Void,
         onError: (String) -> Void
     ) async -> String {
-        guard llmEnabled && configuration.isConfigured else {
+        guard mode != .disabled else {
             return text
         }
-
-        onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
 
         let refinerConfiguration = LLMRefinerConfiguration(
             baseURL: configuration.baseURL,
@@ -92,13 +103,63 @@ enum AppWorkflowSupport {
             model: configuration.model
         )
 
-        do {
-            let refined = try await refiner.refine(text: text, configuration: refinerConfiguration)
-            let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? text : trimmed
-        } catch {
-            onError("LLM refinement failed: \(error.localizedDescription)")
+        switch mode {
+        case .disabled:
             return text
+        case .refinement:
+            guard configuration.isConfigured else {
+                return text
+            }
+
+            onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
+
+            do {
+                let effectiveTargetLanguage = targetLanguage == sourceLanguage ? nil : targetLanguage
+                let refined = try await refiner.refine(
+                    text: text,
+                    configuration: refinerConfiguration,
+                    targetLanguage: effectiveTargetLanguage
+                )
+                let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? text : trimmed
+            } catch {
+                onError("LLM refinement failed: \(error.localizedDescription)")
+                return text
+            }
+        case .translation:
+            guard targetLanguage != sourceLanguage else {
+                return text
+            }
+
+            onPresentation(.refining(overlayTranscript: "Translating...", statusText: "Translating…"))
+
+            if translationProvider == .llm && configuration.isConfigured {
+                do {
+                    let translated = try await refiner.refine(
+                        text: text,
+                        configuration: refinerConfiguration,
+                        targetLanguage: targetLanguage
+                    )
+                    let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? text : trimmed
+                } catch {
+                    onError("LLM translation failed: \(error.localizedDescription)")
+                    return text
+                }
+            }
+
+            do {
+                let translated = try await translator.translate(
+                    text: text,
+                    sourceLanguage: sourceLanguage,
+                    targetLanguage: targetLanguage
+                )
+                let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? text : trimmed
+            } catch {
+                onError("Apple Translate failed: \(error.localizedDescription)")
+                return text
+            }
         }
     }
 

@@ -101,7 +101,8 @@ final class LLMRefiner {
 
     func refine(
         text: String,
-        configuration: LLMRefinerConfiguration
+        configuration: LLMRefinerConfiguration,
+        targetLanguage: SupportedLanguage? = nil
     ) async throws -> String {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return text }
@@ -125,7 +126,7 @@ final class LLMRefiner {
             model: configuration.trimmedModel,
             temperature: 0,
             messages: [
-                .init(role: "system", content: Self.conservativeSystemPrompt),
+                .init(role: "system", content: Self.systemPrompt(targetLanguage: targetLanguage)),
                 .init(role: "user", content: input)
             ]
         )
@@ -158,8 +159,22 @@ final class LLMRefiner {
     func testConnection(configuration: LLMRefinerConfiguration) async throws -> String {
         try await refine(
             text: "测试 Python 和 JSON mixed speech input",
-            configuration: configuration
+            configuration: configuration,
+            targetLanguage: nil
         )
+    }
+
+    static func systemPrompt(targetLanguage: SupportedLanguage?) -> String {
+        guard let targetLanguage else {
+            return conservativeSystemPrompt
+        }
+
+        return """
+        \(conservativeSystemPrompt)
+
+        Additional rule:
+        10. Translate the final output into \(targetLanguage.recognitionDisplayName). Keep the meaning exact and stay just as conservative about corrections before translating.
+        """
     }
 
     static func chatCompletionsEndpoint(from baseURL: URL) -> URL {

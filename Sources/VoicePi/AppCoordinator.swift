@@ -22,6 +22,7 @@ final class AppController: NSObject {
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let llmRefiner = LLMRefiner()
+    private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
     private let textInjector = TextInjector.shared
 
@@ -241,11 +242,17 @@ final class AppController: NSObject {
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
-        await AppWorkflowSupport.refineIfNeeded(
+        await AppWorkflowSupport.postProcessIfNeeded(
             text,
-            llmEnabled: model.llmEnabled,
+            mode: model.postProcessingMode,
+            translationProvider: model.effectiveTranslationProvider(
+                appleTranslateSupported: AppleTranslateService.isSupported
+            ),
+            sourceLanguage: model.selectedLanguage,
+            targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
             refiner: llmRefiner,
+            translator: appleTranslateService,
             onPresentation: { [weak self] presentation in
                 guard let self else { return }
                 switch presentation {
@@ -524,11 +531,6 @@ extension AppController: StatusBarControllerDelegate {
 
     func statusBarController(_ controller: StatusBarController, didSelect language: SupportedLanguage) {
         handleLanguageChange(language)
-    }
-
-    func statusBarController(_ controller: StatusBarController, didUpdateLLMEnabled enabled: Bool) {
-        model.llmEnabled = enabled
-        controller.refreshAll()
     }
 
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut) {
