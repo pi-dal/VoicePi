@@ -72,6 +72,49 @@ struct LanguageMenuPresentation: Equatable {
     }
 }
 
+struct StatusMenuPresentation: Equatable {
+    let statusLine: String
+    let languageLine: String
+    let permissionsLine: String
+
+    @MainActor
+    static func make(
+        model: AppModel,
+        transientStatus: String?,
+        isRecording: Bool
+    ) -> StatusMenuPresentation {
+        let languagePresentation = LanguageMenuPresentation.make(model: model)
+
+        let statusText: String
+        if let transientStatus, !transientStatus.isEmpty {
+            statusText = transientStatus
+        } else if isRecording {
+            statusText = "Recording…"
+        } else if model.recordingState == .refining {
+            statusText = "Refining…"
+        } else {
+            statusText = "Ready"
+        }
+
+        return StatusMenuPresentation(
+            statusLine: statusText,
+            languageLine: "Language: \(model.selectedLanguage.menuTitle) → \(languagePresentation.effectiveOutputLanguage.menuTitle)",
+            permissionsLine: "Permissions: Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization)) / IM \(symbol(for: model.inputMonitoringAuthorization))"
+        )
+    }
+
+    private static func symbol(for state: AuthorizationState) -> String {
+        switch state {
+        case .granted:
+            return "✓"
+        case .denied, .restricted:
+            return "✗"
+        case .unknown:
+            return "…"
+        }
+    }
+}
+
 @MainActor
 final class StatusBarController: NSObject {
     weak var delegate: StatusBarControllerDelegate?
@@ -83,6 +126,8 @@ final class StatusBarController: NSObject {
     private weak var languageMenu: NSMenu?
     private weak var llmMenu: NSMenu?
     private weak var statusMenuItem: NSMenuItem?
+    private weak var languageStatusMenuItem: NSMenuItem?
+    private weak var permissionsStatusMenuItem: NSMenuItem?
     private weak var llmToggleItem: NSMenuItem?
     private weak var shortcutMenuItem: NSMenuItem?
     private var inputLanguageItems: [SupportedLanguage: NSMenuItem] = [:]
@@ -183,6 +228,16 @@ final class StatusBarController: NSObject {
         statusSummaryItem.isEnabled = false
         menu.addItem(statusSummaryItem)
         self.statusMenuItem = statusSummaryItem
+
+        let languageSummaryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        languageSummaryItem.isEnabled = false
+        menu.addItem(languageSummaryItem)
+        self.languageStatusMenuItem = languageSummaryItem
+
+        let permissionsSummaryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        permissionsSummaryItem.isEnabled = false
+        menu.addItem(permissionsSummaryItem)
+        self.permissionsStatusMenuItem = permissionsSummaryItem
 
         menu.addItem(.separator())
 
@@ -375,26 +430,15 @@ final class StatusBarController: NSObject {
     }
 
     private func refreshStatusSummary() {
-        let permissionsSummary = permissionsSummaryText()
-        let languagePresentation = LanguageMenuPresentation.make(model: model)
-        let languageSummary = "Language: \(model.selectedLanguage.menuTitle) → \(languagePresentation.effectiveOutputLanguage.menuTitle)"
+        let presentation = StatusMenuPresentation.make(
+            model: model,
+            transientStatus: transientStatus,
+            isRecording: isRecording
+        )
 
-        let statusText: String
-        if let transientStatus, !transientStatus.isEmpty {
-            statusText = transientStatus
-        } else if isRecording {
-            statusText = "Recording…"
-        } else if model.recordingState == .refining {
-            statusText = "Refining…"
-        } else {
-            statusText = "Ready"
-        }
-
-        statusMenuItem?.title = "\(statusText) • \(languageSummary) • \(permissionsSummary)"
-    }
-
-    private func permissionsSummaryText() -> String {
-        "Mic \(symbol(for: model.microphoneAuthorization)) / Speech \(symbol(for: model.speechAuthorization)) / AX \(symbol(for: model.accessibilityAuthorization)) / IM \(symbol(for: model.inputMonitoringAuthorization))"
+        statusMenuItem?.title = presentation.statusLine
+        languageStatusMenuItem?.title = presentation.languageLine
+        permissionsStatusMenuItem?.title = presentation.permissionsLine
     }
 
     private func llmEndpointSummaryText() -> String {
