@@ -3,14 +3,12 @@ import Foundation
 
 final class RegisteredHotkeyMonitor {
     weak var delegate: ShortcutMonitorDelegate?
+    var onPress: (() -> Void)?
+    var onRelease: (() -> Void)?
+    let hotKeyIdentifier: UInt32
 
     var shortcut: ActivationShortcut = .default {
         didSet {
-            if shortcut.isEmpty {
-                shortcut = .default
-                return
-            }
-
             guard oldValue != shortcut else { return }
 
             if isMonitoring {
@@ -28,12 +26,14 @@ final class RegisteredHotkeyMonitor {
     private let hotKeyDisabler: ((RegisteredHotkeyMonitor) -> Void)?
 
     private static let signature: OSType = 0x5650484B // "VPHK"
-    private static let identifier: UInt32 = 1
+    private static var nextIdentifier: UInt32 = 1
 
     init(
+        hotKeyIdentifier: UInt32 = RegisteredHotkeyMonitor.allocateHotKeyIdentifier(),
         hotKeyBootstrapper: ((RegisteredHotkeyMonitor) -> Bool)? = nil,
         hotKeyDisabler: ((RegisteredHotkeyMonitor) -> Void)? = nil
     ) {
+        self.hotKeyIdentifier = hotKeyIdentifier
         self.hotKeyBootstrapper = hotKeyBootstrapper
         self.hotKeyDisabler = hotKeyDisabler
     }
@@ -102,7 +102,7 @@ final class RegisteredHotkeyMonitor {
             return false
         }
 
-        let hotKeyID = EventHotKeyID(signature: Self.signature, id: Self.identifier)
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: hotKeyIdentifier)
         let registrationStatus = RegisterEventHotKey(
             UInt32(keyCode),
             shortcut.carbonModifierFlags,
@@ -150,7 +150,7 @@ final class RegisteredHotkeyMonitor {
         guard
             status == noErr,
             hotKeyID.signature == Self.signature,
-            hotKeyID.id == Self.identifier
+            hotKeyID.id == hotKeyIdentifier
         else {
             return noErr
         }
@@ -158,12 +158,20 @@ final class RegisteredHotkeyMonitor {
         switch GetEventKind(event) {
         case UInt32(kEventHotKeyPressed):
             delegate?.shortcutMonitorDidPress()
+            onPress?()
         case UInt32(kEventHotKeyReleased):
             delegate?.shortcutMonitorDidRelease()
+            onRelease?()
         default:
             break
         }
 
         return noErr
+    }
+
+    private static func allocateHotKeyIdentifier() -> UInt32 {
+        let identifier = nextIdentifier
+        nextIdentifier += 1
+        return identifier
     }
 }

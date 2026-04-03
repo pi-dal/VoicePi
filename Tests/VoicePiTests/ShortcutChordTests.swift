@@ -78,6 +78,30 @@ struct ShortcutChordTests {
     }
 
     @Test
+    func recorderStateDoesNotCommitBareLetterShortcuts() {
+        var state = ShortcutRecorderState()
+
+        let press = state.handleKeyDown(37, modifiers: [])
+        #expect(press.previewShortcut?.menuTitle == "L")
+        #expect(press.committedShortcut == nil)
+
+        let release = state.handleKeyUp(37, modifiers: [])
+        #expect(release.committedShortcut == nil)
+    }
+
+    @Test
+    func recorderStateStillCommitsModifiedSingleKeyShortcuts() {
+        var state = ShortcutRecorderState()
+        let control = NSEvent.ModifierFlags.control
+
+        let preview = state.handleKeyDown(37, modifiers: control)
+        #expect(preview.previewShortcut?.menuTitle == "Control + L")
+
+        let release = state.handleKeyUp(37, modifiers: control)
+        #expect(release.committedShortcut?.menuTitle == "Control + L")
+    }
+
+    @Test
     func monitorStateActivatesOnlyWhenAllChordKeysAreHeld() {
         let command = NSEvent.ModifierFlags.command.intersection(.deviceIndependentFlagsMask).rawValue
         let shortcut = ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: command)

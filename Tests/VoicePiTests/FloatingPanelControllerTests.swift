@@ -133,6 +133,94 @@ struct FloatingPanelControllerTests {
         #expect(label?.stringValue == "Hello")
         #expect(animationKeys.contains("voicepi.transcriptUpdate") == false)
     }
+
+    @Test
+    @MainActor
+    func floatingPanelShowsModeSwitchHudCenteredOnScreen() {
+        let controller = FloatingPanelController()
+        controller.showModeSwitch(modeTitle: "Translate")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let modeLabels = findLabels(
+            in: window?.contentView,
+            matching: ["Disabled", "Refinement", "Translate"]
+        )
+        let visibleFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+
+        #expect(modeLabels.count == 3)
+        #expect(window?.isVisible == true)
+
+        if let window, let visibleFrame {
+            #expect(abs(window.frame.midY - visibleFrame.midY) < 40)
+        }
+    }
+
+    @Test
+    @MainActor
+    func floatingPanelShowsAllModeOptionsInModeSwitchHud() {
+        let controller = FloatingPanelController()
+        controller.showModeSwitch(modeTitle: "Translate")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let modeLabels = findLabels(
+            in: window?.contentView,
+            matching: ["Disabled", "Refinement", "Translate"]
+        )
+
+        #expect(modeLabels.count == 3)
+    }
+
+    @Test
+    @MainActor
+    func modeSwitchHudHighlightsOnlyTheActiveMode() {
+        let controller = FloatingPanelController()
+        controller.showModeSwitch(modeTitle: "Refinement")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let selectedCapsules = findViews(
+            in: window?.contentView,
+            matchingIdentifier: "voicepi-mode-capsule-selected"
+        )
+
+        #expect(selectedCapsules.count == 1)
+        #expect(selectedCapsules.first?.toolTip == "Refinement")
+    }
+
+    @Test
+    @MainActor
+    func modeSwitchHudUsesDifferentPlacementThanRecordingOverlay() {
+        let controller = FloatingPanelController()
+
+        controller.showModeSwitch(modeTitle: "Refinement")
+        let hudMidY = controller.window?.frame.midY
+
+        controller.showRecording(transcript: "")
+        let recordingMidY = controller.window?.frame.midY
+
+        if let hudMidY, let recordingMidY {
+            #expect(hudMidY > recordingMidY + 100)
+        }
+    }
+
+    @Test
+    @MainActor
+    func modeSwitchHudCanRemainVisibleWithoutSchedulingAutoHide() {
+        let controller = FloatingPanelController()
+
+        controller.showModeSwitch(modeTitle: "Translate", autoHideDelayNanoseconds: nil)
+
+        #expect(controller.isModeSwitchAutoHideScheduled == false)
+        #expect(controller.window?.isVisible == true)
+    }
 }
 
 private func findSubview<T: NSView>(in root: NSView?, ofType type: T.Type) -> T? {
@@ -165,6 +253,36 @@ private func findLabel(in root: NSView?) -> NSTextField? {
     }
 
     return nil
+}
+
+private func findLabels(in root: NSView?, matching texts: Set<String>) -> [NSTextField] {
+    guard let root else { return [] }
+
+    var matches: [NSTextField] = []
+    if let label = root as? NSTextField, texts.contains(label.stringValue) {
+        matches.append(label)
+    }
+
+    for subview in root.subviews {
+        matches.append(contentsOf: findLabels(in: subview, matching: texts))
+    }
+
+    return matches
+}
+
+private func findViews(in root: NSView?, matchingIdentifier identifier: String) -> [NSView] {
+    guard let root else { return [] }
+
+    var matches: [NSView] = []
+    if root.identifier?.rawValue == identifier {
+        matches.append(root)
+    }
+
+    for subview in root.subviews {
+        matches.append(contentsOf: findViews(in: subview, matchingIdentifier: identifier))
+    }
+
+    return matches
 }
 
 private func color(from cgColor: CGColor?) -> NSColor? {

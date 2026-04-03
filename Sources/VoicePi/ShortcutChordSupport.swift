@@ -54,7 +54,14 @@ struct ShortcutRecorderState {
         pressedKeyCodes.removeAll { $0 == keyCode }
 
         if pressedKeyCodes.isEmpty {
-            let committedShortcut = lastObservedShortcut.flatMap { $0.isModifierOnly ? nil : $0 }
+            let committedShortcut: ActivationShortcut?
+            if let lastObservedShortcut,
+               !lastObservedShortcut.isModifierOnly,
+               !lastObservedShortcut.isBareLetterShortcut {
+                committedShortcut = lastObservedShortcut
+            } else {
+                committedShortcut = nil
+            }
             reset()
             return ShortcutRecorderResult(previewShortcut: nil, committedShortcut: committedShortcut)
         }
@@ -96,6 +103,44 @@ struct ShortcutRecorderState {
 struct ShortcutMonitorResult {
     let didPress: Bool
     let didRelease: Bool
+}
+
+struct ModeCycleSessionResult {
+    let shouldAdvance: Bool
+    let shouldContinue: Bool
+}
+
+struct ModeCycleSessionState {
+    enum Phase {
+        case waitingForPrimaryRelease
+        case waitingForPrimaryPress
+    }
+
+    let shortcut: ActivationShortcut
+    private(set) var phase: Phase = .waitingForPrimaryRelease
+
+    mutating func update(
+        isPrimaryKeyPressed: Bool,
+        areRequiredModifiersHeld: Bool
+    ) -> ModeCycleSessionResult {
+        guard areRequiredModifiersHeld else {
+            return ModeCycleSessionResult(shouldAdvance: false, shouldContinue: false)
+        }
+
+        switch phase {
+        case .waitingForPrimaryRelease:
+            if !isPrimaryKeyPressed {
+                phase = .waitingForPrimaryPress
+            }
+            return ModeCycleSessionResult(shouldAdvance: false, shouldContinue: true)
+        case .waitingForPrimaryPress:
+            if isPrimaryKeyPressed {
+                phase = .waitingForPrimaryRelease
+                return ModeCycleSessionResult(shouldAdvance: true, shouldContinue: true)
+            }
+            return ModeCycleSessionResult(shouldAdvance: false, shouldContinue: true)
+        }
+    }
 }
 
 struct ShortcutMonitorState {

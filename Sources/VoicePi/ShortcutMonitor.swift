@@ -42,14 +42,13 @@ enum ShortcutMonitorMode: Equatable {
 
 final class ShortcutMonitor {
     weak var delegate: ShortcutMonitorDelegate?
+    var onPress: (() -> Void)?
+    var onRelease: (() -> Void)?
 
     let mode: ShortcutMonitorMode
 
     var shortcut: ActivationShortcut = .default {
         didSet {
-            if shortcut.isEmpty {
-                shortcut = .default
-            }
             monitorState.shortcut = shortcut
             resetTrackingState()
         }
@@ -261,10 +260,12 @@ final class ShortcutMonitor {
 
         if result.didPress {
             delegate?.shortcutMonitorDidPress()
+            onPress?()
         }
 
         if result.didRelease {
             delegate?.shortcutMonitorDidRelease()
+            onRelease?()
         }
     }
 

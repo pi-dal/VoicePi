@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon.HIToolbox
 import Combine
 import Foundation
@@ -91,8 +92,8 @@ struct ActivationShortcut: Codable, Equatable {
     }
 
     static let `default` = ActivationShortcut(
-        keyCodes: [],
-        modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        keyCodes: [35],
+        modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
     )
 
     var keyCode: UInt16? {
@@ -118,7 +119,78 @@ struct ActivationShortcut: Codable, Equatable {
     }
 
     var requiresInputMonitoring: Bool {
-        !isRegisteredHotkeyCompatible
+        !isEmpty && !isRegisteredHotkeyCompatible
+    }
+
+    var isBareLetterShortcut: Bool {
+        modifierFlags.isEmpty &&
+        keyCodes.count == 1 &&
+        Self.letterKeyCodes.contains(keyCodes[0])
+    }
+
+    func isCurrentlyHeld(
+        keyStateProvider: (CGKeyCode) -> Bool = {
+            CGEventSource.keyState(.combinedSessionState, key: $0)
+        }
+    ) -> Bool {
+        let expectedKeyCodesHeld = keyCodes.allSatisfy { keyStateProvider(CGKeyCode($0)) }
+        guard expectedKeyCodesHeld else { return false }
+
+        if modifierFlags.contains(.command),
+           !Self.commandModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.option),
+           !Self.optionModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.control),
+           !Self.controlModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.shift),
+           !Self.shiftModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.function),
+           !Self.functionModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+
+        return !isEmpty
+    }
+
+    var primaryKeyCode: UInt16? {
+        keyCodes.count == 1 ? keyCodes[0] : nil
+    }
+
+    func areRequiredModifiersHeld(
+        keyStateProvider: (CGKeyCode) -> Bool = {
+            CGEventSource.keyState(.combinedSessionState, key: $0)
+        }
+    ) -> Bool {
+        if modifierFlags.contains(.command),
+           !Self.commandModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.option),
+           !Self.optionModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.control),
+           !Self.controlModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.shift),
+           !Self.shiftModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+        if modifierFlags.contains(.function),
+           !Self.functionModifierKeyCodes.contains(where: keyStateProvider) {
+            return false
+        }
+
+        return !modifierFlags.isEmpty
     }
 
     var carbonModifierFlags: UInt32 {
@@ -163,6 +235,18 @@ struct ActivationShortcut: Codable, Equatable {
         let parts = menuModifierNames(for: modifierFlags) + keyCodes.compactMap(menuKeyName(for:))
         return parts.isEmpty ? "Not Set" : parts.joined(separator: " + ")
     }
+
+    private static let letterKeyCodes: Set<UInt16> = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        11, 12, 13, 14, 15, 16, 17,
+        31, 32, 34, 35, 37, 38, 40,
+        45, 46
+    ]
+    private static let commandModifierKeyCodes: [CGKeyCode] = [CGKeyCode(kVK_Command), CGKeyCode(kVK_RightCommand)]
+    private static let optionModifierKeyCodes: [CGKeyCode] = [CGKeyCode(kVK_Option), CGKeyCode(kVK_RightOption)]
+    private static let controlModifierKeyCodes: [CGKeyCode] = [CGKeyCode(kVK_Control), CGKeyCode(kVK_RightControl)]
+    private static let shiftModifierKeyCodes: [CGKeyCode] = [CGKeyCode(kVK_Shift), CGKeyCode(kVK_RightShift)]
+    private static let functionModifierKeyCodes: [CGKeyCode] = [CGKeyCode(kVK_Function)]
 
     private func modifierGlyphs(for flags: NSEvent.ModifierFlags) -> String {
         var parts: [String] = []
@@ -542,6 +626,17 @@ enum PostProcessingMode: String, CaseIterable, Identifiable, Codable {
             return "Translate"
         }
     }
+
+    var next: PostProcessingMode {
+        switch self {
+        case .disabled:
+            return .refinement
+        case .refinement:
+            return .translation
+        case .translation:
+            return .disabled
+        }
+    }
 }
 
 enum TranslationProvider: String, CaseIterable, Identifiable, Codable {
@@ -776,6 +871,7 @@ final class AppModel: ObservableObject {
         static let translationProvider = "translationProvider"
         static let targetLanguage = "targetLanguage"
         static let activationShortcut = "activationShortcut"
+        static let modeCycleShortcut = "modeCycleShortcut"
         static let asrBackend = "asrBackend"
         static let remoteASRConfig = "remoteASRConfig"
         static let interfaceTheme = "interfaceTheme"
@@ -814,6 +910,12 @@ final class AppModel: ObservableObject {
     @Published var activationShortcut: ActivationShortcut {
         didSet {
             persistActivationShortcut()
+        }
+    }
+
+    @Published var modeCycleShortcut: ActivationShortcut {
+        didSet {
+            persistModeCycleShortcut()
         }
     }
 
@@ -908,6 +1010,15 @@ final class AppModel: ObservableObject {
             self.activationShortcut = decoded
         } else {
             self.activationShortcut = .default
+        }
+
+        if
+            let data = defaults.data(forKey: Keys.modeCycleShortcut),
+            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
+        {
+            self.modeCycleShortcut = decoded
+        } else {
+            self.modeCycleShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
         }
 
         if
@@ -1041,6 +1152,14 @@ final class AppModel: ObservableObject {
         activationShortcut = shortcut
     }
 
+    func setModeCycleShortcut(_ shortcut: ActivationShortcut) {
+        modeCycleShortcut = shortcut
+    }
+
+    func cyclePostProcessingMode() {
+        postProcessingMode = postProcessingMode.next
+    }
+
     func saveRemoteASRConfiguration(
         baseURL: String,
         apiKey: String,
@@ -1068,6 +1187,12 @@ final class AppModel: ObservableObject {
     private func persistActivationShortcut() {
         if let data = try? encoder.encode(activationShortcut) {
             defaults.set(data, forKey: Keys.activationShortcut)
+        }
+    }
+
+    private func persistModeCycleShortcut() {
+        if let data = try? encoder.encode(modeCycleShortcut) {
+            defaults.set(data, forKey: Keys.modeCycleShortcut)
         }
     }
 

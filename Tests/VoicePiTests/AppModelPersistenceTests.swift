@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import VoicePi
@@ -16,6 +17,12 @@ struct AppModelPersistenceTests {
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation")
         model.setActivationShortcut(ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
+        model.setModeCycleShortcut(
+            ActivationShortcut(
+                keyCodes: [49],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
 
         let reloaded = AppModel(defaults: defaults)
 
@@ -26,6 +33,12 @@ struct AppModelPersistenceTests {
         #expect(reloaded.asrBackend == .remoteOpenAICompatible)
         #expect(reloaded.remoteASRConfiguration == .init(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation"))
         #expect(reloaded.activationShortcut == ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
+        #expect(
+            reloaded.modeCycleShortcut == ActivationShortcut(
+                keyCodes: [49],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
     }
 
     @Test
@@ -86,5 +99,34 @@ struct AppModelPersistenceTests {
         model.hideOverlay()
         #expect(model.overlayState == .init())
         #expect(model.recordingState == .idle)
+    }
+
+    @Test
+    @MainActor
+    func modeCycleShortcutDefaultsToNotSetAndCyclesDisabledRefinementTranslation() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.modeCycleShortcutDefaultsToNotSetAndCyclesDisabledRefinementTranslation.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        #expect(model.modeCycleShortcut.isEmpty)
+        #expect(model.postProcessingMode == .disabled)
+
+        model.cyclePostProcessingMode()
+        #expect(model.postProcessingMode == .refinement)
+
+        model.cyclePostProcessingMode()
+        #expect(model.postProcessingMode == .translation)
+
+        model.cyclePostProcessingMode()
+        #expect(model.postProcessingMode == .disabled)
+    }
+
+    @Test
+    @MainActor
+    func activationShortcutDefaultsToAStandardRegisteredHotkey() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.activationShortcutDefaultsToAStandardRegisteredHotkey.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        #expect(model.activationShortcut.isRegisteredHotkeyCompatible)
+        #expect(model.activationShortcut.requiresInputMonitoring == false)
     }
 }

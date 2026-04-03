@@ -77,14 +77,18 @@ final class AppController: NSObject {
         case ignore
     }
 
+    enum ModeCycleInteractionStyle: Equatable {
+        case modifierHeldSession
+        case holdRepeat
+    }
+
     enum ReleaseAction: Equatable {
         case ignore
     }
 
     private let model = AppModel()
-    private let shortcutListener = ShortcutMonitor(mode: .listenOnly)
-    private let shortcutCombinedMonitor = ShortcutMonitor(mode: .listenAndSuppress)
-    private let registeredHotkeyMonitor = RegisteredHotkeyMonitor()
+    private let recordingShortcutAction = ShortcutActionController()
+    private let modeCycleShortcutAction = ShortcutActionController()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let llmRefiner = LLMRefiner()
@@ -103,6 +107,8 @@ final class AppController: NSObject {
     private var pendingErrorHideTask: Task<Void, Never>?
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
     private var inputMonitoringAuthorizationFollowUpTask: Task<Void, Never>?
+    private var modeCycleRepeatTask: Task<Void, Never>?
+    private var modeCycleSessionActive = false
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -115,6 +121,18 @@ final class AppController: NSObject {
 
     static let shortcutRegistrationFailureMessage =
         "Global shortcut registration is unavailable. Choose a different shortcut."
+
+    static let modeCycleShortcutMonitoringFailureMessage =
+        "Mode-switch shortcut listening is unavailable. Input Monitoring is required to listen for this shortcut."
+
+    static let modeCycleShortcutSuppressionWarningMessage =
+        "Mode-switch shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
+
+    static let modeCycleShortcutRegistrationFailureMessage =
+        "Mode-switch shortcut registration is unavailable. Choose a different shortcut."
+
+    static let modeCycleRepeatDelayNanoseconds: UInt64 = 350_000_000
+    static let modeCycleRepeatIntervalNanoseconds: UInt64 = 170_000_000
 
     private static let lastPromptedUpdateVersionKey = "VoicePi.lastPromptedUpdateVersion"
 
@@ -171,6 +189,26 @@ final class AppController: NSObject {
         }
     }
 
+    static func shouldStartModeCycleRepeat(
+        shortcut: ActivationShortcut,
+        isRecording: Bool,
+        isStartingRecording: Bool,
+        isProcessingRelease: Bool
+    ) -> Bool {
+        !shortcut.isEmpty &&
+        !isRecording &&
+        !isStartingRecording &&
+        !isProcessingRelease
+    }
+
+    static func modeCycleInteractionStyle(for shortcut: ActivationShortcut) -> ModeCycleInteractionStyle {
+        if shortcut.primaryKeyCode != nil, !shortcut.modifierFlags.isEmpty {
+            return .modifierHeldSession
+        }
+
+        return .holdRepeat
+    }
+
     static func shouldPromptAccessibilityOnLaunch(
         shortcut: ActivationShortcut,
         inputMonitoringState _: AuthorizationState
@@ -179,19 +217,53 @@ final class AppController: NSObject {
         return true
     }
 
+    static func shouldPromptAccessibilityOnLaunch(
+        activationShortcut: ActivationShortcut,
+        modeCycleShortcut _: ActivationShortcut,
+        inputMonitoringState: AuthorizationState
+    ) -> Bool {
+        shouldPromptAccessibilityOnLaunch(
+            shortcut: activationShortcut,
+            inputMonitoringState: inputMonitoringState
+        )
+    }
+
     static func launchPermissionPlan(
         shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState
+    ) -> LaunchPermissionPlan {
+        launchPermissionPlan(
+            activationShortcut: shortcut,
+            modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            inputMonitoringState: inputMonitoringState
+        )
+    }
+
+    static func launchPermissionPlan(
+        activationShortcut: ActivationShortcut,
+        modeCycleShortcut: ActivationShortcut,
         inputMonitoringState: AuthorizationState
     ) -> LaunchPermissionPlan {
         LaunchPermissionPlan(
             requestMediaPermissions: true,
             promptAccessibility: shouldPromptAccessibilityOnLaunch(
-                shortcut: shortcut,
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: modeCycleShortcut,
                 inputMonitoringState: inputMonitoringState
             ),
-            requestInputMonitoringPermission: shortcut.requiresInputMonitoring,
+            requestInputMonitoringPermission: shortcutsRequireInputMonitoring(
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: modeCycleShortcut
+            ),
             useSystemAccessibilityPrompt: true
         )
+    }
+
+    static func shortcutsRequireInputMonitoring(
+        activationShortcut: ActivationShortcut,
+        modeCycleShortcut: ActivationShortcut
+    ) -> Bool {
+        activationShortcut.requiresInputMonitoring || modeCycleShortcut.requiresInputMonitoring
     }
 
     static func shouldOfferInputMonitoringSettingsOnLaunch(
@@ -236,18 +308,50 @@ final class AppController: NSObject {
         inputMonitoringState: AuthorizationState,
         accessibilityState: AuthorizationState
     ) -> HotkeyMonitorPlan {
+        monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: shortcutInjectionWarningMessage,
+            eventTapAccessibilityWarning: shortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: shortcutMonitoringFailureMessage
+        )
+    }
+
+    static func modeCycleShortcutMonitorPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: nil,
+            eventTapAccessibilityWarning: modeCycleShortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: modeCycleShortcutMonitoringFailureMessage
+        )
+    }
+
+    private static func monitorPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState,
+        registeredHotkeyAccessibilityWarning: String?,
+        eventTapAccessibilityWarning: String?,
+        inputMonitoringFailureMessage: String
+    ) -> HotkeyMonitorPlan {
+        guard !shortcut.isEmpty else {
+            return HotkeyMonitorPlan(strategy: nil, statusMessage: nil)
+        }
+
         if shortcut.isRegisteredHotkeyCompatible {
-            return HotkeyMonitorPlan(
-                strategy: .registeredHotkey,
-                statusMessage: accessibilityState == .granted ? nil : shortcutInjectionWarningMessage
-            )
+            let statusMessage = accessibilityState == .granted ? nil : registeredHotkeyAccessibilityWarning
+            return HotkeyMonitorPlan(strategy: .registeredHotkey, statusMessage: statusMessage)
         }
 
         guard inputMonitoringState == .granted else {
-            return HotkeyMonitorPlan(
-                strategy: nil,
-                statusMessage: shortcutMonitoringFailureMessage
-            )
+            return HotkeyMonitorPlan(strategy: nil, statusMessage: inputMonitoringFailureMessage)
         }
 
         if accessibilityState == .granted {
@@ -259,7 +363,7 @@ final class AppController: NSObject {
 
         return HotkeyMonitorPlan(
             strategy: .eventTap(.listenOnly),
-            statusMessage: shortcutSuppressionWarningMessage
+            statusMessage: eventTapAccessibilityWarning
         )
     }
 
@@ -385,12 +489,15 @@ final class AppController: NSObject {
             .store(in: &cancellables)
 
         speechRecorder.delegate = self
-        shortcutListener.delegate = self
-        shortcutCombinedMonitor.delegate = self
-        registeredHotkeyMonitor.delegate = self
-        shortcutListener.shortcut = model.activationShortcut
-        shortcutCombinedMonitor.shortcut = model.activationShortcut
-        registeredHotkeyMonitor.shortcut = model.activationShortcut
+        recordingShortcutAction.delegate = self
+        recordingShortcutAction.shortcut = model.activationShortcut
+
+        modeCycleShortcutAction.onPress = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleModeCycleShortcutPress()
+            }
+        }
+        modeCycleShortcutAction.shortcut = model.modeCycleShortcut
 
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
@@ -400,7 +507,8 @@ final class AppController: NSObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let launchPermissionPlan = Self.launchPermissionPlan(
-                shortcut: self.model.activationShortcut,
+                activationShortcut: self.model.activationShortcut,
+                modeCycleShortcut: self.model.modeCycleShortcut,
                 inputMonitoringState: self.currentInputMonitoringAuthorizationState()
             )
             await self.refreshPermissionStates(
@@ -418,9 +526,10 @@ final class AppController: NSObject {
         accessibilityAuthorizationFollowUpTask?.cancel()
         inputMonitoringAuthorizationFollowUpTask?.cancel()
         pendingErrorHideTask?.cancel()
-        registeredHotkeyMonitor.stop()
-        shortcutListener.stop()
-        shortcutCombinedMonitor.stop()
+        modeCycleRepeatTask?.cancel()
+        modeCycleRepeatTask = nil
+        recordingShortcutAction.stop()
+        modeCycleShortcutAction.stop()
 
         if speechRecorder.isRecording {
             Task { @MainActor [weak self] in
@@ -434,6 +543,86 @@ final class AppController: NSObject {
         model.selectedLanguage = language
         speechRecorder.updateLocale(identifier: language.localeIdentifier)
         statusBarController?.refreshAll()
+    }
+
+    private func cyclePostProcessingModeFromShortcut() {
+        model.cyclePostProcessingMode()
+        let autoHideDelay: UInt64? = modeCycleSessionActive ? nil : 1_100_000_000
+        floatingPanelController.showModeSwitch(
+            modeTitle: model.postProcessingMode.title,
+            autoHideDelayNanoseconds: autoHideDelay
+        )
+        statusBarController?.refreshAll()
+        statusBarController?.setTransientStatus("Text processing: \(model.postProcessingMode.title)")
+    }
+
+    private func handleModeCycleShortcutPress() {
+        guard Self.shouldStartModeCycleRepeat(
+            shortcut: model.modeCycleShortcut,
+            isRecording: speechRecorder.isRecording,
+            isStartingRecording: isStartingRecording,
+            isProcessingRelease: isProcessingRelease
+        ) else { return }
+
+        let interactionStyle = Self.modeCycleInteractionStyle(for: model.modeCycleShortcut)
+        if interactionStyle == .modifierHeldSession {
+            modeCycleSessionActive = true
+        }
+
+        cyclePostProcessingModeFromShortcut()
+        switch interactionStyle {
+        case .modifierHeldSession:
+            startModeCycleShortcutSession()
+        case .holdRepeat:
+            startModeCycleShortcutRepeat()
+        }
+    }
+
+    private func startModeCycleShortcutRepeat() {
+        modeCycleRepeatTask?.cancel()
+        modeCycleRepeatTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            try? await Task.sleep(nanoseconds: Self.modeCycleRepeatDelayNanoseconds)
+            while !Task.isCancelled {
+                guard Self.shouldStartModeCycleRepeat(
+                    shortcut: self.model.modeCycleShortcut,
+                    isRecording: self.speechRecorder.isRecording,
+                    isStartingRecording: self.isStartingRecording,
+                    isProcessingRelease: self.isProcessingRelease
+                ),
+                self.model.modeCycleShortcut.isCurrentlyHeld() else {
+                    self.modeCycleRepeatTask = nil
+                    return
+                }
+
+                self.cyclePostProcessingModeFromShortcut()
+                try? await Task.sleep(nanoseconds: Self.modeCycleRepeatIntervalNanoseconds)
+            }
+            self.modeCycleRepeatTask = nil
+        }
+    }
+
+    private func startModeCycleShortcutSession() {
+        modeCycleRepeatTask?.cancel()
+        modeCycleRepeatTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                guard self.model.modeCycleShortcut.areRequiredModifiersHeld() else {
+                    self.modeCycleSessionActive = false
+                    self.floatingPanelController.showModeSwitch(
+                        modeTitle: self.model.postProcessingMode.title,
+                        autoHideDelayNanoseconds: 220_000_000
+                    )
+                    self.modeCycleRepeatTask = nil
+                    return
+                }
+
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+            self.modeCycleRepeatTask = nil
+        }
     }
 
     private func beginRecording() {
@@ -665,7 +854,7 @@ final class AppController: NSObject {
             requestInputMonitoringPermission: requestInputMonitoringPermission,
             accessibilityStateAfterPrompt: accessibilityStateAfterPrompt
         ) {
-            scheduleAccessibilityAuthorizationFollowUp(requestInputMonitoringPermission: requestInputMonitoringPermission)
+            scheduleAccessibilityAuthorizationFollowUp()
         } else {
             accessibilityAuthorizationFollowUpTask?.cancel()
             accessibilityAuthorizationFollowUpTask = nil
@@ -728,7 +917,7 @@ final class AppController: NSObject {
         ensureHotkeyMonitorRunning()
     }
 
-    private func scheduleAccessibilityAuthorizationFollowUp(requestInputMonitoringPermission: Bool) {
+    private func scheduleAccessibilityAuthorizationFollowUp() {
         accessibilityAuthorizationFollowUpTask?.cancel()
         accessibilityAuthorizationFollowUpTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -742,7 +931,7 @@ final class AppController: NSObject {
                 if accessibilityState == .granted {
                     await self.refreshPermissionStates(
                         promptAccessibility: false,
-                        requestInputMonitoringPermission: requestInputMonitoringPermission,
+                        requestInputMonitoringPermission: self.currentShortcutsRequireInputMonitoring(),
                         inputMonitoringPromptSource: .accessibilityFollowUp
                     )
                     return
@@ -785,55 +974,49 @@ final class AppController: NSObject {
     }
 
     private func ensureHotkeyMonitorRunning() {
-        let plan = Self.hotkeyMonitorPlan(
+        let activationPlan = Self.hotkeyMonitorPlan(
             shortcut: model.activationShortcut,
             inputMonitoringState: currentInputMonitoringAuthorizationState(),
             accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
         )
+        let cyclePlan = Self.modeCycleShortcutMonitorPlan(
+            shortcut: model.modeCycleShortcut,
+            inputMonitoringState: currentInputMonitoringAuthorizationState(),
+            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+        )
 
-        guard let strategy = plan.strategy else {
-            registeredHotkeyMonitor.stop()
-            shortcutListener.stop()
-            shortcutCombinedMonitor.stop()
-            if let statusMessage = plan.statusMessage, statusBarController != nil {
-                statusBarController?.setTransientStatus(statusMessage)
-            }
-            return
-        }
+        let activationStatus = applyHotkeyMonitorPlan(
+            activationPlan,
+            actionController: recordingShortcutAction,
+            registrationFailureMessage: Self.shortcutRegistrationFailureMessage,
+            monitoringFailureMessage: Self.shortcutMonitoringFailureMessage
+        )
+        let cycleStatus = applyHotkeyMonitorPlan(
+            cyclePlan,
+            actionController: modeCycleShortcutAction,
+            registrationFailureMessage: Self.modeCycleShortcutRegistrationFailureMessage,
+            monitoringFailureMessage: Self.modeCycleShortcutMonitoringFailureMessage
+        )
 
-        switch strategy {
-        case .registeredHotkey:
-            shortcutListener.stop()
-            shortcutCombinedMonitor.stop()
-            guard registeredHotkeyMonitor.start() else {
-                statusBarController?.setTransientStatus(Self.shortcutRegistrationFailureMessage)
-                return
-            }
-        case .eventTap(.listenOnly):
-            registeredHotkeyMonitor.stop()
-            shortcutCombinedMonitor.stop()
-            guard shortcutListener.start() else {
-                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
-                return
-            }
-        case .eventTap(.listenAndSuppress):
-            registeredHotkeyMonitor.stop()
-            shortcutListener.stop()
-            guard shortcutCombinedMonitor.start() else {
-                statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
-                return
-            }
-        case .eventTap(.suppressOnly):
-            registeredHotkeyMonitor.stop()
-            shortcutListener.stop()
-            shortcutCombinedMonitor.stop()
-            statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
-            return
+        let statusMessage = activationStatus ?? cycleStatus
+        if let statusMessage, statusBarController != nil {
+            statusBarController?.setTransientStatus(statusMessage)
+        } else if statusBarController != nil, model.errorState == nil {
+            statusBarController?.setTransientStatus(nil)
         }
+    }
 
-        if statusBarController != nil, model.errorState == nil {
-            statusBarController?.setTransientStatus(plan.statusMessage)
-        }
+    private func applyHotkeyMonitorPlan(
+        _ plan: HotkeyMonitorPlan,
+        actionController: ShortcutActionController,
+        registrationFailureMessage: String,
+        monitoringFailureMessage: String
+    ) -> String? {
+        actionController.apply(
+            plan,
+            registrationFailureMessage: registrationFailureMessage,
+            monitoringFailureMessage: monitoringFailureMessage
+        )
     }
 
     private func currentMicrophoneAuthorizationState() -> AuthorizationState {
@@ -849,6 +1032,13 @@ final class AppController: NSObject {
         @unknown default:
             return .unknown
         }
+    }
+
+    private func currentShortcutsRequireInputMonitoring() -> Bool {
+        Self.shortcutsRequireInputMonitoring(
+            activationShortcut: model.activationShortcut,
+            modeCycleShortcut: model.modeCycleShortcut
+        )
     }
 
     private func currentSpeechAuthorizationState() -> AuthorizationState {
@@ -1163,9 +1353,14 @@ extension AppController: StatusBarControllerDelegate {
 
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut) {
         model.setActivationShortcut(shortcut)
-        shortcutListener.shortcut = shortcut
-        shortcutCombinedMonitor.shortcut = shortcut
-        registeredHotkeyMonitor.shortcut = shortcut
+        recordingShortcutAction.shortcut = shortcut
+        controller.refreshAll()
+        ensureHotkeyMonitorRunning()
+    }
+
+    func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut) {
+        model.setModeCycleShortcut(shortcut)
+        modeCycleShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
     }
@@ -1204,9 +1399,10 @@ extension AppController: StatusBarControllerDelegate {
 
     func statusBarControllerDidRequestOpenAccessibilitySettings(_ controller: StatusBarController) {
         Task { @MainActor [weak self] in
-            await self?.refreshPermissionStates(
+            guard let self else { return }
+            await self.refreshPermissionStates(
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true,
+                requestInputMonitoringPermission: self.currentShortcutsRequireInputMonitoring(),
                 inputMonitoringPromptSource: .accessibilityFollowUp
             )
         }
@@ -1252,9 +1448,10 @@ extension AppController: StatusBarControllerDelegate {
 
     func statusBarControllerDidRequestPromptAccessibilityPermission(_ controller: StatusBarController) {
         Task { @MainActor [weak self] in
-            await self?.refreshPermissionStates(
+            guard let self else { return }
+            await self.refreshPermissionStates(
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true,
+                requestInputMonitoringPermission: self.currentShortcutsRequireInputMonitoring(),
                 inputMonitoringPromptSource: .accessibilityFollowUp
             )
         }

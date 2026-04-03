@@ -114,6 +114,29 @@ struct ShortcutMonitorTests {
     }
 
     @Test
+    @MainActor
+    func monitorsPreserveExplicitlyEmptyShortcuts() {
+        let empty = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+        let eventTapMonitor = ShortcutMonitor()
+        let registeredMonitor = RegisteredHotkeyMonitor()
+
+        eventTapMonitor.shortcut = empty
+        registeredMonitor.shortcut = empty
+
+        #expect(eventTapMonitor.shortcut.isEmpty)
+        #expect(registeredMonitor.shortcut.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func registeredHotkeyMonitorsUseDistinctIdentifiers() {
+        let first = RegisteredHotkeyMonitor()
+        let second = RegisteredHotkeyMonitor()
+
+        #expect(first.hotKeyIdentifier != second.hotKeyIdentifier)
+    }
+
+    @Test
     func multiModifierShortcutDoesNotSuppressPartialModifierPress() {
         let shortcut = ActivationShortcut(
             keyCodes: [],
@@ -145,5 +168,56 @@ struct ShortcutMonitorTests {
                 flags: CGEventFlags([.maskAlternate, .maskSecondaryFn])
             )
         )
+    }
+
+    @Test
+    func shortcutHoldEvaluationRequiresAllKeysAndModifiersToRemainPressed() {
+        let shortcut = ActivationShortcut(
+            keyCodes: [37],
+            modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        let heldKeys: Set<CGKeyCode> = [CGKeyCode(37), CGKeyCode(kVK_Control)]
+        #expect(shortcut.isCurrentlyHeld(keyStateProvider: { heldKeys.contains($0) }))
+
+        let missingLetter: Set<CGKeyCode> = [CGKeyCode(kVK_Control)]
+        #expect(!shortcut.isCurrentlyHeld(keyStateProvider: { missingLetter.contains($0) }))
+
+        let missingModifier: Set<CGKeyCode> = [CGKeyCode(37)]
+        #expect(!shortcut.isCurrentlyHeld(keyStateProvider: { missingModifier.contains($0) }))
+    }
+
+    @Test
+    func modeCycleSessionAdvancesOnRepeatedPrimaryKeyPressesWhileModifierRemainsHeld() {
+        let shortcut = ActivationShortcut(
+            keyCodes: [37],
+            modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        var state = ModeCycleSessionState(shortcut: shortcut)
+
+        let initialHold = state.update(isPrimaryKeyPressed: true, areRequiredModifiersHeld: true)
+        #expect(initialHold.shouldAdvance == false)
+        #expect(initialHold.shouldContinue == true)
+
+        let releasedPrimary = state.update(isPrimaryKeyPressed: false, areRequiredModifiersHeld: true)
+        #expect(releasedPrimary.shouldAdvance == false)
+        #expect(releasedPrimary.shouldContinue == true)
+
+        let repeatedPress = state.update(isPrimaryKeyPressed: true, areRequiredModifiersHeld: true)
+        #expect(repeatedPress.shouldAdvance == true)
+        #expect(repeatedPress.shouldContinue == true)
+    }
+
+    @Test
+    func modeCycleSessionStopsWhenRequiredModifiersAreReleased() {
+        let shortcut = ActivationShortcut(
+            keyCodes: [37],
+            modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        var state = ModeCycleSessionState(shortcut: shortcut)
+
+        let update = state.update(isPrimaryKeyPressed: false, areRequiredModifiersHeld: false)
+        #expect(update.shouldAdvance == false)
+        #expect(update.shouldContinue == false)
     }
 }

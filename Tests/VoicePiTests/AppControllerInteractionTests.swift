@@ -23,6 +23,58 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func currentShortcutsDoNotRequireInputMonitoringWhenBothUseRegisteredHotkeysOrAreUnset() {
+        #expect(
+            !AppController.shortcutsRequireInputMonitoring(
+                activationShortcut: ActivationShortcut(
+                    keyCodes: [35],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+            )
+        )
+        #expect(
+            !AppController.shortcutsRequireInputMonitoring(
+                activationShortcut: ActivationShortcut(
+                    keyCodes: [49],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                modeCycleShortcut: ActivationShortcut(
+                    keyCodes: [17],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+                )
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func currentShortcutsRequireInputMonitoringWhenEitherShortcutIsAdvanced() {
+        #expect(
+            AppController.shortcutsRequireInputMonitoring(
+                activationShortcut: ActivationShortcut(
+                    keyCodes: [],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+            )
+        )
+        #expect(
+            AppController.shortcutsRequireInputMonitoring(
+                activationShortcut: ActivationShortcut(
+                    keyCodes: [35],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                modeCycleShortcut: ActivationShortcut(
+                    keyCodes: [0, 1],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.command.intersection(.deviceIndependentFlagsMask).rawValue
+                )
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func hotkeyMonitorPlanFallsBackToListenOnlyWhenAccessibilityIsMissing() {
         #expect(
             AppController.hotkeyMonitorPlan(
@@ -137,6 +189,69 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func modeCycleRepeatStartsOnlyWhenShortcutIsConfiguredAndAppIsIdle() {
+        #expect(
+            AppController.shouldStartModeCycleRepeat(
+                shortcut: ActivationShortcut(
+                    keyCodes: [37],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false
+            )
+        )
+        #expect(
+            !AppController.shouldStartModeCycleRepeat(
+                shortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false
+            )
+        )
+        #expect(
+            !AppController.shouldStartModeCycleRepeat(
+                shortcut: ActivationShortcut(
+                    keyCodes: [37],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                isRecording: true,
+                isStartingRecording: false,
+                isProcessingRelease: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func modeCycleRepeatScheduleUsesHoldDelayThenFastIntervals() {
+        #expect(AppController.modeCycleRepeatDelayNanoseconds == 350_000_000)
+        #expect(AppController.modeCycleRepeatIntervalNanoseconds == 170_000_000)
+    }
+
+    @Test
+    @MainActor
+    func standardModeCycleShortcutUsesModifierHeldSessionInteraction() {
+        #expect(
+            AppController.modeCycleInteractionStyle(
+                for: ActivationShortcut(
+                    keyCodes: [37],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                )
+            ) == .modifierHeldSession
+        )
+        #expect(
+            AppController.modeCycleInteractionStyle(
+                for: ActivationShortcut(
+                    keyCodes: [],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+                )
+            ) == .holdRepeat
+        )
+    }
+
+    @Test
+    @MainActor
     func shortcutMonitoringFailureMessageCallsOutInputMonitoringRequirement() {
         #expect(
             AppController.shortcutMonitoringFailureMessage
@@ -202,6 +317,32 @@ struct AppControllerInteractionTests {
         #expect(
             AppController.launchPermissionPlan(
                 shortcut: advancedShortcut,
+                inputMonitoringState: .unknown
+            ) == .init(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                useSystemAccessibilityPrompt: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func launchPermissionPlanAlsoRequestsInputMonitoringWhenModeCycleShortcutIsAdvanced() {
+        let activationShortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        let cycleShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.launchPermissionPlan(
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: cycleShortcut,
                 inputMonitoringState: .unknown
             ) == .init(
                 requestMediaPermissions: true,
@@ -437,6 +578,24 @@ struct AppControllerInteractionTests {
             ) == AppController.HotkeyMonitorPlan(
                 strategy: nil,
                 statusMessage: "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func modeCycleShortcutCanListenWithoutAccessibilityButWarnsThatSuppressionIsUnavailable() {
+        #expect(
+            AppController.modeCycleShortcutMonitorPlan(
+                shortcut: ActivationShortcut(
+                    keyCodes: [],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                inputMonitoringState: .granted,
+                accessibilityState: .denied
+            ) == AppController.HotkeyMonitorPlan(
+                strategy: .eventTap(.listenOnly),
+                statusMessage: "Mode-switch shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
             )
         )
     }

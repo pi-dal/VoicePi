@@ -6,14 +6,24 @@ final class FloatingPanelController: NSWindowController {
     enum Phase {
         case recording
         case refining
+        case modeSwitch
+    }
+
+    private enum PresentationStyle {
+        case banner
+        case hud
     }
 
     private let minWidth: CGFloat = 260
     private let maxWidth: CGFloat = 660
-    private let panelHeight: CGFloat = 56
+    private let bannerHeight: CGFloat = 56
+    private let hudHeight: CGFloat = 136
     private let bottomInset: CGFloat = 44
 
     private let contentController = FloatingPanelContentViewController()
+    private var presentationStyle: PresentationStyle = .banner
+    private var autoHideTask: Task<Void, Never>?
+    private(set) var isModeSwitchAutoHideScheduled = false
 
     init() {
         let panel = NSPanel(
@@ -54,6 +64,8 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func showRecording(transcript: String = "") {
+        autoHideTask?.cancel()
+        presentationStyle = .banner
         contentController.setPhase(.recording)
         contentController.updateTranscript(transcript)
         contentController.updateAudioLevel(0.02)
@@ -66,13 +78,39 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func showRefining(transcript: String) {
+        autoHideTask?.cancel()
+        presentationStyle = .banner
         contentController.setPhase(.refining)
         contentController.updateTranscript(transcript)
         contentController.updateAudioLevel(0.02)
         presentIfNeeded()
     }
 
+    func showModeSwitch(modeTitle: String, autoHideDelayNanoseconds: UInt64? = 1_100_000_000) {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+        isModeSwitchAutoHideScheduled = false
+        presentationStyle = .hud
+        contentController.setPhase(.modeSwitch)
+        contentController.updateModeSwitchTitle(modeTitle)
+        presentIfNeeded()
+
+        guard let autoHideDelayNanoseconds else {
+            return
+        }
+
+        isModeSwitchAutoHideScheduled = true
+        autoHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: autoHideDelayNanoseconds)
+            guard let self else { return }
+            self.hide()
+        }
+    }
+
     func hide(completion: (() -> Void)? = nil) {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+        isModeSwitchAutoHideScheduled = false
         guard let panel = window, panel.isVisible else {
             completion?()
             return
@@ -103,7 +141,11 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func reset() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+        isModeSwitchAutoHideScheduled = false
         contentController.resetForNextSession()
+        presentationStyle = .banner
     }
 
     func applyInterfaceTheme(_ theme: InterfaceTheme) {
@@ -158,13 +200,24 @@ final class FloatingPanelController: NSWindowController {
     private func frameForCurrentScreen(width: CGFloat) -> NSRect {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let height = presentationStyle == .hud ? hudHeight : bannerHeight
 
-        return NSRect(
-            x: round(visibleFrame.midX - width / 2),
-            y: round(visibleFrame.minY + bottomInset),
-            width: width,
-            height: panelHeight
-        )
+        switch presentationStyle {
+        case .banner:
+            return NSRect(
+                x: round(visibleFrame.midX - width / 2),
+                y: round(visibleFrame.minY + bottomInset),
+                width: width,
+                height: height
+            )
+        case .hud:
+            return NSRect(
+                x: round(visibleFrame.midX - width / 2),
+                y: round(visibleFrame.midY - height / 2),
+                width: width,
+                height: height
+            )
+        }
     }
 }
 
@@ -173,6 +226,7 @@ private final class FloatingPanelContentViewController: NSViewController {
     enum Phase {
         case recording
         case refining
+        case modeSwitch
     }
 
     var widthDidChange: ((CGFloat) -> Void)?
@@ -180,9 +234,16 @@ private final class FloatingPanelContentViewController: NSViewController {
     private let rootView = AppearanceAwareView()
     private let blurView = NSVisualEffectView()
     private let stackView = NSStackView()
+    private let modeSwitchContainer = NSStackView()
     private let waveformView = WaveformBarsView(frame: .zero)
     private let transcriptLabel = NSTextField(labelWithString: "")
+    private let modeCapsules: [ModeSwitchCapsuleView] = [
+        ModeSwitchCapsuleView(title: "Disabled"),
+        ModeSwitchCapsuleView(title: "Refinement"),
+        ModeSwitchCapsuleView(title: "Translate")
+    ]
     private let transcriptFadeMask = CAGradientLayer()
+    private var heightConstraint: NSLayoutConstraint?
 
     private(set) var preferredPanelWidth: CGFloat = 260
     private var phase: Phase = .recording
@@ -235,11 +296,21 @@ private final class FloatingPanelContentViewController: NSViewController {
         stackView.alignment = .centerY
         stackView.edgeInsets = NSEdgeInsets(top: 12, left: 18, bottom: 12, right: 18)
 
+        modeSwitchContainer.translatesAutoresizingMaskIntoConstraints = false
+        modeSwitchContainer.orientation = .horizontal
+        modeSwitchContainer.spacing = 12
+        modeSwitchContainer.alignment = .centerY
+        modeSwitchContainer.distribution = .fillEqually
+        modeSwitchContainer.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        modeSwitchContainer.isHidden = true
+
         rootView.addSubview(blurView)
         blurView.addSubview(stackView)
+        blurView.addSubview(modeSwitchContainer)
 
         stackView.addArrangedSubview(waveformView)
         stackView.addArrangedSubview(transcriptLabel)
+        modeCapsules.forEach(modeSwitchContainer.addArrangedSubview)
 
         NSLayoutConstraint.activate([
             blurView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
@@ -252,11 +323,18 @@ private final class FloatingPanelContentViewController: NSViewController {
             stackView.topAnchor.constraint(equalTo: blurView.topAnchor),
             stackView.bottomAnchor.constraint(equalTo: blurView.bottomAnchor),
 
+            modeSwitchContainer.leadingAnchor.constraint(equalTo: blurView.leadingAnchor),
+            modeSwitchContainer.trailingAnchor.constraint(equalTo: blurView.trailingAnchor),
+            modeSwitchContainer.topAnchor.constraint(equalTo: blurView.topAnchor),
+            modeSwitchContainer.bottomAnchor.constraint(equalTo: blurView.bottomAnchor),
+
             waveformView.widthAnchor.constraint(equalToConstant: 44),
             waveformView.heightAnchor.constraint(equalToConstant: 32),
-
-            rootView.heightAnchor.constraint(equalToConstant: 56)
         ])
+
+        let heightConstraint = rootView.heightAnchor.constraint(equalToConstant: 56)
+        heightConstraint.isActive = true
+        self.heightConstraint = heightConstraint
 
         setPhase(.recording)
         updateTranscript("")
@@ -266,6 +344,10 @@ private final class FloatingPanelContentViewController: NSViewController {
 
     func setPhase(_ phase: Phase) {
         self.phase = phase
+        waveformView.isHidden = phase == .modeSwitch
+        stackView.isHidden = phase == .modeSwitch
+        modeSwitchContainer.isHidden = phase != .modeSwitch
+        transcriptLabel.alignment = .left
         updateDisplayedText()
     }
 
@@ -278,9 +360,16 @@ private final class FloatingPanelContentViewController: NSViewController {
             nextText = trimmed.isEmpty ? "正在聆听…" : transcript
         case .refining:
             nextText = "Refining..."
+        case .modeSwitch:
+            nextText = transcript
         }
 
         setTranscriptText(nextText, animated: shouldAnimateTranscriptUpdate(to: nextText))
+        recalculatePreferredWidth()
+    }
+
+    func updateModeSwitchTitle(_ title: String) {
+        updateModeSelection(title)
         recalculatePreferredWidth()
     }
 
@@ -307,9 +396,15 @@ private final class FloatingPanelContentViewController: NSViewController {
             )
         case .refining:
             setTranscriptText("Refining...", animated: false)
+        case .modeSwitch:
+            updateModeSelection(currentText.isEmpty ? "Disabled" : currentText)
         }
 
         recalculatePreferredWidth()
+    }
+
+    private func updateModeSelection(_ title: String) {
+        modeCapsules.forEach { $0.setSelected($0.title == title, animated: view.window?.isVisible == true) }
     }
 
     private func setTranscriptText(_ text: String, animated: Bool) {
@@ -328,8 +423,15 @@ private final class FloatingPanelContentViewController: NSViewController {
 
     private func recalculatePreferredWidth() {
         let measuredTextWidth = measuredTranscriptWidth()
-        let elasticTextWidth = max(160, min(560, measuredTextWidth + 8))
-        preferredPanelWidth = 18 + 44 + 14 + elasticTextWidth + 18
+        switch phase {
+        case .recording, .refining:
+            let elasticTextWidth = max(160, min(560, measuredTextWidth + 8))
+            preferredPanelWidth = 18 + 44 + 14 + elasticTextWidth + 18
+            heightConstraint?.constant = 56
+        case .modeSwitch:
+            preferredPanelWidth = 452
+            heightConstraint?.constant = 136
+        }
         widthDidChange?(preferredPanelWidth)
     }
 
@@ -394,13 +496,124 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     private func syncAppearance() {
-        let palette = FloatingPanelPalette(appearance: view.effectiveAppearance)
+        let palette = FloatingPanelPalette(appearance: view.effectiveAppearance, phase: phase)
         blurView.material = palette.material
         blurView.layer?.backgroundColor = palette.backgroundColor.cgColor
         blurView.layer?.borderWidth = 1
         blurView.layer?.borderColor = palette.borderColor.cgColor
         transcriptLabel.textColor = palette.textColor
         waveformView.applyAppearance(barColor: palette.waveformColor)
+        modeCapsules.forEach { $0.applyPalette(palette) }
+    }
+}
+
+final class ModeSwitchCapsuleView: NSView {
+    let title: String
+    private(set) var isSelected = false
+
+    private let blurView = NSVisualEffectView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    private var palette: FloatingPanelPalette?
+
+    init(title: String) {
+        self.title = title
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier("voicepi-mode-capsule")
+        toolTip = title
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+
+        blurView.translatesAutoresizingMaskIntoConstraints = false
+        blurView.material = .hudWindow
+        blurView.blendingMode = .withinWindow
+        blurView.state = .active
+        blurView.wantsLayer = true
+        blurView.layer?.cornerRadius = 22
+        blurView.layer?.masksToBounds = true
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        titleLabel.alignment = .center
+
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        subtitleLabel.alignment = .center
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.stringValue = switch title {
+        case "Disabled": "Raw"
+        case "Refinement": "Polish"
+        default: "Convert"
+        }
+
+        let stack = NSStackView(views: [titleLabel, subtitleLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 3
+
+        addSubview(blurView)
+        blurView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            blurView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blurView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blurView.topAnchor.constraint(equalTo: topAnchor),
+            blurView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: blurView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: blurView.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: blurView.centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 94),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 120)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    fileprivate func applyPalette(_ palette: FloatingPanelPalette) {
+        self.palette = palette
+        if isSelected {
+            titleLabel.textColor = palette.selectedTextColor
+            subtitleLabel.textColor = palette.selectedSubtextColor
+            blurView.layer?.backgroundColor = palette.selectedCapsuleColor.cgColor
+            blurView.layer?.borderColor = palette.selectedBorderColor.cgColor
+        } else {
+            titleLabel.textColor = palette.textColor.withAlphaComponent(0.82)
+            subtitleLabel.textColor = palette.textColor.withAlphaComponent(0.52)
+            blurView.layer?.backgroundColor = palette.unselectedCapsuleColor.cgColor
+            blurView.layer?.borderColor = palette.unselectedBorderColor.cgColor
+        }
+        blurView.layer?.borderWidth = 1
+    }
+
+    func setSelected(_ selected: Bool, animated: Bool) {
+        isSelected = selected
+        identifier = NSUserInterfaceItemIdentifier(
+            selected ? "voicepi-mode-capsule-selected" : "voicepi-mode-capsule"
+        )
+
+        let scale: CGFloat = selected ? 1.0 : 0.94
+        let alpha: CGFloat = selected ? 1.0 : 0.9
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.2, 1.0)
+                animator().alphaValue = alpha
+            }
+        } else {
+            alphaValue = alpha
+        }
+
+        layer?.sublayerTransform = CATransform3DMakeScale(scale, scale, 1)
+        if let palette {
+            applyPalette(palette)
+        }
     }
 }
 
@@ -550,21 +763,47 @@ private struct FloatingPanelPalette {
     let borderColor: NSColor
     let textColor: NSColor
     let waveformColor: NSColor
+    let selectedCapsuleColor: NSColor
+    let selectedBorderColor: NSColor
+    let unselectedCapsuleColor: NSColor
+    let unselectedBorderColor: NSColor
+    let selectedTextColor: NSColor
+    let selectedSubtextColor: NSColor
 
-    init(appearance: NSAppearance) {
+    init(appearance: NSAppearance, phase: FloatingPanelContentViewController.Phase) {
         let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        material = .underWindowBackground
+        material = phase == .modeSwitch ? .hudWindow : .underWindowBackground
 
         if isDarkTheme {
-            backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 0.96)
-            borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
+            backgroundColor = phase == .modeSwitch
+                ? NSColor(calibratedWhite: 0.11, alpha: 0.78)
+                : NSColor(calibratedWhite: 0.16, alpha: 0.96)
+            borderColor = phase == .modeSwitch
+                ? NSColor(calibratedWhite: 1.0, alpha: 0.12)
+                : NSColor(calibratedWhite: 1.0, alpha: 0.08)
             textColor = NSColor.white.withAlphaComponent(0.96)
             waveformColor = NSColor.white.withAlphaComponent(0.95)
+            selectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.20)
+            selectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.18)
+            unselectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.06)
+            unselectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
+            selectedTextColor = NSColor.white.withAlphaComponent(0.98)
+            selectedSubtextColor = NSColor.white.withAlphaComponent(0.72)
         } else {
-            backgroundColor = NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 0.96)
-            borderColor = NSColor(calibratedWhite: 0.0, alpha: 0.08)
+            backgroundColor = phase == .modeSwitch
+                ? NSColor(calibratedRed: 0xF1 / 255.0, green: 0xF0 / 255.0, blue: 0xEB / 255.0, alpha: 0.78)
+                : NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 0.96)
+            borderColor = phase == .modeSwitch
+                ? NSColor(calibratedWhite: 0.0, alpha: 0.10)
+                : NSColor(calibratedWhite: 0.0, alpha: 0.08)
             textColor = NSColor(calibratedWhite: 0.16, alpha: 1)
             waveformColor = NSColor(calibratedWhite: 0.18, alpha: 0.92)
+            selectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.42)
+            selectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.58)
+            unselectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.16)
+            unselectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.28)
+            selectedTextColor = NSColor(calibratedWhite: 0.10, alpha: 1)
+            selectedSubtextColor = NSColor(calibratedWhite: 0.16, alpha: 0.72)
         }
     }
 }

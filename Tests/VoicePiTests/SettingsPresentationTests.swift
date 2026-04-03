@@ -10,6 +10,12 @@ struct SettingsPresentationTests {
         let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationReflectsModelStateWhenAppleTranslateIsAvailable.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
         model.setActivationShortcut(ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
+        model.setModeCycleShortcut(
+            ActivationShortcut(
+                keyCodes: [49],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
         model.selectedLanguage = .english
         model.setMicrophoneAuthorization(.granted)
         model.setSpeechAuthorization(.denied)
@@ -28,6 +34,7 @@ struct SettingsPresentationTests {
         )
 
         #expect(presentation.shortcutSummary == "Current shortcut: A + S")
+        #expect(presentation.modeShortcutSummary == "Mode-switch shortcut: Command + Shift + Space")
         #expect(presentation.languageSummary == "Recognition language: English")
         #expect(presentation.permissionSummary == "Permissions: Mic Granted, Speech Denied, Accessibility Unknown, Input Monitoring Granted")
         #expect(presentation.asrSummary == "ASR backend: Remote OpenAI-Compatible ASR • Remote configured")
@@ -35,6 +42,10 @@ struct SettingsPresentationTests {
         #expect(
             presentation.shortcutHint
                 == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
+        )
+        #expect(
+            presentation.modeShortcutHint
+                == "Current mode-switch shortcut: ⌘⇧ + Space. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
         )
         #expect(presentation.statusTone == .secondary)
     }
@@ -85,6 +96,29 @@ struct SettingsPresentationTests {
         #expect(
             presentation.shortcutHint
                 == "Current shortcut: ⌘⌥ + Space. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+        )
+    }
+
+    @Test
+    @MainActor
+    func homePresentationExplainsThatAdvancedModeShortcutNeedsInputMonitoringAndAccessibilityForSuppression() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationExplainsThatAdvancedModeShortcutNeedsInputMonitoringAndAccessibilityForSuppression.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setModeCycleShortcut(
+            ActivationShortcut(
+                keyCodes: [0, 1],
+                modifierFlagsRawValue: NSEvent.ModifierFlags.command.intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
+
+        let presentation = SettingsPresentation.homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: true
+        )
+
+        #expect(
+            presentation.modeShortcutHint
+                == "Current mode-switch shortcut: ⌘ + A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
         )
     }
 
@@ -182,6 +216,14 @@ struct SettingsPresentationTests {
         #expect(
             PermissionsCopy.advancedShortcutHint
                 == "Current shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
+        )
+        #expect(
+            PermissionsCopy.standardModeShortcutHint
+                == "Current mode-switch shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+        )
+        #expect(
+            PermissionsCopy.advancedModeShortcutHint
+                == "Current mode-switch shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
         )
     }
 }
