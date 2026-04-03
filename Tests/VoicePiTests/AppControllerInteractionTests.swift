@@ -440,4 +440,59 @@ struct AppControllerInteractionTests {
             )
         )
     }
+
+    @Test
+    @MainActor
+    func automaticUpdatePromptOnlyAppearsOncePerVersion() {
+        #expect(
+            AppController.shouldPresentUpdatePrompt(
+                trigger: .automatic,
+                availableVersion: "1.4.0",
+                lastPromptedVersion: nil
+            )
+        )
+        #expect(
+            !AppController.shouldPresentUpdatePrompt(
+                trigger: .automatic,
+                availableVersion: "1.4.0",
+                lastPromptedVersion: "1.4.0"
+            )
+        )
+        #expect(
+            AppController.shouldPresentUpdatePrompt(
+                trigger: .automatic,
+                availableVersion: "1.4.1",
+                lastPromptedVersion: "1.4.0"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func manualUpdateCheckAlwaysAllowsPromptForAvailableVersion() {
+        #expect(
+            AppController.shouldPresentUpdatePrompt(
+                trigger: .manual,
+                availableVersion: "1.4.0",
+                lastPromptedVersion: "1.4.0"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func manualUpdateCheckShowsDialogWhenAlreadyUpToDate() {
+        #expect(
+            AppController.shouldPresentManualUpdateResultDialog(
+                trigger: .manual,
+                result: .upToDate(currentVersion: "1.4.0")
+            )
+        )
+        #expect(
+            !AppController.shouldPresentManualUpdateResultDialog(
+                trigger: .automatic,
+                result: .upToDate(currentVersion: "1.4.0")
+            )
+        )
+    }
 }

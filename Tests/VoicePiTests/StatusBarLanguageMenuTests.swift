@@ -6,6 +6,20 @@ import Testing
 struct StatusBarLanguageMenuTests {
     @Test
     @MainActor
+    func menuIncludesDirectCheckForUpdatesAction() {
+        #expect(
+            StatusBarController.primaryMenuActionTitles == [
+                "Language",
+                "Text Processing",
+                "Check for Updates…",
+                "Settings…",
+                "Quit VoicePi"
+            ]
+        )
+    }
+
+    @Test
+    @MainActor
     func outputLanguageStaysSelectableWhenRefinementModeIsOn() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.outputLanguageStaysSelectableWhenRefinementModeIsOn.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)

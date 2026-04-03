@@ -20,6 +20,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarControllerDidRequestOpenInputMonitoringSettings(_ controller: StatusBarController)
     func statusBarControllerDidRequestPromptAccessibilityPermission(_ controller: StatusBarController)
     func statusBarControllerDidRequestRefreshPermissions(_ controller: StatusBarController) async
+    func statusBarControllerDidRequestCheckForUpdates(_ controller: StatusBarController) async -> String
 }
 
 struct LanguageMenuItemPresentation: Equatable {
@@ -187,6 +188,13 @@ struct LLMSectionFeedback {
 
 @MainActor
 final class StatusBarController: NSObject {
+    enum AboutOverviewRow: Equatable {
+        case repository
+        case builtBy
+        case inspiredBy
+        case checkForUpdates
+    }
+
     weak var delegate: StatusBarControllerDelegate?
 
     private let model: AppModel
@@ -206,6 +214,21 @@ final class StatusBarController: NSObject {
 
     private var isRecording = false
     private var transientStatus: String?
+
+    static let aboutOverviewRowOrder: [AboutOverviewRow] = [
+        .repository,
+        .builtBy,
+        .inspiredBy,
+        .checkForUpdates
+    ]
+
+    static let primaryMenuActionTitles = [
+        "Language",
+        "Text Processing",
+        "Check for Updates…",
+        "Settings…",
+        "Quit VoicePi"
+    ]
 
     init(model: AppModel) {
         self.model = model
@@ -336,6 +359,14 @@ final class StatusBarController: NSObject {
         rebuildLLMMenu()
 
         menu.addItem(.separator())
+
+        let checkForUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdatesFromMenu),
+            keyEquivalent: ""
+        )
+        checkForUpdatesItem.target = self
+        menu.addItem(checkForUpdatesItem)
 
         let settingsItem = NSMenuItem(
             title: "Settings…",
@@ -603,6 +634,18 @@ final class StatusBarController: NSObject {
     }
 
     @objc
+    private func checkForUpdatesFromMenu() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let status = await delegate?.statusBarControllerDidRequestCheckForUpdates(self)
+                ?? "No update handler is available."
+            self.settingsWindowController?.setAboutUpdateStatus(status)
+            self.settingsWindowController?.reloadFromModel()
+            self.setTransientStatus(status)
+        }
+    }
+
+    @objc
     private func quitApp() {
         delegate?.statusBarControllerDidRequestQuit(self)
     }
@@ -700,6 +743,7 @@ protocol SettingsWindowControllerDelegate: AnyObject {
     func settingsWindowControllerDidRequestOpenInputMonitoringSettings(_ controller: SettingsWindowController)
     func settingsWindowControllerDidRequestPromptAccessibilityPermission(_ controller: SettingsWindowController)
     func settingsWindowControllerDidRequestRefreshPermissions(_ controller: SettingsWindowController) async
+    func settingsWindowControllerDidRequestCheckForUpdates(_ controller: SettingsWindowController) async -> String
 }
 
 @MainActor
@@ -737,6 +781,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let aboutWebsiteLabel = NSTextField(labelWithString: "")
     private let aboutGitHubLabel = NSTextField(labelWithString: "")
     private let aboutXLabel = NSTextField(labelWithString: "")
+    private lazy var aboutCheckForUpdatesButton = StyledSettingsButton(
+        title: "Check for Updates",
+        role: .primary,
+        target: self,
+        action: #selector(checkForUpdates)
+    )
+    private let aboutUpdateStatusLabel = NSTextField(labelWithString: "")
     private let interfaceThemeControl = NSSegmentedControl()
 
     private let baseURLField = NSTextField(string: "")
@@ -760,6 +811,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private var sectionButtons: [SettingsSection: NSButton] = [:]
     private var currentSection: SettingsSection = .home
+    private var aboutUpdateStatusText = "Use Homebrew for install and upgrades."
 
     init(model: AppModel, delegate: SettingsWindowControllerDelegate?) {
         self.model = model
@@ -802,6 +854,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func show(section: SettingsSection) {
         showWindow(nil)
         selectSection(section)
+    }
+
+    func setAboutUpdateStatus(_ text: String) {
+        aboutUpdateStatusText = text
+        aboutUpdateStatusLabel.stringValue = text
     }
 
     func reloadFromModel() {
@@ -1195,6 +1252,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         aboutXLabel.font = .systemFont(ofSize: 13)
         aboutXLabel.alignment = .left
         aboutXLabel.lineBreakMode = .byTruncatingTail
+        aboutUpdateStatusLabel.font = .systemFont(ofSize: 12)
+        aboutUpdateStatusLabel.alignment = .left
+        aboutUpdateStatusLabel.textColor = .secondaryLabelColor
+        aboutUpdateStatusLabel.lineBreakMode = .byWordWrapping
+        aboutUpdateStatusLabel.maximumNumberOfLines = 4
+        aboutCheckForUpdatesButton.heightAnchor.constraint(
+            equalToConstant: SettingsLayoutMetrics.actionButtonHeight
+        ).isActive = true
 
         let versionSection = makeGroupedSection(customViews: [
             makeAboutMetaRow(title: "Version", valueView: aboutVersionLabel),
@@ -1286,6 +1351,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         aboutWebsiteLabel.stringValue = aboutPresentation.websiteDisplay
         aboutGitHubLabel.stringValue = aboutPresentation.githubDisplay
         aboutXLabel.stringValue = aboutPresentation.xDisplay
+        aboutUpdateStatusLabel.stringValue = aboutUpdateStatusText
     }
 
     private func refreshHomeSection() {
@@ -1445,6 +1511,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func openAboutSection() {
         selectSection(.about)
+    }
+
+    @objc
+    private func checkForUpdates() {
+        aboutUpdateStatusLabel.stringValue = "Checking GitHub Releases…"
+        aboutCheckForUpdatesButton.isEnabled = false
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let status = await delegate?.settingsWindowControllerDidRequestCheckForUpdates(self)
+                ?? "No update handler is available."
+            self.aboutUpdateStatusText = status
+            self.aboutUpdateStatusLabel.stringValue = status
+            self.aboutCheckForUpdatesButton.isEnabled = true
+        }
     }
 
     @objc
@@ -2062,20 +2143,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func makeAboutOverviewCard(title: String, description: String) -> NSView {
         let card = makeCardView()
 
-        let stack = NSStackView(views: [
+        var views: [NSView] = [
             makeSectionTitle(title),
-            makeBodyLabel(description),
-            makeSubtleLinkRow(prefix: "Repository:", linkTitle: AboutProfile.repositoryDisplay, action: #selector(openRepository)),
-            makeSubtleLinkRow(prefix: "Built With Love By", linkTitle: AboutProfile.author, action: #selector(openGitHubProfile)),
-            makeSubtleDoubleLinkRow(
-                prefix: "Inspired by",
-                firstLinkTitle: AboutProfile.inspirationAuthorDisplay,
-                firstAction: #selector(openInspirationAuthor),
-                infix: "and",
-                secondLinkTitle: "this tweet",
-                secondAction: #selector(openInspirationPost)
-            )
-        ])
+            makeBodyLabel(description)
+        ]
+
+        views.append(contentsOf: StatusBarController.aboutOverviewRowOrder.map { row in
+            switch row {
+            case .repository:
+                return makeSubtleLinkRow(
+                    prefix: "Repository:",
+                    linkTitle: AboutProfile.repositoryDisplay,
+                    action: #selector(openRepository)
+                )
+            case .builtBy:
+                return makeSubtleLinkRow(
+                    prefix: "Built With Love By",
+                    linkTitle: AboutProfile.author,
+                    action: #selector(openGitHubProfile)
+                )
+            case .inspiredBy:
+                return makeSubtleDoubleLinkRow(
+                    prefix: "Inspired by",
+                    firstLinkTitle: AboutProfile.inspirationAuthorDisplay,
+                    firstAction: #selector(openInspirationAuthor),
+                    infix: "and",
+                    secondLinkTitle: "this tweet",
+                    secondAction: #selector(openInspirationPost)
+                )
+            case .checkForUpdates:
+                let stack = NSStackView(views: [aboutCheckForUpdatesButton, aboutUpdateStatusLabel])
+                stack.orientation = .vertical
+                stack.alignment = .leading
+                stack.spacing = 6
+                return stack
+            }
+        })
+
+        let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.spacing = 10
         stack.alignment = .leading
@@ -2405,6 +2510,11 @@ extension StatusBarController: SettingsWindowControllerDelegate {
     func settingsWindowControllerDidRequestRefreshPermissions(_ controller: SettingsWindowController) async {
         await delegate?.statusBarControllerDidRequestRefreshPermissions(self)
         refreshAll()
+    }
+
+    func settingsWindowControllerDidRequestCheckForUpdates(_ controller: SettingsWindowController) async -> String {
+        await delegate?.statusBarControllerDidRequestCheckForUpdates(self)
+            ?? "No update handler is available."
     }
 }
 

@@ -91,6 +91,8 @@ final class AppController: NSObject {
     private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
     private let textInjector = TextInjector.shared
+    private let updateChecker = GitHubReleaseUpdateChecker()
+    private let appDefaults = UserDefaults.standard
 
     private var statusBarController: StatusBarController?
     private var cancellables: Set<AnyCancellable> = []
@@ -113,6 +115,8 @@ final class AppController: NSObject {
 
     static let shortcutRegistrationFailureMessage =
         "Global shortcut registration is unavailable. Choose a different shortcut."
+
+    private static let lastPromptedUpdateVersionKey = "VoicePi.lastPromptedUpdateVersion"
 
     static func pressAction(
         isRecording: Bool,
@@ -140,6 +144,31 @@ final class AppController: NSObject {
         isProcessingRelease: Bool
     ) -> ReleaseAction {
         .ignore
+    }
+
+    static func shouldPresentUpdatePrompt(
+        trigger: UpdateCheckTrigger,
+        availableVersion: String,
+        lastPromptedVersion: String?
+    ) -> Bool {
+        switch trigger {
+        case .manual:
+            return true
+        case .automatic:
+            return lastPromptedVersion != availableVersion
+        }
+    }
+
+    static func shouldPresentManualUpdateResultDialog(
+        trigger: UpdateCheckTrigger,
+        result: AppUpdateCheckResult
+    ) -> Bool {
+        switch trigger {
+        case .manual:
+            return true
+        case .automatic:
+            return false
+        }
     }
 
     static func shouldPromptAccessibilityOnLaunch(
@@ -381,6 +410,7 @@ final class AppController: NSObject {
                 useSystemAccessibilityPrompt: launchPermissionPlan.useSystemAccessibilityPrompt,
                 inputMonitoringPromptSource: .launchFollowUp
             )
+            _ = await self.checkForUpdates(trigger: .automatic)
         }
     }
 
@@ -975,6 +1005,95 @@ final class AppController: NSObject {
         }
     }
 
+    private func currentAppVersion() -> String {
+        SettingsPresentation.aboutPresentation(infoDictionary: Bundle.main.infoDictionary).version
+    }
+
+    private func checkForUpdates(trigger: UpdateCheckTrigger) async -> String {
+        do {
+            let result = try await updateChecker.checkForUpdates(currentVersion: currentAppVersion())
+            let statusText = AppUpdateCopy.statusText(for: result)
+
+            switch result {
+            case .updateAvailable(let release):
+                if Self.shouldPresentUpdatePrompt(
+                    trigger: trigger,
+                    availableVersion: release.version,
+                    lastPromptedVersion: appDefaults.string(forKey: Self.lastPromptedUpdateVersionKey)
+                ) {
+                    appDefaults.set(release.version, forKey: Self.lastPromptedUpdateVersionKey)
+                    presentUpdatePrompt(for: release)
+                }
+            case .upToDate(let currentVersion):
+                if Self.shouldPresentManualUpdateResultDialog(trigger: trigger, result: result) {
+                    presentInformationalUpdatePrompt(
+                        content: AppUpdateCopy.upToDatePromptContent(currentVersion: currentVersion)
+                    )
+                }
+            }
+
+            return statusText
+        } catch {
+            let message = "Update check failed: \(error.localizedDescription)"
+            if trigger == .manual {
+                presentInformationalUpdatePrompt(
+                    content: AppUpdateCopy.failurePromptContent(message: message)
+                )
+            }
+
+            switch trigger {
+            case .automatic:
+                return "Automatic update check unavailable."
+            case .manual:
+                return message
+            }
+        }
+    }
+
+    private func presentUpdatePrompt(for release: AppUpdateRelease) {
+        let content = AppUpdateCopy.promptContent(for: release)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = content.messageText
+        alert.informativeText = content.informativeText
+        alert.addButton(withTitle: "Copy Homebrew Commands")
+        alert.addButton(withTitle: "Open Homebrew Guide")
+        alert.addButton(withTitle: "Later")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(HomebrewUpdateInstructions.combinedCommands, forType: .string)
+            statusBarController?.setTransientStatus("Copied Homebrew update commands")
+        case .alertSecondButtonReturn:
+            if let url = URL(string: HomebrewUpdateInstructions.readmeInstallURL) {
+                NSWorkspace.shared.open(url)
+                statusBarController?.setTransientStatus("Opened Homebrew install guide")
+            }
+        default:
+            break
+        }
+    }
+
+    private func presentInformationalUpdatePrompt(content: AppUpdatePromptContent) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = content.messageText
+        alert.informativeText = content.informativeText
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Open Homebrew Guide")
+
+        if alert.runModal() == .alertSecondButtonReturn,
+           let url = URL(string: HomebrewUpdateInstructions.readmeInstallURL) {
+            NSWorkspace.shared.open(url)
+            statusBarController?.setTransientStatus("Opened Homebrew install guide")
+        }
+    }
+
 }
 
 extension AppController: ShortcutMonitorDelegate {
@@ -1143,6 +1262,10 @@ extension AppController: StatusBarControllerDelegate {
 
     func statusBarControllerDidRequestQuit(_ controller: StatusBarController) {
         NSApp.terminate(nil)
+    }
+
+    func statusBarControllerDidRequestCheckForUpdates(_ controller: StatusBarController) async -> String {
+        await checkForUpdates(trigger: .manual)
     }
 
     private func openSystemSettingsPane(_ rawURL: String) {

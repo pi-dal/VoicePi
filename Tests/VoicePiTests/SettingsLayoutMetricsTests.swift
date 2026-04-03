@@ -24,4 +24,17 @@ struct SettingsLayoutMetricsTests {
         #expect(AboutProfile.githubDisplay == "@pi-dal")
         #expect(AboutProfile.xDisplay == "@pidal20")
     }
+
+    @Test
+    @MainActor
+    func aboutOverviewPlacesUpdateActionAfterInspirationRow() {
+        #expect(
+            StatusBarController.aboutOverviewRowOrder == [
+                .repository,
+                .builtBy,
+                .inspiredBy,
+                .checkForUpdates
+            ]
+        )
+    }
 }
