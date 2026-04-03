@@ -1,0 +1,7 @@
+{
+  "id": "support_reply",
+  "title": "Support Reply",
+  "description": "Produce a concise customer-facing reply.",
+  "body": "Write the result as a short support reply. Keep the tone calm and direct, and do not invent policy details not implied by the transcript.",
+  "optionGroupIDs": ["output_format", "strictness"]
+}

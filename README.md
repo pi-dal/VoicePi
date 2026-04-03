@@ -453,6 +453,36 @@ The API key field can be fully cleared.
 - If your provider uses a custom base path, set the base URL accordingly
 - The app does not hardcode any API key
 
+## Prompt Templates
+
+Prompt templates only affect **Refinement mode**. They do not change the built-in ASR guardrails, and they do not replace the code-controlled language instructions that VoicePi adds when you choose an output language.
+
+The settings UI exposes three prompt controls:
+
+- **Default Prompt Template** sets the global default middle section. If you leave it as `None`, VoicePi behaves exactly as it did before this feature and adds no extra configurable prompt text.
+- **VoicePi Override** controls the app-specific selection. Choose `Inherit Global Default` to reuse the global template, `None` to disable the configurable middle section for VoicePi only, or a specific template to override the global default.
+- **Template Options** configures the currently active template. These options append reusable prompt fragments such as output format or strictness instructions.
+
+The **Resolved Prompt** preview shows the final prompt body that comes from the template system. VoicePi still wraps that body with its fixed prefix and suffix instructions at runtime.
+
+### How the bundled prompt library is structured
+
+The prompt library lives under [`Sources/VoicePi/PromptLibrary`](Sources/VoicePi/PromptLibrary):
+
+- [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) lists the known profiles, fragments, and option groups.
+- [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) contains complete middle-section templates such as `meeting_notes` and `json_output`.
+- [`fragments/`](Sources/VoicePi/PromptLibrary/fragments) contains reusable add-on instructions that option groups can enable.
+- [`apps/voicepi.json`](Sources/VoicePi/PromptLibrary/apps/voicepi.json) defines which profiles and option groups VoicePi exposes in the UI.
+
+### How to add or change prompt parameters
+
+1. Edit [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) to register any new option groups or fragment IDs.
+2. Add or update a profile in [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) if you need a new base template body.
+3. Add or update a fragment in [`fragments/`](Sources/VoicePi/PromptLibrary/fragments) if you need a reusable option such as a format or strictness modifier.
+4. Update [`apps/voicepi.json`](Sources/VoicePi/PromptLibrary/apps/voicepi.json) to decide which templates and option groups VoicePi should expose.
+
+Each profile selects its available parameters through `optionGroupIDs`. Each option group chooses between one or more option IDs, and each option can inject a fragment body. This keeps the prompt files small and lets multiple apps reuse the same template pieces without copying large prompt bodies into every app-specific file.
+
 ## Input Method Handling
 
 Before paste injection, VoicePi checks the current macOS input source.

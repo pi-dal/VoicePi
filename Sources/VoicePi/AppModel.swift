@@ -752,15 +752,33 @@ struct LLMConfiguration: Codable, Equatable {
     var baseURL: String
     var apiKey: String
     var model: String
+    var refinementPrompt: String
 
     init(
         baseURL: String = "",
         apiKey: String = "",
-        model: String = ""
+        model: String = "",
+        refinementPrompt: String = ""
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
+        self.refinementPrompt = refinementPrompt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseURL
+        case apiKey
+        case model
+        case refinementPrompt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        refinementPrompt = try container.decodeIfPresent(String.self, forKey: .refinementPrompt) ?? ""
     }
 
     var trimmedBaseURL: String {
@@ -773,6 +791,10 @@ struct LLMConfiguration: Codable, Equatable {
 
     var trimmedModel: String {
         model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var trimmedRefinementPrompt: String {
+        refinementPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var isConfigured: Bool {
@@ -867,6 +889,7 @@ final class AppModel: ObservableObject {
         static let selectedLanguage = "selectedLanguage"
         static let llmEnabled = "llmEnabled"
         static let llmConfig = "llmConfig"
+        static let promptSettings = "promptSettings"
         static let postProcessingMode = "postProcessingMode"
         static let translationProvider = "translationProvider"
         static let targetLanguage = "targetLanguage"
@@ -886,6 +909,12 @@ final class AppModel: ObservableObject {
     @Published var llmConfiguration: LLMConfiguration {
         didSet {
             persistConfiguration()
+        }
+    }
+
+    @Published var promptSettings: PromptSettings {
+        didSet {
+            persistPromptSettings()
         }
     }
 
@@ -965,13 +994,29 @@ final class AppModel: ObservableObject {
         }
         self.selectedLanguage = initialSelectedLanguage
 
+        let initialLLMConfiguration: LLMConfiguration
         if
             let data = defaults.data(forKey: Keys.llmConfig),
             let decoded = try? decoder.decode(LLMConfiguration.self, from: data)
         {
-            self.llmConfiguration = decoded
+            initialLLMConfiguration = decoded
         } else {
-            self.llmConfiguration = .init()
+            initialLLMConfiguration = .init()
+        }
+        self.llmConfiguration = initialLLMConfiguration
+
+        if
+            let data = defaults.data(forKey: Keys.promptSettings),
+            let decoded = try? decoder.decode(PromptSettings.self, from: data)
+        {
+            self.promptSettings = decoded
+        } else if !initialLLMConfiguration.trimmedRefinementPrompt.isEmpty {
+            self.promptSettings = PromptSettings(
+                defaultSelection: .none,
+                appSelections: [PromptAppID.voicePi.rawValue: .legacyCustom]
+            )
+        } else {
+            self.promptSettings = .init()
         }
 
         if
@@ -1104,13 +1149,54 @@ final class AppModel: ObservableObject {
     func saveLLMConfiguration(
         baseURL: String,
         apiKey: String,
-        model: String
+        model: String,
+        refinementPrompt: String? = nil
     ) {
         llmConfiguration = LLMConfiguration(
             baseURL: baseURL,
             apiKey: apiKey,
-            model: model
+            model: model,
+            refinementPrompt: refinementPrompt ?? llmConfiguration.refinementPrompt
         )
+    }
+
+    func promptSelection(for appID: PromptAppID) -> PromptSelection {
+        promptSettings.selection(for: appID) ?? .inherit
+    }
+
+    func setPromptSelection(_ selection: PromptSelection, for appID: PromptAppID) {
+        var next = promptSettings
+        next.setSelection(selection, for: appID)
+        promptSettings = next
+    }
+
+    func promptResolutionDiagnostics(for appID: PromptAppID) -> PromptResolutionDiagnostics {
+        do {
+            let library = try PromptLibrary.loadBundled()
+            let resolved = try PromptResolver.resolve(
+                appID: appID,
+                globalSelection: promptSettings.defaultSelection,
+                appSelection: promptSelection(for: appID),
+                library: library,
+                legacyCustomPrompt: llmConfiguration.refinementPrompt
+            )
+            return .init(resolvedSelection: resolved, error: nil)
+        } catch let error as PromptLibraryError {
+            return .init(resolvedSelection: nil, error: .library(error))
+        } catch {
+            return .init(
+                resolvedSelection: nil,
+                error: .unknown(String(describing: error))
+            )
+        }
+    }
+
+    func resolvedPromptSelection(for appID: PromptAppID) -> ResolvedPromptSelection? {
+        promptResolutionDiagnostics(for: appID).resolvedSelection
+    }
+
+    func resolvedRefinementPrompt(for appID: PromptAppID) -> String? {
+        resolvedPromptSelection(for: appID)?.middleSection
     }
 
     func setPostProcessingMode(_ mode: PostProcessingMode) {
@@ -1181,6 +1267,12 @@ final class AppModel: ObservableObject {
     private func persistConfiguration() {
         if let data = try? encoder.encode(llmConfiguration) {
             defaults.set(data, forKey: Keys.llmConfig)
+        }
+    }
+
+    private func persistPromptSettings() {
+        if let data = try? encoder.encode(promptSettings) {
+            defaults.set(data, forKey: Keys.promptSettings)
         }
     }
 

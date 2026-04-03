@@ -57,6 +57,7 @@ struct AppWorkflowSupportTests {
             sourceLanguage: .english,
             targetLanguage: .english,
             configuration: .init(),
+            resolvedRefinementPrompt: nil,
             refiner: refiner,
             translator: translator,
             onPresentation: { _ in },
@@ -79,7 +80,13 @@ struct AppWorkflowSupportTests {
             translationProvider: .appleTranslate,
             sourceLanguage: .english,
             targetLanguage: .japanese,
-            configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+            configuration: .init(
+                baseURL: "https://api.example.com",
+                apiKey: "sk",
+                model: "gpt",
+                refinementPrompt: "legacy freeform prompt"
+            ),
+            resolvedRefinementPrompt: "Format the output as concise release notes.",
             refiner: refiner,
             translator: translator,
             onPresentation: { _ in },
@@ -89,6 +96,8 @@ struct AppWorkflowSupportTests {
         #expect(text == "日本語の出力")
         #expect(refiner.calls == 1)
         #expect(refiner.lastTargetLanguage == .japanese)
+        #expect(refiner.lastMode == .refinement)
+        #expect(refiner.lastRefinementPrompt == "Format the output as concise release notes.")
         #expect(translator.calls == 0)
     }
 
@@ -106,6 +115,7 @@ struct AppWorkflowSupportTests {
                 sourceLanguage: .english,
                 targetLanguage: .japanese,
                 configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+                resolvedRefinementPrompt: nil,
                 refiner: refiner,
                 translator: translator,
                 onPresentation: { _ in
@@ -131,6 +141,7 @@ struct AppWorkflowSupportTests {
             sourceLanguage: .english,
             targetLanguage: .japanese,
             configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+            resolvedRefinementPrompt: nil,
             refiner: refiner,
             translator: translator,
             onPresentation: { _ in },
@@ -141,6 +152,37 @@ struct AppWorkflowSupportTests {
         #expect(refiner.calls == 0)
         #expect(translator.calls == 1)
         #expect(translator.lastTargetLanguage == .japanese)
+    }
+
+    @Test
+    func llmTranslationPathUsesTranslationPromptModeInsteadOfRefinementPromptMode() async {
+        let refiner = RefinerStub(result: .success("translated"))
+        let translator = TranslatorStub(result: .success("unused"))
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .translation,
+            translationProvider: .llm,
+            sourceLanguage: .english,
+            targetLanguage: .japanese,
+            configuration: .init(
+                baseURL: "https://api.example.com",
+                apiKey: "sk",
+                model: "gpt",
+                refinementPrompt: "legacy old prompt"
+            ),
+            resolvedRefinementPrompt: "Respond with XML.",
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(text == "translated")
+        #expect(refiner.calls == 1)
+        #expect(refiner.lastMode == .translation)
+        #expect(refiner.lastRefinementPrompt == "")
+        #expect(translator.calls == 0)
     }
 
     @Test
@@ -156,6 +198,7 @@ struct AppWorkflowSupportTests {
             sourceLanguage: .english,
             targetLanguage: .japanese,
             configuration: .init(),
+            resolvedRefinementPrompt: nil,
             refiner: refiner,
             translator: translator,
             onPresentation: { _ in },
@@ -181,6 +224,7 @@ struct AppWorkflowSupportTests {
             sourceLanguage: .english,
             targetLanguage: .english,
             configuration: .init(baseURL: "https://api.example.com", apiKey: "sk", model: "gpt"),
+            resolvedRefinementPrompt: nil,
             refiner: refiner,
             translator: translator,
             onPresentation: { _ in },
@@ -255,7 +299,9 @@ private final class RemoteASRStub: RemoteASRServing, @unchecked Sendable {
 private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
     var result: Result<String, Error>
     private(set) var calls = 0
+    private(set) var lastMode: LLMRefinerPromptMode?
     private(set) var lastTargetLanguage: SupportedLanguage?
+    private(set) var lastRefinementPrompt: String?
 
     init(result: Result<String, Error>) {
         self.result = result
@@ -264,10 +310,13 @@ private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
     func refine(
         text: String,
         configuration: LLMRefinerConfiguration,
+        mode: LLMRefinerPromptMode,
         targetLanguage: SupportedLanguage?
     ) async throws -> String {
         calls += 1
+        lastMode = mode
         lastTargetLanguage = targetLanguage
+        lastRefinementPrompt = configuration.refinementPrompt
         return try result.get()
     }
 }

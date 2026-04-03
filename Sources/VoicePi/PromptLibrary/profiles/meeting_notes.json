@@ -1,0 +1,7 @@
+{
+  "id": "meeting_notes",
+  "title": "Meeting Notes",
+  "description": "Turn the transcript into concise structured notes.",
+  "body": "Organize the result as concise structured notes. Preserve the speaker intent and keep details grounded in the transcript.",
+  "optionGroupIDs": ["output_format", "strictness"]
+}

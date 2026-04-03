@@ -78,6 +78,47 @@ struct SettingsPresentationTests {
 
     @Test
     @MainActor
+    func homePresentationRefinementIncludesResolvedPromptTemplateTitle() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationRefinementIncludesResolvedPromptTemplateTitle.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setPostProcessingMode(.refinement)
+        model.setTargetLanguage(.english)
+        model.promptSettings.defaultSelection = .profile(
+            "meeting_notes",
+            optionSelections: ["output_format": ["markdown"]]
+        )
+        model.setPromptSelection(.inherit, for: .voicePi)
+        model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "sk", model: "gpt")
+
+        let presentation = SettingsPresentation.homeSectionPresentation(model: model)
+
+        #expect(
+            presentation.llmSummary
+                == "Text processing: Refinement via LLM • Target English • Template Meeting Notes • LLM configured"
+        )
+    }
+
+    @Test
+    @MainActor
+    func homePresentationRefinementShowsTemplateNoneForExplicitAppOverride() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationRefinementShowsTemplateNoneForExplicitAppOverride.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setPostProcessingMode(.refinement)
+        model.setTargetLanguage(.english)
+        model.promptSettings.defaultSelection = .profile("meeting_notes")
+        model.setPromptSelection(.none, for: .voicePi)
+        model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "sk", model: "gpt")
+
+        let presentation = SettingsPresentation.homeSectionPresentation(model: model)
+
+        #expect(
+            presentation.llmSummary
+                == "Text processing: Refinement via LLM • Target English • Template None • LLM configured"
+        )
+    }
+
+    @Test
+    @MainActor
     func homePresentationExplainsThatStandardShortcutsAvoidInputMonitoring() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationExplainsThatStandardShortcutsAvoidInputMonitoring.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)

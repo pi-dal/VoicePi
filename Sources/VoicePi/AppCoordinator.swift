@@ -777,6 +777,9 @@ final class AppController: NSObject {
             sourceLanguage: model.selectedLanguage,
             targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
+            resolvedRefinementPrompt: model.postProcessingMode == .refinement
+                ? model.resolvedRefinementPrompt(for: .voicePi)
+                : nil,
             refiner: llmRefiner,
             translator: appleTranslateService,
             onPresentation: { [weak self] presentation in
@@ -1174,7 +1177,8 @@ final class AppController: NSObject {
         let refinerConfiguration = LLMRefinerConfiguration(
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
-            model: configuration.model
+            model: configuration.model,
+            refinementPrompt: configuration.refinementPrompt
         )
 
         do {

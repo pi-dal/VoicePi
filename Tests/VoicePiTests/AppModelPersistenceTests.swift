@@ -13,7 +13,20 @@ struct AppModelPersistenceTests {
         model.setPostProcessingMode(.refinement)
         model.setTranslationProvider(.llm)
         model.setTargetLanguage(.japanese)
-        model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "llm-key", model: "gpt-4o-mini")
+        model.promptSettings.defaultSelection = .profile(
+            "meeting_notes",
+            optionSelections: ["output_format": ["markdown"]]
+        )
+        model.setPromptSelection(
+            .none,
+            for: .voicePi
+        )
+        model.saveLLMConfiguration(
+            baseURL: "https://llm.example.com",
+            apiKey: "llm-key",
+            model: "gpt-4o-mini",
+            refinementPrompt: "Return a markdown checklist."
+        )
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation")
         model.setActivationShortcut(ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
@@ -29,7 +42,21 @@ struct AppModelPersistenceTests {
         #expect(reloaded.postProcessingMode == .refinement)
         #expect(reloaded.translationProvider == .llm)
         #expect(reloaded.targetLanguage == .japanese)
-        #expect(reloaded.llmConfiguration == .init(baseURL: "https://llm.example.com", apiKey: "llm-key", model: "gpt-4o-mini"))
+        #expect(
+            reloaded.promptSettings.defaultSelection == .profile(
+                "meeting_notes",
+                optionSelections: ["output_format": ["markdown"]]
+            )
+        )
+        #expect(reloaded.promptSelection(for: .voicePi) == .none)
+        #expect(
+            reloaded.llmConfiguration == .init(
+                baseURL: "https://llm.example.com",
+                apiKey: "llm-key",
+                model: "gpt-4o-mini",
+                refinementPrompt: "Return a markdown checklist."
+            )
+        )
         #expect(reloaded.asrBackend == .remoteOpenAICompatible)
         #expect(reloaded.remoteASRConfiguration == .init(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation"))
         #expect(reloaded.activationShortcut == ActivationShortcut(keyCodes: [0, 1], modifierFlagsRawValue: 0))
@@ -52,13 +79,72 @@ struct AppModelPersistenceTests {
 
         model.setPostProcessingMode(.translation)
         model.setTranslationProvider(.appleTranslate)
-        model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "llm-key", model: "gpt")
+        model.saveLLMConfiguration(
+            baseURL: "https://llm.example.com",
+            apiKey: "llm-key",
+            model: "gpt",
+            refinementPrompt: "Use sentence case."
+        )
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "")
 
         #expect(model.isLLMReady)
         #expect(model.isRemoteASRReady)
         #expect(model.translationProvider == .appleTranslate)
+    }
+
+    @Test
+    @MainActor
+    func legacyRefinementPromptMigratesToLegacyCustomSelection() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.legacyRefinementPromptMigratesToLegacyCustomSelection.\(UUID().uuidString)")!
+        let legacyConfiguration = LLMConfiguration(
+            baseURL: "https://llm.example.com",
+            apiKey: "llm-key",
+            model: "gpt",
+            refinementPrompt: "Use markdown bullets."
+        )
+        let data = try! JSONEncoder().encode(legacyConfiguration)
+        defaults.set(data, forKey: AppModel.Keys.llmConfig)
+
+        let model = AppModel(defaults: defaults)
+
+        #expect(model.promptSelection(for: .voicePi).mode == .legacyCustom)
+        #expect(model.resolvedRefinementPrompt(for: .voicePi)?.contains("Use markdown bullets.") == true)
+    }
+
+    @Test
+    @MainActor
+    func emptyLegacyRefinementPromptDefaultsToInherit() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.emptyLegacyRefinementPromptDefaultsToInherit.\(UUID().uuidString)")!
+        let legacyConfiguration = LLMConfiguration(
+            baseURL: "https://llm.example.com",
+            apiKey: "llm-key",
+            model: "gpt",
+            refinementPrompt: ""
+        )
+        let data = try! JSONEncoder().encode(legacyConfiguration)
+        defaults.set(data, forKey: AppModel.Keys.llmConfig)
+
+        let model = AppModel(defaults: defaults)
+
+        #expect(model.promptSelection(for: .voicePi) == .inherit)
+        #expect(model.resolvedRefinementPrompt(for: .voicePi) == nil)
+    }
+
+    @Test
+    @MainActor
+    func promptResolutionDiagnosticsExposeResolverFailureWhileRemainingFailClosed() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.promptResolutionDiagnosticsExposeResolverFailureWhileRemainingFailClosed.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.promptSettings.defaultSelection = .profile("unsupported_profile")
+        model.setPromptSelection(.inherit, for: .voicePi)
+
+        let diagnostics = model.promptResolutionDiagnostics(for: .voicePi)
+
+        #expect(diagnostics.resolvedSelection == nil)
+        #expect(diagnostics.error == .library(.disallowedProfile("unsupported_profile", .voicePi)))
+        #expect(model.resolvedPromptSelection(for: .voicePi) == nil)
+        #expect(model.resolvedRefinementPrompt(for: .voicePi) == nil)
     }
 
     @Test
