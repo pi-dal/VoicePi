@@ -3,8 +3,8 @@ import ApplicationServices
 import Carbon.HIToolbox
 
 protocol ShortcutMonitorDelegate: AnyObject {
-    func shortcutMonitorDidPress(_ monitor: ShortcutMonitor)
-    func shortcutMonitorDidRelease(_ monitor: ShortcutMonitor)
+    func shortcutMonitorDidPress()
+    func shortcutMonitorDidRelease()
 }
 
 enum ShortcutMonitorMode: Equatable {
@@ -189,7 +189,7 @@ final class ShortcutMonitor {
         let result = monitorState.handleFlagsChanged(flags: currentFlags)
         handleMonitorResult(result)
 
-        return shouldSuppressFlagsChangedEvent(event, flags: currentFlags)
+        return shouldSuppressFlagsChangedEvent(event, flags: currentFlags, result: result)
             ? nil
             : Unmanaged.passUnretained(event)
     }
@@ -219,103 +219,27 @@ final class ShortcutMonitor {
     }
 
     private func expectedCGFlags() -> CGEventFlags {
-        var flags: CGEventFlags = []
-
-        if shortcut.modifierFlags.contains(.command) {
-            flags.insert(.maskCommand)
-        }
-        if shortcut.modifierFlags.contains(.option) {
-            flags.insert(.maskAlternate)
-        }
-        if shortcut.modifierFlags.contains(.control) {
-            flags.insert(.maskControl)
-        }
-        if shortcut.modifierFlags.contains(.shift) {
-            flags.insert(.maskShift)
-        }
-        if shortcut.modifierFlags.contains(.capsLock) {
-            flags.insert(.maskAlphaShift)
-        }
-        if shortcut.modifierFlags.contains(.function) {
-            flags.insert(.maskSecondaryFn)
-        }
-
-        return flags
+        ShortcutEventSuppression.expectedFlags(for: shortcut)
     }
 
     private func normalizedFlags(_ flags: CGEventFlags) -> CGEventFlags {
-        var normalized: CGEventFlags = []
-
-        if flags.contains(.maskCommand) {
-            normalized.insert(.maskCommand)
-        }
-        if flags.contains(.maskAlternate) {
-            normalized.insert(.maskAlternate)
-        }
-        if flags.contains(.maskControl) {
-            normalized.insert(.maskControl)
-        }
-        if flags.contains(.maskShift) {
-            normalized.insert(.maskShift)
-        }
-        if flags.contains(.maskAlphaShift) {
-            normalized.insert(.maskAlphaShift)
-        }
-        if flags.contains(.maskSecondaryFn) {
-            normalized.insert(.maskSecondaryFn)
-        }
-
-        return normalized
+        ShortcutEventSuppression.normalizedFlags(flags)
     }
 
-    private func shouldSuppressFlagsChangedEvent(_ event: CGEvent, flags: CGEventFlags) -> Bool {
-        guard suppressesMatchedEvents else {
-            return false
-        }
-
+    private func shouldSuppressFlagsChangedEvent(
+        _ event: CGEvent,
+        flags: CGEventFlags,
+        result: ShortcutMonitorResult
+    ) -> Bool {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let matchedModifierChordChanged = shortcut.isModifierOnly && (result.didPress || result.didRelease)
 
-        if keyCode == CGKeyCode(kVK_Function) && shortcut.modifierFlags.contains(.function) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_Option) && shortcut.modifierFlags.contains(.option) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_RightOption) && shortcut.modifierFlags.contains(.option) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_Command) && shortcut.modifierFlags.contains(.command) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_RightCommand) && shortcut.modifierFlags.contains(.command) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_Control) && shortcut.modifierFlags.contains(.control) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_RightControl) && shortcut.modifierFlags.contains(.control) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_Shift) && shortcut.modifierFlags.contains(.shift) {
-            return true
-        }
-
-        if keyCode == CGKeyCode(kVK_RightShift) && shortcut.modifierFlags.contains(.shift) {
-            return true
-        }
-
-        if shortcut.isModifierOnly && normalizedFlags(flags) == expectedCGFlags() {
-            return true
-        }
-
-        return false
+        return matchedModifierChordChanged || ShortcutEventSuppression.shouldSuppressFlagsChangedEvent(
+            suppressesMatchedEvents: suppressesMatchedEvents,
+            shortcut: shortcut,
+            keyCode: keyCode,
+            flags: flags
+        )
     }
 
     private func shouldSuppressKeyEvent(keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
@@ -336,11 +260,11 @@ final class ShortcutMonitor {
         }
 
         if result.didPress {
-            delegate?.shortcutMonitorDidPress(self)
+            delegate?.shortcutMonitorDidPress()
         }
 
         if result.didRelease {
-            delegate?.shortcutMonitorDidRelease(self)
+            delegate?.shortcutMonitorDidRelease()
         }
     }
 

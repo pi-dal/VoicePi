@@ -34,7 +34,7 @@ struct SettingsPresentationTests {
         #expect(presentation.llmSummary == "Text processing: Translate via Apple Translate • Target Japanese")
         #expect(
             presentation.shortcutHint
-                == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
+                == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
         )
         #expect(presentation.statusTone == .secondary)
     }
@@ -63,6 +63,29 @@ struct SettingsPresentationTests {
         )
 
         #expect(presentation.llmSummary == "Text processing: Translate via LLM • Target Japanese")
+    }
+
+    @Test
+    @MainActor
+    func homePresentationExplainsThatStandardShortcutsAvoidInputMonitoring() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationExplainsThatStandardShortcutsAvoidInputMonitoring.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setActivationShortcut(
+            ActivationShortcut(
+                keyCodes: [49],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
+
+        let presentation = SettingsPresentation.homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: true
+        )
+
+        #expect(
+            presentation.shortcutHint
+                == "Current shortcut: ⌘⌥ + Space. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+        )
     }
 
     @Test
@@ -134,7 +157,7 @@ struct SettingsPresentationTests {
     func permissionCopyReflectsCurrentInputMonitoringRequirement() {
         #expect(
             PermissionsCopy.permissionsSectionSubtitle
-                == "Manage the macOS permissions VoicePi uses for shortcut listening, event suppression, recording, and paste injection."
+                == "Manage the macOS permissions VoicePi uses for shortcut listening, advanced shortcut suppression, recording, and paste injection."
         )
         #expect(
             PermissionsCopy.permissionsHint
@@ -142,19 +165,23 @@ struct SettingsPresentationTests {
         )
         #expect(
             PermissionsCopy.accessibilityDescription
-                == "Required for shortcut suppression and paste injection."
+                == "Required for advanced shortcut suppression and paste injection."
         )
         #expect(
             PermissionsCopy.inputMonitoringDescription
-                == "Required for listening to the global shortcut."
+                == "Required for listening to advanced global shortcuts."
         )
         #expect(
             PermissionsCopy.strategyDescription
-                == "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring open the matching System Settings pages."
+                == "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for advanced shortcut handling and paste injection."
         )
         #expect(
-            PermissionsCopy.shortcutHint
-                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
+            PermissionsCopy.standardShortcutHint
+                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+        )
+        #expect(
+            PermissionsCopy.advancedShortcutHint
+                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
         )
     }
 }

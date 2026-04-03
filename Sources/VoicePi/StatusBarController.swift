@@ -925,7 +925,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         shortcutHintLabel.alignment = .left
         shortcutHintLabel.lineBreakMode = .byWordWrapping
         shortcutHintLabel.maximumNumberOfLines = 0
-        shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use. Input Monitoring listens for it, and Accessibility handles suppression and paste injection."
+        shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use. Standard shortcuts work without Input Monitoring. Advanced shortcuts use Input Monitoring. Accessibility is still required for paste injection and advanced shortcut suppression."
 
         configureAppearanceControl()
 
@@ -961,7 +961,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makeFeatureCard(
                 icon: "keyboard",
                 title: "Trigger",
-                description: "Input Monitoring listens for the shortcut. Accessibility suppresses the shortcut and injects the final paste."
+                description: "Standard shortcuts work without Input Monitoring. Advanced shortcuts use Input Monitoring, and Accessibility handles advanced suppression plus final paste injection."
             ),
             makeFeatureCard(
                 icon: "sparkles.rectangle.stack",

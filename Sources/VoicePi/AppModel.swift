@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import Foundation
 
@@ -108,6 +109,35 @@ struct ActivationShortcut: Codable, Equatable {
 
     var isModifierOnly: Bool {
         keyCodes.isEmpty && !modifierFlags.isEmpty
+    }
+
+    var isRegisteredHotkeyCompatible: Bool {
+        keyCodes.count == 1 &&
+        !modifierFlags.isEmpty &&
+        modifierFlags.isSubset(of: [.command, .option, .control, .shift])
+    }
+
+    var requiresInputMonitoring: Bool {
+        !isRegisteredHotkeyCompatible
+    }
+
+    var carbonModifierFlags: UInt32 {
+        var flags: UInt32 = 0
+
+        if modifierFlags.contains(.command) {
+            flags |= UInt32(cmdKey)
+        }
+        if modifierFlags.contains(.option) {
+            flags |= UInt32(optionKey)
+        }
+        if modifierFlags.contains(.control) {
+            flags |= UInt32(controlKey)
+        }
+        if modifierFlags.contains(.shift) {
+            flags |= UInt32(shiftKey)
+        }
+
+        return flags
     }
 
     var displayString: String {

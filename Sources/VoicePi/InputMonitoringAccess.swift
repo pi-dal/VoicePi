@@ -5,7 +5,7 @@ import IOKit.hidsystem
 enum InputMonitoringAccess {
     typealias CheckAccess = (IOHIDRequestType) -> IOHIDAccessType
     typealias PreflightAccess = () -> Bool
-    typealias RequestAccess = () -> Bool
+    typealias RequestAccess = (IOHIDRequestType) -> Bool
 
     static func authorizationState(
         preflightAccess: PreflightAccess = CGPreflightListenEventAccess,
@@ -29,8 +29,8 @@ enum InputMonitoringAccess {
 
     static func requestIfNeeded(
         preflightAccess: PreflightAccess = CGPreflightListenEventAccess,
-        requestAccess: RequestAccess = CGRequestListenEventAccess
+        requestAccess: RequestAccess = IOHIDRequestAccess
     ) -> Bool {
-        preflightAccess() || requestAccess()
+        preflightAccess() || requestAccess(kIOHIDRequestTypeListenEvent)
     }
 }

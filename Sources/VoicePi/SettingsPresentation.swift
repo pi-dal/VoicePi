@@ -39,22 +39,25 @@ struct AboutSectionPresentation: Equatable {
 
 enum PermissionsCopy {
     static let permissionsSectionSubtitle =
-        "Manage the macOS permissions VoicePi uses for shortcut listening, event suppression, recording, and paste injection."
+        "Manage the macOS permissions VoicePi uses for shortcut listening, advanced shortcut suppression, recording, and paste injection."
 
     static let permissionsHint =
         "VoicePi shows a guided permission flow first, then hands off to macOS only when you choose to continue. After changing anything in System Settings, refresh here."
 
     static let accessibilityDescription =
-        "Required for shortcut suppression and paste injection."
+        "Required for advanced shortcut suppression and paste injection."
 
     static let inputMonitoringDescription =
-        "Required for listening to the global shortcut."
+        "Required for listening to advanced global shortcuts."
 
     static let strategyDescription =
-        "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring open the matching System Settings pages."
+        "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for advanced shortcut handling and paste injection."
 
-    static let shortcutHint =
-        "Current shortcut: %@. Click the field above and press a new combination to replace it. Input Monitoring covers shortcut listening, while Accessibility covers suppression and paste injection."
+    static let standardShortcutHint =
+        "Current shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+
+    static let advancedShortcutHint =
+        "Current shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
 }
 
 enum SettingsPresentation {
@@ -112,13 +115,17 @@ enum SettingsPresentation {
             llmSummary = "Text processing: Translate via \(effectiveTranslationProvider.title) • Target \(model.targetLanguage.recognitionDisplayName)"
         }
 
+        let shortcutHintFormat = model.activationShortcut.isRegisteredHotkeyCompatible
+            ? PermissionsCopy.standardShortcutHint
+            : PermissionsCopy.advancedShortcutHint
+
         return HomeSectionPresentation(
             shortcutSummary: "Current shortcut: \(model.activationShortcut.menuTitle)",
             languageSummary: "Recognition language: \(model.selectedLanguage.menuTitle)",
             permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title), Input Monitoring \(permissionPresentation(for: model.inputMonitoringAuthorization).title)",
             asrSummary: "ASR backend: \(model.asrBackend.title) • \(model.remoteASRConfiguration.isConfigured ? "Remote configured" : "Remote not configured")",
             llmSummary: llmSummary,
-            shortcutHint: String(format: PermissionsCopy.shortcutHint, model.activationShortcut.displayString),
+            shortcutHint: String(format: shortcutHintFormat, model.activationShortcut.displayString),
             statusSummary: statusSummary,
             statusTone: statusTone
         )

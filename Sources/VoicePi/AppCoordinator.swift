@@ -8,8 +8,13 @@ import Speech
 @MainActor
 final class AppController: NSObject {
     struct HotkeyMonitorPlan: Equatable {
-        let primaryMonitorMode: ShortcutMonitorMode?
+        let strategy: HotkeyMonitorStrategy?
         let statusMessage: String?
+    }
+
+    enum HotkeyMonitorStrategy: Equatable {
+        case registeredHotkey
+        case eventTap(ShortcutMonitorMode)
     }
 
     enum PermissionSettingsDestination {
@@ -29,6 +34,13 @@ final class AppController: NSObject {
         let messageText: String
         let informativeText: String
         let continueTitle: String
+    }
+
+    struct LaunchPermissionPlan: Equatable {
+        let requestMediaPermissions: Bool
+        let promptAccessibility: Bool
+        let requestInputMonitoringPermission: Bool
+        let useSystemAccessibilityPrompt: Bool
     }
 
     enum PermissionPromptSource {
@@ -52,6 +64,12 @@ final class AppController: NSObject {
         case inputMonitoring
     }
 
+    enum InputMonitoringLaunchAction: Equatable {
+        case none
+        case requestSystemPrompt
+        case openSettingsPrompt
+    }
+
     enum PressAction: Equatable {
         case startRecording
         case stopRecording
@@ -66,6 +84,7 @@ final class AppController: NSObject {
     private let model = AppModel()
     private let shortcutListener = ShortcutMonitor(mode: .listenOnly)
     private let shortcutCombinedMonitor = ShortcutMonitor(mode: .listenAndSuppress)
+    private let registeredHotkeyMonitor = RegisteredHotkeyMonitor()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let llmRefiner = LLMRefiner()
@@ -81,12 +100,19 @@ final class AppController: NSObject {
     private var latestTranscript = ""
     private var pendingErrorHideTask: Task<Void, Never>?
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
+    private var inputMonitoringAuthorizationFollowUpTask: Task<Void, Never>?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
 
     static let shortcutSuppressionWarningMessage =
         "Shortcut listening is active, but Accessibility is still required to suppress the shortcut and inject pasted text."
+
+    static let shortcutInjectionWarningMessage =
+        "Shortcut listening is active, but Accessibility is still required to inject pasted text."
+
+    static let shortcutRegistrationFailureMessage =
+        "Global shortcut registration is unavailable. Choose a different shortcut."
 
     static func pressAction(
         isRecording: Bool,
@@ -116,37 +142,94 @@ final class AppController: NSObject {
         .ignore
     }
 
-    static func shouldPromptAccessibilityOnLaunch(inputMonitoringState _: AuthorizationState) -> Bool {
-        true
+    static func shouldPromptAccessibilityOnLaunch(
+        shortcut: ActivationShortcut,
+        inputMonitoringState _: AuthorizationState
+    ) -> Bool {
+        _ = shortcut
+        return true
+    }
+
+    static func launchPermissionPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState
+    ) -> LaunchPermissionPlan {
+        LaunchPermissionPlan(
+            requestMediaPermissions: true,
+            promptAccessibility: shouldPromptAccessibilityOnLaunch(
+                shortcut: shortcut,
+                inputMonitoringState: inputMonitoringState
+            ),
+            requestInputMonitoringPermission: shortcut.requiresInputMonitoring,
+            useSystemAccessibilityPrompt: true
+        )
     }
 
     static func shouldOfferInputMonitoringSettingsOnLaunch(
         requestGranted: Bool,
         inputMonitoringState: AuthorizationState
     ) -> Bool {
-        !requestGranted && inputMonitoringState != .granted
+        guard !requestGranted else {
+            return false
+        }
+
+        switch inputMonitoringState {
+        case .denied, .restricted:
+            return true
+        case .granted, .unknown:
+            return false
+        }
+    }
+
+    static func shouldAwaitInputMonitoringAuthorization(
+        requestInputMonitoringPermission: Bool,
+        inputMonitoringStateAfterRequest: AuthorizationState
+    ) -> Bool {
+        requestInputMonitoringPermission &&
+        inputMonitoringStateAfterRequest != .granted
+    }
+
+    static func inputMonitoringLaunchAction(
+        authorizationState: AuthorizationState
+    ) -> InputMonitoringLaunchAction {
+        switch authorizationState {
+        case .granted:
+            return .none
+        case .unknown:
+            return .requestSystemPrompt
+        case .denied, .restricted:
+            return .openSettingsPrompt
+        }
     }
 
     static func hotkeyMonitorPlan(
+        shortcut: ActivationShortcut,
         inputMonitoringState: AuthorizationState,
         accessibilityState: AuthorizationState
     ) -> HotkeyMonitorPlan {
+        if shortcut.isRegisteredHotkeyCompatible {
+            return HotkeyMonitorPlan(
+                strategy: .registeredHotkey,
+                statusMessage: accessibilityState == .granted ? nil : shortcutInjectionWarningMessage
+            )
+        }
+
         guard inputMonitoringState == .granted else {
             return HotkeyMonitorPlan(
-                primaryMonitorMode: nil,
+                strategy: nil,
                 statusMessage: shortcutMonitoringFailureMessage
             )
         }
 
         if accessibilityState == .granted {
             return HotkeyMonitorPlan(
-                primaryMonitorMode: .listenAndSuppress,
+                strategy: .eventTap(.listenAndSuppress),
                 statusMessage: nil
             )
         }
 
         return HotkeyMonitorPlan(
-            primaryMonitorMode: .listenOnly,
+            strategy: .eventTap(.listenOnly),
             statusMessage: shortcutSuppressionWarningMessage
         )
     }
@@ -275,8 +358,10 @@ final class AppController: NSObject {
         speechRecorder.delegate = self
         shortcutListener.delegate = self
         shortcutCombinedMonitor.delegate = self
+        registeredHotkeyMonitor.delegate = self
         shortcutListener.shortcut = model.activationShortcut
         shortcutCombinedMonitor.shortcut = model.activationShortcut
+        registeredHotkeyMonitor.shortcut = model.activationShortcut
 
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
@@ -285,19 +370,25 @@ final class AppController: NSObject {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let launchPermissionPlan = Self.launchPermissionPlan(
+                shortcut: self.model.activationShortcut,
+                inputMonitoringState: self.currentInputMonitoringAuthorizationState()
+            )
             await self.refreshPermissionStates(
-                promptAccessibility: Self.shouldPromptAccessibilityOnLaunch(
-                    inputMonitoringState: self.currentInputMonitoringAuthorizationState()
-                ),
-                requestMediaPermissions: true,
-                requestInputMonitoringPermission: true
+                promptAccessibility: launchPermissionPlan.promptAccessibility,
+                requestMediaPermissions: launchPermissionPlan.requestMediaPermissions,
+                requestInputMonitoringPermission: launchPermissionPlan.requestInputMonitoringPermission,
+                useSystemAccessibilityPrompt: launchPermissionPlan.useSystemAccessibilityPrompt,
+                inputMonitoringPromptSource: .launchFollowUp
             )
         }
     }
 
     func stop() {
         accessibilityAuthorizationFollowUpTask?.cancel()
+        inputMonitoringAuthorizationFollowUpTask?.cancel()
         pendingErrorHideTask?.cancel()
+        registeredHotkeyMonitor.stop()
         shortcutListener.stop()
         shortcutCombinedMonitor.stop()
 
@@ -517,7 +608,9 @@ final class AppController: NSObject {
     private func refreshPermissionStates(
         promptAccessibility: Bool,
         requestMediaPermissions: Bool = false,
-        requestInputMonitoringPermission: Bool = false
+        requestInputMonitoringPermission: Bool = false,
+        useSystemAccessibilityPrompt: Bool = false,
+        inputMonitoringPromptSource: PermissionPromptSource = .manualSettingsButton
     ) async {
         if requestMediaPermissions {
             _ = await requestMicrophonePermissionIfNeeded()
@@ -527,7 +620,9 @@ final class AppController: NSObject {
         let accessibilityStateAfterPrompt: AuthorizationState
         if promptAccessibility {
             let currentAccessibilityState = currentAccessibilityAuthorizationState(prompt: false)
-            if currentAccessibilityState != .granted {
+            if currentAccessibilityState != .granted, useSystemAccessibilityPrompt {
+                _ = currentAccessibilityAuthorizationState(prompt: true)
+            } else if currentAccessibilityState != .granted {
                 offerPermissionSettingsPrompt(for: .accessibility, source: .manualSettingsButton)
             }
             accessibilityStateAfterPrompt = currentAccessibilityAuthorizationState(prompt: false)
@@ -552,9 +647,44 @@ final class AppController: NSObject {
             requestInputMonitoringPermission: requestInputMonitoringPermission,
             accessibilityStateAfterPrompt: accessibilityStateAfterPrompt
         ).contains(.inputMonitoring) {
-            if currentInputMonitoringAuthorizationState() != .granted {
-                offerInputMonitoringSettingsPrompt(source: .accessibilityFollowUp)
+            let inputMonitoringState = currentInputMonitoringAuthorizationState()
+            switch Self.inputMonitoringLaunchAction(authorizationState: inputMonitoringState) {
+            case .none:
+                inputMonitoringAuthorizationFollowUpTask?.cancel()
+                inputMonitoringAuthorizationFollowUpTask = nil
+            case .requestSystemPrompt:
+                if Self.shouldActivateAppForPermissionPrompt(source: inputMonitoringPromptSource) {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                let requestGranted = InputMonitoringAccess.requestIfNeeded()
+                let refreshedInputMonitoringState = currentInputMonitoringAuthorizationState()
+                if Self.shouldAwaitInputMonitoringAuthorization(
+                    requestInputMonitoringPermission: requestInputMonitoringPermission,
+                    inputMonitoringStateAfterRequest: refreshedInputMonitoringState
+                ) {
+                    scheduleInputMonitoringAuthorizationFollowUp()
+                } else {
+                    inputMonitoringAuthorizationFollowUpTask?.cancel()
+                    inputMonitoringAuthorizationFollowUpTask = nil
+                }
+                if Self.shouldOfferInputMonitoringSettingsOnLaunch(
+                    requestGranted: requestGranted,
+                    inputMonitoringState: refreshedInputMonitoringState
+                ) {
+                    offerInputMonitoringSettingsPrompt(source: inputMonitoringPromptSource)
+                }
+            case .openSettingsPrompt:
+                offerInputMonitoringSettingsPrompt(source: inputMonitoringPromptSource)
+                if Self.shouldAwaitInputMonitoringAuthorization(
+                    requestInputMonitoringPermission: requestInputMonitoringPermission,
+                    inputMonitoringStateAfterRequest: inputMonitoringState
+                ) {
+                    scheduleInputMonitoringAuthorizationFollowUp()
+                }
             }
+        } else {
+            inputMonitoringAuthorizationFollowUpTask?.cancel()
+            inputMonitoringAuthorizationFollowUpTask = nil
         }
 
         updateAuthorizationStates(
@@ -582,8 +712,35 @@ final class AppController: NSObject {
                 if accessibilityState == .granted {
                     await self.refreshPermissionStates(
                         promptAccessibility: false,
-                        requestInputMonitoringPermission: requestInputMonitoringPermission
+                        requestInputMonitoringPermission: requestInputMonitoringPermission,
+                        inputMonitoringPromptSource: .accessibilityFollowUp
                     )
+                    return
+                }
+
+                if Date() >= deadline {
+                    await self.refreshPermissionStates(promptAccessibility: false)
+                    return
+                }
+
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+    }
+
+    private func scheduleInputMonitoringAuthorizationFollowUp() {
+        inputMonitoringAuthorizationFollowUpTask?.cancel()
+        inputMonitoringAuthorizationFollowUpTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.inputMonitoringAuthorizationFollowUpTask = nil
+            }
+
+            let deadline = Date().addingTimeInterval(120)
+            while !Task.isCancelled {
+                let inputMonitoringState = self.currentInputMonitoringAuthorizationState()
+                if inputMonitoringState == .granted {
+                    await self.refreshPermissionStates(promptAccessibility: false)
                     return
                 }
 
@@ -599,11 +756,13 @@ final class AppController: NSObject {
 
     private func ensureHotkeyMonitorRunning() {
         let plan = Self.hotkeyMonitorPlan(
+            shortcut: model.activationShortcut,
             inputMonitoringState: currentInputMonitoringAuthorizationState(),
             accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
         )
 
-        guard let primaryMonitorMode = plan.primaryMonitorMode else {
+        guard let strategy = plan.strategy else {
+            registeredHotkeyMonitor.stop()
             shortcutListener.stop()
             shortcutCombinedMonitor.stop()
             if let statusMessage = plan.statusMessage, statusBarController != nil {
@@ -612,20 +771,30 @@ final class AppController: NSObject {
             return
         }
 
-        switch primaryMonitorMode {
-        case .listenOnly:
+        switch strategy {
+        case .registeredHotkey:
+            shortcutListener.stop()
+            shortcutCombinedMonitor.stop()
+            guard registeredHotkeyMonitor.start() else {
+                statusBarController?.setTransientStatus(Self.shortcutRegistrationFailureMessage)
+                return
+            }
+        case .eventTap(.listenOnly):
+            registeredHotkeyMonitor.stop()
             shortcutCombinedMonitor.stop()
             guard shortcutListener.start() else {
                 statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
                 return
             }
-        case .listenAndSuppress:
+        case .eventTap(.listenAndSuppress):
+            registeredHotkeyMonitor.stop()
             shortcutListener.stop()
             guard shortcutCombinedMonitor.start() else {
                 statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
                 return
             }
-        case .suppressOnly:
+        case .eventTap(.suppressOnly):
+            registeredHotkeyMonitor.stop()
             shortcutListener.stop()
             shortcutCombinedMonitor.stop()
             statusBarController?.setTransientStatus(Self.shortcutMonitoringFailureMessage)
@@ -809,17 +978,13 @@ final class AppController: NSObject {
 }
 
 extension AppController: ShortcutMonitorDelegate {
-    nonisolated func shortcutMonitorDidPress(_ monitor: ShortcutMonitor) {
-        guard monitor.mode != .suppressOnly else { return }
-
+    nonisolated func shortcutMonitorDidPress() {
         Task { @MainActor [weak self] in
             self?.beginRecording()
         }
     }
 
-    nonisolated func shortcutMonitorDidRelease(_ monitor: ShortcutMonitor) {
-        guard monitor.mode != .suppressOnly else { return }
-
+    nonisolated func shortcutMonitorDidRelease() {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
@@ -881,7 +1046,9 @@ extension AppController: StatusBarControllerDelegate {
         model.setActivationShortcut(shortcut)
         shortcutListener.shortcut = shortcut
         shortcutCombinedMonitor.shortcut = shortcut
+        registeredHotkeyMonitor.shortcut = shortcut
         controller.refreshAll()
+        ensureHotkeyMonitorRunning()
     }
 
     func statusBarController(_ controller: StatusBarController, didSave configuration: LLMConfiguration) {
@@ -920,7 +1087,8 @@ extension AppController: StatusBarControllerDelegate {
         Task { @MainActor [weak self] in
             await self?.refreshPermissionStates(
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true
+                requestInputMonitoringPermission: true,
+                inputMonitoringPromptSource: .accessibilityFollowUp
             )
         }
     }
@@ -967,7 +1135,8 @@ extension AppController: StatusBarControllerDelegate {
         Task { @MainActor [weak self] in
             await self?.refreshPermissionStates(
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true
+                requestInputMonitoringPermission: true,
+                inputMonitoringPromptSource: .accessibilityFollowUp
             )
         }
     }

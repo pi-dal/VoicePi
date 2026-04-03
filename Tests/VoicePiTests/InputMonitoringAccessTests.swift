@@ -28,25 +28,30 @@ struct InputMonitoringAccessTests {
     @Test
     func requestIfNeededOnlyPromptsWhenPreflightFails() {
         var requested = false
+        var requestedType: IOHIDRequestType?
 
         let granted = InputMonitoringAccess.requestIfNeeded(
             preflightAccess: { true },
-            requestAccess: {
+            requestAccess: { requestType in
                 requested = true
+                requestedType = requestType
                 return false
             }
         )
         #expect(granted)
         #expect(!requested)
+        #expect(requestedType == nil)
 
         let prompted = InputMonitoringAccess.requestIfNeeded(
             preflightAccess: { false },
-            requestAccess: {
+            requestAccess: { requestType in
                 requested = true
+                requestedType = requestType
                 return true
             }
         )
         #expect(prompted)
         #expect(requested)
+        #expect(requestedType == kIOHIDRequestTypeListenEvent)
     }
 }

@@ -40,8 +40,8 @@ VoicePi is released under the [MIT License](LICENSE).
 - Xcode Command Line Tools or full Xcode
 - Microphone permission
 - Speech Recognition permission
-- Accessibility permission for shortcut suppression and paste injection
-- Input Monitoring permission for global shortcut listening
+- Accessibility permission for paste injection and advanced shortcut suppression
+- Input Monitoring permission only for advanced global shortcuts
 
 ## Project Structure
 
@@ -262,14 +262,14 @@ VoicePi needs four macOS permissions for the full shortcut-to-paste flow:
 
 - **Microphone**: records your voice
 - **Speech Recognition**: required when using the local Apple Speech backend
-- **Accessibility**: required to suppress the shortcut chord and inject the final paste
-- **Input Monitoring**: required to listen for the global shortcut outside VoicePi
+- **Accessibility**: required to inject the final paste, and also required if you use advanced shortcuts that need suppression
+- **Input Monitoring**: required only for advanced global shortcuts such as modifier-only, `fn`-based, or multi-key chords
 
 If you switch to a remote ASR backend, the app still needs **Microphone**, but local **Speech Recognition** may no longer be the primary transcription path.
 
 ### Granting permissions
 
-On first run, VoicePi asks for the permissions it can prompt for while macOS still treats them as undecided. If you already denied one of them in an earlier run, macOS may not show the prompt again and you will need to re-enable it in System Settings.
+On first run, VoicePi refreshes permission state without forcing every prompt up front. VoicePi requests permissions when you use the feature that needs them. If you already denied one of them in an earlier run, macOS may not show the prompt again and you will need to re-enable it in System Settings.
 
 You can also open the in-app **Settings → Permissions** section, which provides direct buttons for:
 
@@ -291,7 +291,7 @@ Make sure `VoicePi.app` is enabled in each relevant section.
 ## Usage
 
 1. Launch `VoicePi.app`
-2. Grant the requested permissions, especially **Input Monitoring** for shortcut listening and **Accessibility** for shortcut suppression and paste injection
+2. Grant the requested permissions for the features you use. **Accessibility** is needed for paste injection, while **Input Monitoring** is only needed if you choose an advanced shortcut.
 3. A microphone icon appears in the menu bar
 4. Press the configured hotkey trigger to start recording
 5. Speak
@@ -490,8 +490,8 @@ Check:
 
 - microphone permission
 - if using Apple Speech, speech recognition permission
-- accessibility permission for shortcut suppression and paste injection
-- input monitoring permission for shortcut listening
+- accessibility permission for paste injection, and for advanced shortcut suppression if you use an advanced shortcut
+- input monitoring permission if your configured shortcut is an advanced shortcut
 - selected language availability on the machine
 - whether the configured shortcut is the one you are actually pressing
 
@@ -505,15 +505,15 @@ Check:
 
 ### The emoji picker still appears
 
-This usually means the global key event interception path is not active, Input Monitoring is blocking shortcut listening, or Accessibility is blocking shortcut suppression.
+This usually means the advanced shortcut interception path is not active, Input Monitoring is blocking an advanced shortcut, or Accessibility is blocking advanced shortcut suppression.
 
 ### The shortcut does not respond at all
 
 Check:
 
-- **Input Monitoring** is enabled for `VoicePi.app`
-- **Accessibility** is enabled for `VoicePi.app`
-- you relaunched VoicePi after changing Input Monitoring if macOS did not apply it immediately
+- if your configured shortcut is advanced, **Input Monitoring** is enabled for `VoicePi.app`
+- **Accessibility** is enabled for `VoicePi.app` if you expect paste injection to work
+- if your configured shortcut is advanced, relaunch VoicePi after changing Input Monitoring if macOS did not apply it immediately
 - the shortcut shown in **Settings → Home** matches the keys you are pressing
 
 ### The transcript is empty
