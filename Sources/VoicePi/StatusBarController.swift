@@ -899,6 +899,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
         model.closeSettings()
     }
 
@@ -1765,11 +1766,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let previewText: String
 
         if let resolved = diagnostics.resolvedSelection {
-            previewText = LLMRefiner.systemPrompt(
-                mode: .refinement,
-                targetLanguage: currentTargetLanguage(),
-                refinementPrompt: resolved.middleSection ?? ""
-            )
+            previewText = resolved.middleSection ?? "No template selected. Core prompt behavior only."
         } else if let error = diagnostics.error {
             previewText = error.diagnosticDescription
         } else {
@@ -1828,7 +1825,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc
     private func saveConfiguration() {
-        let configuration = currentConfigurationFromFields()
+        var configuration = currentConfigurationFromFields()
         let mode = currentPostProcessingMode()
         model.setPostProcessingMode(mode)
         if mode == .translation {
@@ -1836,10 +1833,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         model.setTargetLanguage(currentTargetLanguage())
         savePromptTemplateSelections()
+        if mode == .refinement {
+            configuration.refinementPrompt = resolvedPromptTextFromControls() ?? ""
+        }
         model.saveLLMConfiguration(
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
-            model: configuration.model
+            model: configuration.model,
+            refinementPrompt: mode == .refinement ? configuration.refinementPrompt : nil
         )
         setLLMFeedback(.neutral("Saved."))
         delegate?.settingsWindowController(self, didSave: configuration)
@@ -2358,19 +2359,48 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func presentResolvedPromptPreview(text: String) {
-        let sheet = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
+        let previewSize = NSSize(width: 720, height: 520)
+        let contentWidth = previewSize.width - 40
+        let contentHeight = previewSize.height - 92
+        let sheet = PreviewSheetWindow(
+            contentRect: NSRect(origin: .zero, size: previewSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         sheet.title = "Resolved Prompt Preview"
+        sheet.setContentSize(previewSize)
+        sheet.minSize = previewSize
+        sheet.appearance = window?.effectiveAppearance ?? window?.appearance
+        sheet.onCloseRequest = { [weak self] in
+            self?.closeResolvedPromptPreviewSheet()
+        }
 
-        let textView = NSTextView(frame: .zero)
+        let textView = NSTextView(
+            frame: NSRect(
+                origin: .zero,
+                size: NSSize(width: contentWidth, height: contentHeight)
+            )
+        )
         textView.isEditable = false
         textView.isSelectable = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
         textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.minSize = NSSize(width: contentWidth, height: contentHeight)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.containerSize = NSSize(
+            width: contentWidth,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.widthTracksTextView = true
         textView.string = text
+        textView.sizeToFit()
 
         let scrollView = NSScrollView(frame: .zero)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -2380,15 +2410,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         scrollView.documentView = textView
 
         let closeButton = makePrimaryActionButton(title: "Close", action: #selector(closeResolvedPromptPreviewSheet))
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.keyEquivalent = "\r"
 
         let contentView = NSView()
-        contentView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(scrollView)
         contentView.addSubview(closeButton)
         sheet.contentView = contentView
 
         NSLayoutConstraint.activate([
+            contentView.widthAnchor.constraint(equalToConstant: previewSize.width),
+            contentView.heightAnchor.constraint(equalToConstant: previewSize.height),
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
@@ -3019,6 +3051,27 @@ private extension NSColor {
 
     func darker(by amount: CGFloat = 0.18) -> NSColor {
         blended(withFraction: amount, of: .black) ?? self
+    }
+}
+
+@MainActor
+private final class PreviewSheetWindow: NSWindow {
+    var onCloseRequest: (() -> Void)?
+
+    override func performClose(_ sender: Any?) {
+        if let onCloseRequest {
+            onCloseRequest()
+        } else {
+            super.performClose(sender)
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if let onCloseRequest {
+            onCloseRequest()
+        } else {
+            super.cancelOperation(sender)
+        }
     }
 }
 
