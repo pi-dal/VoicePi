@@ -12,6 +12,7 @@ protocol TranscriptRefining {
     func refine(
         text: String,
         configuration: LLMRefinerConfiguration,
+        mode: LLMRefinerPromptMode,
         targetLanguage: SupportedLanguage?
     ) async throws -> String
 }
@@ -96,6 +97,7 @@ enum AppWorkflowSupport {
         sourceLanguage: SupportedLanguage,
         targetLanguage: SupportedLanguage,
         configuration: LLMConfiguration,
+        resolvedRefinementPrompt: String?,
         refiner: TranscriptRefining,
         translator: TranscriptTranslating,
         onPresentation: (AppWorkflowPresentation) -> Void,
@@ -112,7 +114,8 @@ enum AppWorkflowSupport {
             let refinerConfiguration = LLMRefinerConfiguration(
                 baseURL: configuration.baseURL,
                 apiKey: configuration.apiKey,
-                model: configuration.model
+                model: configuration.model,
+                refinementPrompt: resolvedRefinementPrompt ?? ""
             )
 
             await MainActor.run {
@@ -124,6 +127,7 @@ enum AppWorkflowSupport {
                 let refined = try await refiner.refine(
                     text: text,
                     configuration: refinerConfiguration,
+                    mode: .refinement,
                     targetLanguage: effectiveTargetLanguage
                 )
                 let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,7 +146,8 @@ enum AppWorkflowSupport {
             let refinerConfiguration = LLMRefinerConfiguration(
                 baseURL: configuration.baseURL,
                 apiKey: configuration.apiKey,
-                model: configuration.model
+                model: configuration.model,
+                refinementPrompt: ""
             )
 
             await MainActor.run {
@@ -162,6 +167,7 @@ enum AppWorkflowSupport {
                     let translated = try await refiner.refine(
                         text: text,
                         configuration: refinerConfiguration,
+                        mode: .translation,
                         targetLanguage: targetLanguage
                     )
                     let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)

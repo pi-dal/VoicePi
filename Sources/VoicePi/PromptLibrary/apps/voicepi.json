@@ -1,0 +1,7 @@
+{
+  "appID": "com.pi-dal.voicepi",
+  "title": "VoicePi",
+  "allowedProfileIDs": ["meeting_notes", "json_output", "support_reply"],
+  "defaultProfileID": null,
+  "visibleOptionGroupIDs": ["output_format", "strictness"]
+}

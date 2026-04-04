@@ -1,0 +1,5 @@
+{
+  "id": "strictness-conservative",
+  "title": "Conservative",
+  "body": "Keep formatting changes conservative and prefer minimal edits."
+}

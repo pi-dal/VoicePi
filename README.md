@@ -453,6 +453,30 @@ The API key field can be fully cleared.
 - If your provider uses a custom base path, set the base URL accordingly
 - The app does not hardcode any API key
 
+## Prompt Workspace
+
+The prompt workspace only affects **Refinement mode**. It does not replace VoicePi's built-in ASR guardrails, and it does not replace the code-controlled language instructions that VoicePi adds when you choose an output language.
+
+The settings UI exposes these prompt controls:
+
+- **Active Prompt** chooses how VoicePi resolves the refinement prompt. Picking a concrete prompt pins that prompt manually. Leaving it on `VoicePi Default` enables automatic app and website bindings and still falls back to the built-in default when nothing matches.
+- **Prompt Name** is editable for user-created prompts.
+- **Prompt Body** is the freeform middle section that gets inserted between VoicePi's fixed prefix and suffix instructions.
+- **App Bundle IDs** lets a user prompt match specific macOS apps such as `com.tinyspeck.slackmacgap`.
+- **Website Hosts** lets a user prompt match supported browser tabs by host such as `mail.google.com`, `trello.com`, or wildcard entries like `*.notion.so`.
+- **New**, **Duplicate**, and **Delete** let you create and manage custom prompts. Starter prompts are duplicated before editing so the shipped presets stay intact, and bindings live on the editable user copies.
+
+The **Resolved Prompt** preview shows the exact editable middle section that will be sent at runtime. VoicePi still wraps that body with fixed prefix and suffix instructions in code.
+
+### How bundled starter prompts work
+
+Bundled starter prompts live under [`Sources/VoicePi/PromptLibrary`](Sources/VoicePi/PromptLibrary):
+
+- [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) lists the shipped prompt assets.
+- [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) contains the starter prompt bodies such as `meeting_notes`, `json_output`, and `support_reply`.
+
+VoicePi loads these bundled starters as read-only presets. User-created prompts are persisted separately in app settings.
+
 ## Input Method Handling
 
 Before paste injection, VoicePi checks the current macOS input source.

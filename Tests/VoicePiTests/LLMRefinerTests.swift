@@ -41,7 +41,8 @@ struct LLMRefinerTests {
         let configuration = LLMRefinerConfiguration(
             baseURL: "api.example.com/v1",
             apiKey: "sk-test",
-            model: "gpt-test"
+            model: "gpt-test",
+            refinementPrompt: "Return the result as one markdown bullet."
         )
 
         LLMTestURLProtocol.shared.setHandler { request in
@@ -72,6 +73,7 @@ struct LLMRefinerTests {
         #expect(payload.model == "gpt-test")
         #expect(payload.messages.count == 2)
         #expect(payload.messages[0].content.contains("Never rewrite, polish, summarize, rephrase, translate") == true)
+        #expect(payload.messages[0].content.contains("Return the result as one markdown bullet.") == true)
         #expect(payload.messages[1].content == "raw input")
     }
 
@@ -82,7 +84,8 @@ struct LLMRefinerTests {
         let configuration = LLMRefinerConfiguration(
             baseURL: "https://api.example.com",
             apiKey: "sk-test",
-            model: "gpt-test"
+            model: "gpt-test",
+            refinementPrompt: "Format the final answer as a short email."
         )
 
         LLMTestURLProtocol.shared.setHandler { request in
@@ -109,16 +112,49 @@ struct LLMRefinerTests {
         let request = try #require(capturedRequests.snapshot.first)
         let body = try #require(requestBody(from: request))
         let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
+        #expect(payload.messages[0].content.contains("Format the final answer as a short email.") == true)
         #expect(payload.messages[0].content.contains("Translate the entire final output into Japanese.") == true)
         #expect(payload.messages[0].content.contains("Output only the final translated text in Japanese.") == true)
     }
 
     @Test
     func translationPromptDoesNotContainConflictingRefinementOnlyRules() {
-        let prompt = LLMRefiner.systemPrompt(targetLanguage: .japanese)
+        let prompt = LLMRefiner.systemPrompt(
+            mode: .refinement,
+            targetLanguage: .japanese,
+            refinementPrompt: ""
+        )
 
         #expect(prompt.contains("Never rewrite, polish, summarize, rephrase, translate") == false)
         #expect(prompt.contains("If the input already looks correct, return it exactly as-is.") == false)
+        #expect(prompt.contains("Output only the final translated text in Japanese.") == true)
+    }
+
+    @Test
+    func refinementPromptBuilderPlacesCustomInstructionsBetweenCoreAndOutputRules() throws {
+        let prompt = LLMRefiner.systemPrompt(
+            mode: .refinement,
+            targetLanguage: nil,
+            refinementPrompt: "Use a JSON object with keys `text` and `summary`."
+        )
+
+        let customRange = try #require(prompt.range(of: "Use a JSON object with keys `text` and `summary`."))
+        let coreRange = try #require(prompt.range(of: "Only fix obvious speech recognition mistakes."))
+        let outputRange = try #require(prompt.range(of: "Output the minimally edited version of the input."))
+
+        #expect(coreRange.lowerBound < customRange.lowerBound)
+        #expect(customRange.upperBound < outputRange.lowerBound)
+    }
+
+    @Test
+    func llmTranslationPromptIgnoresRefinementOnlyCustomInstructions() {
+        let prompt = LLMRefiner.systemPrompt(
+            mode: .translation,
+            targetLanguage: .japanese,
+            refinementPrompt: "Respond with a YAML object."
+        )
+
+        #expect(prompt.contains("Respond with a YAML object.") == false)
         #expect(prompt.contains("Output only the final translated text in Japanese.") == true)
     }
 

@@ -1,0 +1,5 @@
+{
+  "id": "output-json",
+  "title": "JSON",
+  "body": "Return valid JSON only. Use the schema: { \"text\": string }."
+}

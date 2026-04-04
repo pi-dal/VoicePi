@@ -97,6 +97,7 @@ final class AppController: NSObject {
     private let textInjector = TextInjector.shared
     private let updateChecker = GitHubReleaseUpdateChecker()
     private let appDefaults = UserDefaults.standard
+    private let promptDestinationInspector = PromptDestinationInspector()
 
     private var statusBarController: StatusBarController?
     private var cancellables: Set<AnyCancellable> = []
@@ -768,7 +769,9 @@ final class AppController: NSObject {
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
-        await AppWorkflowSupport.postProcessIfNeeded(
+        let destination = promptDestinationInspector.currentDestinationContext()
+
+        return await AppWorkflowSupport.postProcessIfNeeded(
             text,
             mode: model.postProcessingMode,
             translationProvider: model.effectiveTranslationProvider(
@@ -777,6 +780,9 @@ final class AppController: NSObject {
             sourceLanguage: model.selectedLanguage,
             targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
+            resolvedRefinementPrompt: model.postProcessingMode == .refinement
+                ? model.resolvedRefinementPrompt(for: .voicePi, destination: destination)
+                : nil,
             refiner: llmRefiner,
             translator: appleTranslateService,
             onPresentation: { [weak self] presentation in
@@ -1174,7 +1180,8 @@ final class AppController: NSObject {
         let refinerConfiguration = LLMRefinerConfiguration(
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
-            model: configuration.model
+            model: configuration.model,
+            refinementPrompt: configuration.refinementPrompt
         )
 
         do {

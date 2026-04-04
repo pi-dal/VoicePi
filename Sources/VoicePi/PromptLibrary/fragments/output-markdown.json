@@ -1,0 +1,5 @@
+{
+  "id": "output-markdown",
+  "title": "Markdown",
+  "body": "Format the final output as Markdown with short bullets when appropriate."
+}

@@ -1,0 +1,703 @@
+import Foundation
+
+enum PromptPresetSource: String, Codable, Equatable {
+    case builtInDefault
+    case starter
+    case user
+}
+
+struct PromptPreset: Codable, Equatable, Identifiable {
+    static let builtInDefaultID = "voicepi.default"
+
+    let id: String
+    var title: String
+    var body: String
+    let source: PromptPresetSource
+    var appBundleIDs: [String]
+    var websiteHosts: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case body
+        case source
+        case appBundleIDs
+        case websiteHosts
+    }
+
+    init(
+        id: String,
+        title: String,
+        body: String,
+        source: PromptPresetSource,
+        appBundleIDs: [String] = [],
+        websiteHosts: [String] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.source = source
+        self.appBundleIDs = Self.normalizedUniqueValues(appBundleIDs)
+        self.websiteHosts = Self.normalizedWebsiteHosts(websiteHosts)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.body = try container.decode(String.self, forKey: .body)
+        self.source = try container.decode(PromptPresetSource.self, forKey: .source)
+        self.appBundleIDs = Self.normalizedUniqueValues(
+            try container.decodeIfPresent([String].self, forKey: .appBundleIDs) ?? []
+        )
+        self.websiteHosts = Self.normalizedWebsiteHosts(
+            try container.decodeIfPresent([String].self, forKey: .websiteHosts) ?? []
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(body, forKey: .body)
+        try container.encode(source, forKey: .source)
+        try container.encode(Self.normalizedUniqueValues(appBundleIDs), forKey: .appBundleIDs)
+        try container.encode(Self.normalizedWebsiteHosts(websiteHosts), forKey: .websiteHosts)
+    }
+
+    var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var trimmedBody: String {
+        body.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var resolvedTitle: String {
+        let trimmed = trimmedTitle
+        return trimmed.isEmpty ? "Untitled Prompt" : trimmed
+    }
+
+    var isEditable: Bool {
+        source == .user
+    }
+
+    func matches(destination: PromptDestinationContext?) -> Bool {
+        guard let destination else { return false }
+
+        if let bundleID = destination.appBundleID,
+           appBundleIDs.contains(bundleID) {
+            return true
+        }
+
+        guard let websiteHost = destination.websiteHost else { return false }
+        return websiteHosts.contains(where: { Self.websiteHost($0, matches: websiteHost) })
+    }
+
+    static var builtInDefault: Self {
+        .init(
+            id: builtInDefaultID,
+            title: "VoicePi Default",
+            body: "",
+            source: .builtInDefault
+        )
+    }
+
+    private static func normalizedUniqueValues(_ values: [String]) -> [String] {
+        var normalized: [String] = []
+        var seen: Set<String> = []
+
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            normalized.append(trimmed)
+        }
+
+        return normalized
+    }
+
+    private static func normalizedWebsiteHosts(_ values: [String]) -> [String] {
+        normalizedUniqueValues(values.compactMap(PromptDestinationContext.normalizedWebsiteHost))
+    }
+
+    private static func websiteHost(_ pattern: String, matches host: String) -> Bool {
+        if pattern.hasPrefix("*.") {
+            let suffix = String(pattern.dropFirst(1))
+            let bareDomain = String(pattern.dropFirst(2))
+            return host.hasSuffix(suffix) && host != bareDomain
+        }
+
+        return host == pattern
+    }
+}
+
+enum PromptActiveSelectionMode: String, Codable, Equatable {
+    case builtInDefault
+    case preset
+}
+
+struct PromptActiveSelection: Codable, Equatable {
+    var mode: PromptActiveSelectionMode
+    var presetID: String?
+
+    init(
+        mode: PromptActiveSelectionMode,
+        presetID: String? = nil
+    ) {
+        self.mode = mode
+        self.presetID = presetID
+    }
+
+    static var builtInDefault: Self {
+        .init(mode: .builtInDefault)
+    }
+
+    static func preset(_ id: String) -> Self {
+        .init(mode: .preset, presetID: id)
+    }
+}
+
+struct PromptWorkspaceSettings: Codable, Equatable {
+    var activeSelection: PromptActiveSelection
+    var userPresets: [PromptPreset]
+
+    init(
+        activeSelection: PromptActiveSelection = .builtInDefault,
+        userPresets: [PromptPreset] = []
+    ) {
+        self.activeSelection = activeSelection
+        self.userPresets = userPresets
+    }
+
+    func userPreset(id: String) -> PromptPreset? {
+        userPresets.first(where: { $0.id == id })
+    }
+
+    mutating func saveUserPreset(_ preset: PromptPreset) {
+        guard preset.source == .user else { return }
+        if let index = userPresets.firstIndex(where: { $0.id == preset.id }) {
+            userPresets[index] = preset
+        } else {
+            userPresets.append(preset)
+        }
+    }
+
+    mutating func deleteUserPreset(id: String) {
+        let removedUserPreset = userPresets.contains(where: { $0.id == id })
+        userPresets.removeAll(where: { $0.id == id })
+        if removedUserPreset && activeSelection == .preset(id) {
+            activeSelection = .builtInDefault
+        }
+    }
+}
+
+enum ResolvedPromptPresetSource: Equatable {
+    case builtInDefault
+    case starter
+    case user
+}
+
+struct ResolvedPromptPreset: Equatable {
+    let presetID: String?
+    let title: String
+    let middleSection: String?
+    let source: ResolvedPromptPresetSource
+}
+
+enum PromptWorkspaceResolver {
+    static func resolve(
+        workspace: PromptWorkspaceSettings,
+        destination: PromptDestinationContext? = nil,
+        library: PromptLibrary
+    ) -> ResolvedPromptPreset {
+        switch workspace.activeSelection.mode {
+        case .builtInDefault:
+            if let boundPreset = workspace.userPresets.first(where: { $0.matches(destination: destination) }) {
+                return resolvedPreset(from: boundPreset)
+            }
+            return resolvedPreset(from: PromptPreset.builtInDefault)
+        case .preset:
+            guard
+                let presetID = workspace.activeSelection.presetID,
+                let preset = resolvePreset(
+                    id: presetID,
+                    userPresets: workspace.userPresets,
+                    starterPresets: library.starterPresets
+                )
+            else {
+                return resolvedPreset(from: PromptPreset.builtInDefault)
+            }
+            return resolvedPreset(from: preset)
+        }
+    }
+
+    private static func resolvePreset(
+        id: String,
+        userPresets: [PromptPreset],
+        starterPresets: [PromptPreset]
+    ) -> PromptPreset? {
+        if let userPreset = userPresets.first(where: { $0.id == id }) {
+            return userPreset
+        }
+
+        return starterPresets.first(where: { $0.id == id })
+    }
+
+    private static func resolvedPreset(from preset: PromptPreset) -> ResolvedPromptPreset {
+        let middleSection = preset.trimmedBody.isEmpty ? nil : preset.trimmedBody
+
+        return .init(
+            presetID: preset.id,
+            title: preset.resolvedTitle,
+            middleSection: middleSection,
+            source: resolvedSource(for: preset.source)
+        )
+    }
+
+    private static func resolvedSource(for source: PromptPresetSource) -> ResolvedPromptPresetSource {
+        switch source {
+        case .builtInDefault:
+            return .builtInDefault
+        case .starter:
+            return .starter
+        case .user:
+            return .user
+        }
+    }
+}
+
+enum PromptAppID: String, Codable, CaseIterable {
+    case voicePi = "com.pi-dal.voicepi"
+
+    var resourceName: String {
+        switch self {
+        case .voicePi:
+            return "voicepi"
+        }
+    }
+}
+
+enum PromptSelectionMode: String, Codable, Equatable {
+    case inherit
+    case none
+    case profile
+    case legacyCustom
+}
+
+struct PromptSelection: Codable, Equatable {
+    var mode: PromptSelectionMode
+    var profileID: String?
+    var optionSelections: [String: [String]]
+
+    init(
+        mode: PromptSelectionMode,
+        profileID: String? = nil,
+        optionSelections: [String: [String]] = [:]
+    ) {
+        self.mode = mode
+        self.profileID = profileID
+        self.optionSelections = optionSelections
+    }
+
+    static var inherit: Self {
+        .init(mode: .inherit)
+    }
+
+    static var none: Self {
+        .init(mode: .none)
+    }
+
+    static func profile(
+        _ id: String,
+        optionSelections: [String: [String]] = [:]
+    ) -> Self {
+        .init(mode: .profile, profileID: id, optionSelections: optionSelections)
+    }
+
+    static var legacyCustom: Self {
+        .init(mode: .legacyCustom)
+    }
+}
+
+struct PromptSettings: Codable, Equatable {
+    var defaultSelection: PromptSelection
+    var appSelections: [String: PromptSelection]
+
+    init(
+        defaultSelection: PromptSelection = .none,
+        appSelections: [String: PromptSelection] = [:]
+    ) {
+        self.defaultSelection = defaultSelection
+        self.appSelections = appSelections
+    }
+
+    func selection(for appID: PromptAppID) -> PromptSelection? {
+        appSelections[appID.rawValue]
+    }
+
+    mutating func setSelection(_ selection: PromptSelection, for appID: PromptAppID) {
+        if selection.mode == .inherit {
+            appSelections.removeValue(forKey: appID.rawValue)
+        } else {
+            appSelections[appID.rawValue] = selection
+        }
+    }
+}
+
+enum PromptOptionSelectionKind: String, Codable, Equatable {
+    case single
+    case multi
+}
+
+struct PromptOption: Codable, Equatable {
+    let id: String
+    let title: String
+    let fragmentID: String?
+}
+
+struct PromptOptionGroup: Codable, Equatable {
+    let id: String
+    let title: String
+    let selection: PromptOptionSelectionKind
+    let options: [PromptOption]
+}
+
+struct PromptProfile: Codable, Equatable {
+    let id: String
+    let title: String
+    let description: String
+    let body: String
+    let optionGroupIDs: [String]
+}
+
+struct PromptFragment: Codable, Equatable {
+    let id: String
+    let title: String?
+    let body: String
+}
+
+struct PromptAppPolicy: Codable, Equatable {
+    let appID: PromptAppID
+    let title: String
+    let allowedProfileIDs: [String]
+    let defaultProfileID: String?
+    let visibleOptionGroupIDs: [String]
+}
+
+enum PromptTemplateScope: Equatable, Hashable {
+    case globalDefault
+    case appOverride
+}
+
+struct PromptTemplateFormState: Equatable {
+    var globalSelection: PromptSelection
+    var appSelection: PromptSelection
+
+    var editableTarget: (scope: PromptTemplateScope, selection: PromptSelection)? {
+        switch appSelection.mode {
+        case .profile:
+            return (.appOverride, appSelection)
+        case .inherit:
+            guard globalSelection.mode == .profile else { return nil }
+            return (.globalDefault, globalSelection)
+        case .none, .legacyCustom:
+            return nil
+        }
+    }
+
+    mutating func updateSelection(_ selection: PromptSelection, for scope: PromptTemplateScope) {
+        switch scope {
+        case .globalDefault:
+            globalSelection = selection
+        case .appOverride:
+            appSelection = selection
+        }
+    }
+
+    func selection(for scope: PromptTemplateScope) -> PromptSelection {
+        switch scope {
+        case .globalDefault:
+            return globalSelection
+        case .appOverride:
+            return appSelection
+        }
+    }
+
+    mutating func setSelectedOption(
+        _ optionID: String,
+        for groupID: String,
+        in scope: PromptTemplateScope
+    ) {
+        switch scope {
+        case .globalDefault:
+            guard globalSelection.mode == .profile else { return }
+            globalSelection.optionSelections[groupID] = [optionID]
+        case .appOverride:
+            guard appSelection.mode == .profile else { return }
+            appSelection.optionSelections[groupID] = [optionID]
+        }
+    }
+}
+
+struct PromptLibrary: Equatable {
+    let optionGroups: [String: PromptOptionGroup]
+    let profiles: [String: PromptProfile]
+    let fragments: [String: PromptFragment]
+    let appPolicies: [PromptAppID: PromptAppPolicy]
+
+    func policy(for appID: PromptAppID) -> PromptAppPolicy? {
+        appPolicies[appID]
+    }
+
+    func profile(id: String) -> PromptProfile? {
+        profiles[id]
+    }
+
+    func fragment(id: String) -> PromptFragment? {
+        fragments[id]
+    }
+
+    var starterPresets: [PromptPreset] {
+        profiles.values
+            .sorted { lhs, rhs in
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            .map {
+                PromptPreset(
+                    id: $0.id,
+                    title: $0.title,
+                    body: $0.body,
+                    source: .starter
+                )
+            }
+    }
+
+    static func loadBundled(bundle: Bundle = .module) throws -> PromptLibrary {
+        let decoder = JSONDecoder()
+
+        let registry = try decoder.decode(
+            PromptRegistryFile.self,
+            from: loadResource(
+                named: "registry",
+                extension: "json",
+                bundle: bundle
+            )
+        )
+
+        let profiles = try registry.profileIDs.map {
+            try decoder.decode(
+                PromptProfile.self,
+                from: loadResource(named: $0, extension: "json", bundle: bundle)
+            )
+        }
+        let fragments = try registry.fragmentIDs.map {
+            try decoder.decode(
+                PromptFragment.self,
+                from: loadResource(named: $0, extension: "json", bundle: bundle)
+            )
+        }
+        let appPolicies = try PromptAppID.allCases.map {
+            try decoder.decode(
+                PromptAppPolicy.self,
+                from: loadResource(named: $0.resourceName, extension: "json", bundle: bundle)
+            )
+        }
+
+        return PromptLibrary(
+            optionGroups: Dictionary(uniqueKeysWithValues: registry.optionGroups.map { ($0.id, $0) }),
+            profiles: Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) }),
+            fragments: Dictionary(uniqueKeysWithValues: fragments.map { ($0.id, $0) }),
+            appPolicies: Dictionary(uniqueKeysWithValues: appPolicies.map { ($0.appID, $0) })
+        )
+    }
+
+    private static func loadResource(
+        named name: String,
+        extension ext: String,
+        bundle: Bundle
+    ) throws -> Data {
+        guard let url = bundle.url(forResource: name, withExtension: ext) else {
+            throw PromptLibraryError.missingResource("\(name).\(ext)")
+        }
+
+        return try Data(contentsOf: url)
+    }
+}
+
+enum PromptSelectionSource: Equatable {
+    case appOverride
+    case globalDefault
+    case none
+}
+
+struct ResolvedPromptSelection: Equatable {
+    let source: PromptSelectionSource
+    let title: String?
+    let middleSection: String?
+}
+
+enum PromptResolutionDiagnosticError: Equatable {
+    case library(PromptLibraryError)
+    case unknown(String)
+
+    var diagnosticDescription: String {
+        switch self {
+        case .library(let error):
+            return error.diagnosticDescription
+        case .unknown(let message):
+            return "Prompt template resolution failed: \(message)"
+        }
+    }
+}
+
+struct PromptResolutionDiagnostics: Equatable {
+    let resolvedSelection: ResolvedPromptSelection?
+    let error: PromptResolutionDiagnosticError?
+}
+
+enum PromptLibraryError: Error, Equatable {
+    case missingResource(String)
+    case missingPolicy(PromptAppID)
+    case disallowedProfile(String, PromptAppID)
+    case missingProfile(String)
+    case missingOptionGroup(String)
+    case invalidOption(groupID: String, optionID: String)
+    case missingFragment(String)
+
+    var diagnosticDescription: String {
+        switch self {
+        case .missingResource(let resourceName):
+            return "Prompt library resource '\(resourceName)' is missing."
+        case .missingPolicy(let appID):
+            return "Prompt policy for app '\(appID.rawValue)' is missing."
+        case .disallowedProfile(let profileID, let appID):
+            return "Prompt profile '\(profileID)' is not allowed for app '\(appID.rawValue)'."
+        case .missingProfile(let profileID):
+            return "Prompt profile '\(profileID)' could not be found."
+        case .missingOptionGroup(let groupID):
+            return "Prompt option group '\(groupID)' could not be found."
+        case .invalidOption(let groupID, let optionID):
+            return "Prompt option '\(optionID)' is not valid for option group '\(groupID)'."
+        case .missingFragment(let fragmentID):
+            return "Prompt fragment '\(fragmentID)' could not be found."
+        }
+    }
+}
+
+enum PromptResolver {
+    static func resolve(
+        appID: PromptAppID,
+        globalSelection: PromptSelection,
+        appSelection: PromptSelection,
+        library: PromptLibrary,
+        legacyCustomPrompt: String
+    ) throws -> ResolvedPromptSelection {
+        guard let policy = library.policy(for: appID) else {
+            throw PromptLibraryError.missingPolicy(appID)
+        }
+
+        switch appSelection.mode {
+        case .profile:
+            return try resolveProfileSelection(
+                appSelection,
+                source: .appOverride,
+                library: library,
+                policy: policy
+            )
+        case .none:
+            return .init(source: .appOverride, title: nil, middleSection: nil)
+        case .legacyCustom:
+            let trimmed = legacyCustomPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .init(
+                source: .appOverride,
+                title: trimmed.isEmpty ? nil : "Legacy Custom",
+                middleSection: trimmed.isEmpty ? nil : trimmed
+            )
+        case .inherit:
+            return try resolveGlobalSelection(globalSelection, library: library, policy: policy)
+        }
+    }
+
+    private static func resolveGlobalSelection(
+        _ selection: PromptSelection,
+        library: PromptLibrary,
+        policy: PromptAppPolicy
+    ) throws -> ResolvedPromptSelection {
+        switch selection.mode {
+        case .profile:
+            return try resolveProfileSelection(
+                selection,
+                source: .globalDefault,
+                library: library,
+                policy: policy
+            )
+        case .none, .inherit:
+            return .init(source: .none, title: nil, middleSection: nil)
+        case .legacyCustom:
+            return .init(source: .globalDefault, title: "Legacy Custom", middleSection: nil)
+        }
+    }
+
+    private static func resolveProfileSelection(
+        _ selection: PromptSelection,
+        source: PromptSelectionSource,
+        library: PromptLibrary,
+        policy: PromptAppPolicy
+    ) throws -> ResolvedPromptSelection {
+        guard let profileID = selection.profileID else {
+            return .init(source: source, title: nil, middleSection: nil)
+        }
+        guard policy.allowedProfileIDs.contains(profileID) else {
+            throw PromptLibraryError.disallowedProfile(profileID, policy.appID)
+        }
+        guard let profile = library.profile(id: profileID) else {
+            throw PromptLibraryError.missingProfile(profileID)
+        }
+
+        var sections = [profile.body.trimmingCharacters(in: .whitespacesAndNewlines)]
+
+        for groupID in profile.optionGroupIDs where policy.visibleOptionGroupIDs.contains(groupID) {
+            guard let group = library.optionGroups[groupID] else {
+                throw PromptLibraryError.missingOptionGroup(groupID)
+            }
+
+            let selectedOptionIDs = selection.optionSelections[groupID] ?? []
+            let normalizedOptionIDs: [String]
+            switch group.selection {
+            case .single:
+                normalizedOptionIDs = Array(selectedOptionIDs.prefix(1))
+            case .multi:
+                normalizedOptionIDs = selectedOptionIDs
+            }
+
+            for optionID in normalizedOptionIDs {
+                guard let option = group.options.first(where: { $0.id == optionID }) else {
+                    throw PromptLibraryError.invalidOption(groupID: groupID, optionID: optionID)
+                }
+                guard let fragmentID = option.fragmentID else {
+                    continue
+                }
+                guard let fragment = library.fragment(id: fragmentID) else {
+                    throw PromptLibraryError.missingFragment(fragmentID)
+                }
+                sections.append(fragment.body.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+
+        let middleSection = sections
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+
+        return .init(
+            source: source,
+            title: profile.title,
+            middleSection: middleSection.isEmpty ? nil : middleSection
+        )
+    }
+}
+
+private struct PromptRegistryFile: Decodable {
+    let profileIDs: [String]
+    let fragmentIDs: [String]
+    let optionGroups: [PromptOptionGroup]
+}

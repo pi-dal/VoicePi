@@ -4,15 +4,33 @@ struct LLMRefinerConfiguration: Codable, Equatable {
     var baseURL: String
     var apiKey: String
     var model: String
+    var refinementPrompt: String
 
     init(
         baseURL: String = "",
         apiKey: String = "",
-        model: String = ""
+        model: String = "",
+        refinementPrompt: String = ""
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
+        self.refinementPrompt = refinementPrompt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseURL
+        case apiKey
+        case model
+        case refinementPrompt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        refinementPrompt = try container.decodeIfPresent(String.self, forKey: .refinementPrompt) ?? ""
     }
 
     var trimmedBaseURL: String {
@@ -25,6 +43,10 @@ struct LLMRefinerConfiguration: Codable, Equatable {
 
     var trimmedModel: String {
         model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var trimmedRefinementPrompt: String {
+        refinementPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var isConfigured: Bool {
@@ -71,8 +93,13 @@ enum LLMRefinerError: LocalizedError, Equatable {
     }
 }
 
+enum LLMRefinerPromptMode: Equatable {
+    case refinement
+    case translation
+}
+
 final class LLMRefiner {
-    static let conservativeSystemPrompt = """
+    static let conservativeSystemPromptPrefix = """
     You are refining automatic speech recognition output.
 
     Your behavior must be extremely conservative.
@@ -87,10 +114,24 @@ final class LLMRefiner {
        - 配森 -> Python
        - 杰森 -> JSON
     7. Only correct Chinese homophone mistakes when confidence is very high.
+    """
+
+    static let conservativeSystemPromptSuffix = """
     8. Return only the final corrected text.
     9. Do not wrap the result in quotes, markdown, JSON, or explanations.
 
     Output the minimally edited version of the input.
+    """
+
+    static let translationSystemPromptPrefix = """
+    You are translating automatic speech recognition output.
+
+    Your behavior must be extremely conservative.
+
+    Rules:
+    1. Only fix obvious speech recognition mistakes before translating.
+    2. Preserve the original meaning, tone, order, formatting intent, punctuation intent, and technical terms when they are already correct.
+    3. Do not add explanations, markdown, JSON, quotes, or commentary.
     """
 
     private let session: URLSession
@@ -102,6 +143,7 @@ final class LLMRefiner {
     func refine(
         text: String,
         configuration: LLMRefinerConfiguration,
+        mode: LLMRefinerPromptMode = .refinement,
         targetLanguage: SupportedLanguage? = nil
     ) async throws -> String {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -126,7 +168,14 @@ final class LLMRefiner {
             model: configuration.trimmedModel,
             temperature: 0,
             messages: [
-                .init(role: "system", content: Self.systemPrompt(targetLanguage: targetLanguage)),
+                .init(
+                    role: "system",
+                    content: Self.systemPrompt(
+                        mode: mode,
+                        targetLanguage: targetLanguage,
+                        refinementPrompt: configuration.trimmedRefinementPrompt
+                    )
+                ),
                 .init(role: "user", content: input)
             ]
         )
@@ -160,28 +209,83 @@ final class LLMRefiner {
         try await refine(
             text: "测试 Python 和 JSON mixed speech input",
             configuration: configuration,
+            mode: .refinement,
             targetLanguage: nil
         )
     }
 
-    static func systemPrompt(targetLanguage: SupportedLanguage?) -> String {
+    static func systemPrompt(
+        mode: LLMRefinerPromptMode,
+        targetLanguage: SupportedLanguage?,
+        refinementPrompt: String
+    ) -> String {
+        switch mode {
+        case .refinement:
+            return refinementSystemPrompt(
+                targetLanguage: targetLanguage,
+                refinementPrompt: refinementPrompt
+            )
+        case .translation:
+            return translationSystemPrompt(targetLanguage: targetLanguage)
+        }
+    }
+
+    private static func refinementSystemPrompt(
+        targetLanguage: SupportedLanguage?,
+        refinementPrompt: String
+    ) -> String {
         guard let targetLanguage else {
-            return conservativeSystemPrompt
+            return joinPromptSections(
+                conservativeSystemPromptPrefix,
+                customRefinementPromptSection(refinementPrompt),
+                conservativeSystemPromptSuffix
+            )
         }
 
+        return joinPromptSections(
+            translationSystemPromptPrefix,
+            customRefinementPromptSection(refinementPrompt),
+            translationSystemPromptSuffix(targetLanguage: targetLanguage)
+        )
+    }
+
+    private static func translationSystemPrompt(targetLanguage: SupportedLanguage?) -> String {
+        guard let targetLanguage else {
+            return joinPromptSections(
+                conservativeSystemPromptPrefix,
+                conservativeSystemPromptSuffix
+            )
+        }
+
+        return joinPromptSections(
+            translationSystemPromptPrefix,
+            translationSystemPromptSuffix(targetLanguage: targetLanguage)
+        )
+    }
+
+    private static func customRefinementPromptSection(_ refinementPrompt: String) -> String? {
+        let trimmed = refinementPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
         return """
-        You are translating automatic speech recognition output.
+        Additional user requirements:
+        \(trimmed)
+        """
+    }
 
-        Your behavior must be extremely conservative.
-
-        Rules:
-        1. Only fix obvious speech recognition mistakes before translating.
-        2. Preserve the original meaning, tone, order, formatting intent, punctuation intent, and technical terms when they are already correct.
-        3. Do not add explanations, markdown, JSON, quotes, or commentary.
+    private static func translationSystemPromptSuffix(targetLanguage: SupportedLanguage) -> String {
+        """
         4. Translate the entire final output into \(targetLanguage.recognitionDisplayName).
         5. If some parts are already in \(targetLanguage.recognitionDisplayName), keep them natural and consistent with the final translated output.
         6. Output only the final translated text in \(targetLanguage.recognitionDisplayName).
         """
+    }
+
+    private static func joinPromptSections(_ sections: String?...) -> String {
+        sections
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 
     static func chatCompletionsEndpoint(from baseURL: URL) -> URL {

@@ -21,6 +21,9 @@ let package = Package(
                 "AppIcon.appiconset",
                 "Info.plist"
             ],
+            resources: [
+                .process("PromptLibrary")
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),

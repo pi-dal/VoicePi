@@ -1,0 +1,32 @@
+{
+  "profileIDs": ["meeting_notes", "json_output", "support_reply"],
+  "fragmentIDs": [
+    "output-markdown",
+    "output-json",
+    "strictness-conservative",
+    "strictness-balanced",
+    "strictness-aggressive"
+  ],
+  "optionGroups": [
+    {
+      "id": "output_format",
+      "title": "Output Format",
+      "selection": "single",
+      "options": [
+        { "id": "plain_text", "title": "Plain Text", "fragmentID": null },
+        { "id": "markdown", "title": "Markdown", "fragmentID": "output-markdown" },
+        { "id": "json", "title": "JSON", "fragmentID": "output-json" }
+      ]
+    },
+    {
+      "id": "strictness",
+      "title": "Strictness",
+      "selection": "single",
+      "options": [
+        { "id": "conservative", "title": "Conservative", "fragmentID": "strictness-conservative" },
+        { "id": "balanced", "title": "Balanced", "fragmentID": "strictness-balanced" },
+        { "id": "aggressive", "title": "Aggressive", "fragmentID": "strictness-aggressive" }
+      ]
+    }
+  ]
+}

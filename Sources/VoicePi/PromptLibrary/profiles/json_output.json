@@ -1,0 +1,7 @@
+{
+  "id": "json_output",
+  "title": "JSON Output",
+  "description": "Return the result in a small JSON shape.",
+  "body": "Format the result as structured JSON while preserving the transcript meaning.",
+  "optionGroupIDs": ["strictness"]
+}

@@ -32,6 +32,8 @@
     <string>VoicePi uses the microphone while you hold the Fn key to record your speech for transcription.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>VoicePi uses speech recognition to transcribe your voice into text for quick paste input.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>VoicePi uses AppleScript to read browser tabs so prompts bound to website hosts can match the right destination.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

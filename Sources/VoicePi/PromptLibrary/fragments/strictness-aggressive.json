@@ -1,0 +1,5 @@
+{
+  "id": "strictness-aggressive",
+  "title": "Aggressive",
+  "body": "Apply the most assertive formatting choices allowed by the selected profile while preserving transcript meaning."
+}
