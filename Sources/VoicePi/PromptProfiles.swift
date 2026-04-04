@@ -381,7 +381,15 @@ enum PromptResolver {
             }
 
             let selectedOptionIDs = selection.optionSelections[groupID] ?? []
-            for optionID in selectedOptionIDs {
+            let normalizedOptionIDs: [String]
+            switch group.selection {
+            case .single:
+                normalizedOptionIDs = Array(selectedOptionIDs.prefix(1))
+            case .multi:
+                normalizedOptionIDs = selectedOptionIDs
+            }
+
+            for optionID in normalizedOptionIDs {
                 guard let option = group.options.first(where: { $0.id == optionID }) else {
                     throw PromptLibraryError.invalidOption(groupID: groupID, optionID: optionID)
                 }

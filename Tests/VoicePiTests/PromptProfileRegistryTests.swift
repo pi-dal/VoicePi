@@ -107,4 +107,22 @@ struct PromptProfileRegistryTests {
         #expect(state.appSelection.optionSelections["output_format"] == ["json"])
         #expect(state.globalSelection.optionSelections["output_format"] == nil)
     }
+
+    @Test
+    func resolverNormalizesSingleSelectOptionGroupsToOneFragment() throws {
+        let library = try PromptLibrary.loadBundled()
+        let resolved = try PromptResolver.resolve(
+            appID: .voicePi,
+            globalSelection: .profile(
+                "meeting_notes",
+                optionSelections: ["output_format": ["markdown", "json"]]
+            ),
+            appSelection: .inherit,
+            library: library,
+            legacyCustomPrompt: ""
+        )
+
+        #expect(resolved.middleSection?.contains("Format the final output as Markdown") == true)
+        #expect(resolved.middleSection?.contains("Return valid JSON only.") == false)
+    }
 }
