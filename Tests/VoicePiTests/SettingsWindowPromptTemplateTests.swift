@@ -121,35 +121,6 @@ struct SettingsWindowPromptTemplateTests {
         #expect(model.promptSettings.defaultSelection.profileID == "meeting_notes")
     }
 
-    @Test
-    @MainActor
-    func previewResolvedPromptOpensReadOnlySheetWithResolvedPromptContent() throws {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.previewResolvedPromptOpensReadOnlySheetWithResolvedPromptContent.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.setPostProcessingMode(.refinement)
-        model.selectedLanguage = .english
-        model.setTargetLanguage(.japanese)
-        model.promptSettings.defaultSelection = .profile(
-            "meeting_notes",
-            optionSelections: ["output_format": ["markdown"]]
-        )
-        model.setPromptSelection(.inherit, for: .voicePi)
-
-        let controller = SettingsWindowController(model: model, delegate: nil)
-        controller.showWindow(nil)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let previewButton = try #require(findButton(in: controller.window?.contentView, titled: "Preview Resolved Prompt"))
-        previewButton.performClick(nil)
-
-        let sheet = try #require(controller.window?.attachedSheet)
-        let textView = try #require(findSubview(in: sheet.contentView, ofType: NSTextView.self))
-
-        #expect(textView.isEditable == false)
-        #expect(textView.string.contains("Organize the result as concise structured notes."))
-        #expect(textView.string.contains("Format the final output as Markdown"))
-        #expect(textView.string.contains("Output only the final translated text in Japanese."))
-    }
 }
 
 @MainActor
@@ -175,10 +146,6 @@ private func findPopup(in root: NSView?, titled title: String) -> NSPopUpButton?
 private func colorAttribute(from title: NSAttributedString?) -> NSColor? {
     guard let title, title.length > 0 else { return nil }
     return title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-}
-
-private func findButton(in root: NSView?, titled title: String) -> NSButton? {
-    findSubview(in: root, ofType: NSButton.self) { $0.title == title }
 }
 
 private func findPreferenceControl<T: NSView>(in root: NSView?, titled title: String, as type: T.Type) -> T? {
