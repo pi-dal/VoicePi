@@ -453,35 +453,29 @@ The API key field can be fully cleared.
 - If your provider uses a custom base path, set the base URL accordingly
 - The app does not hardcode any API key
 
-## Prompt Templates
+## Prompt Workspace
 
-Prompt templates only affect **Refinement mode**. They do not change the built-in ASR guardrails, and they do not replace the code-controlled language instructions that VoicePi adds when you choose an output language.
+The prompt workspace only affects **Refinement mode**. It does not replace VoicePi's built-in ASR guardrails, and it does not replace the code-controlled language instructions that VoicePi adds when you choose an output language.
 
-The settings UI exposes three prompt controls:
+The settings UI exposes these prompt controls:
 
-- **Default Prompt Template** sets the global default middle section. If you leave it as `None`, VoicePi behaves exactly as it did before this feature and adds no extra configurable prompt text.
-- **VoicePi Override** controls the app-specific selection. Choose `Inherit Global Default` to reuse the global template, `None` to disable the configurable middle section for VoicePi only, or a specific template to override the global default.
-- **Template Options** configures the currently active template. These options append reusable prompt fragments such as output format or strictness instructions.
+- **Active Prompt** chooses how VoicePi resolves the refinement prompt. Picking a concrete prompt pins that prompt manually. Leaving it on `VoicePi Default` enables automatic app and website bindings and still falls back to the built-in default when nothing matches.
+- **Prompt Name** is editable for user-created prompts.
+- **Prompt Body** is the freeform middle section that gets inserted between VoicePi's fixed prefix and suffix instructions.
+- **App Bundle IDs** lets a user prompt match specific macOS apps such as `com.tinyspeck.slackmacgap`.
+- **Website Hosts** lets a user prompt match supported browser tabs by host such as `mail.google.com`, `trello.com`, or wildcard entries like `*.notion.so`.
+- **New**, **Duplicate**, and **Delete** let you create and manage custom prompts. Starter prompts are duplicated before editing so the shipped presets stay intact, and bindings live on the editable user copies.
 
-The **Resolved Prompt** preview shows the final prompt body that comes from the template system. VoicePi still wraps that body with its fixed prefix and suffix instructions at runtime.
+The **Resolved Prompt** preview shows the exact editable middle section that will be sent at runtime. VoicePi still wraps that body with fixed prefix and suffix instructions in code.
 
-### How the bundled prompt library is structured
+### How bundled starter prompts work
 
-The prompt library lives under [`Sources/VoicePi/PromptLibrary`](Sources/VoicePi/PromptLibrary):
+Bundled starter prompts live under [`Sources/VoicePi/PromptLibrary`](Sources/VoicePi/PromptLibrary):
 
-- [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) lists the known profiles, fragments, and option groups.
-- [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) contains complete middle-section templates such as `meeting_notes` and `json_output`.
-- [`fragments/`](Sources/VoicePi/PromptLibrary/fragments) contains reusable add-on instructions that option groups can enable.
-- [`apps/voicepi.json`](Sources/VoicePi/PromptLibrary/apps/voicepi.json) defines which profiles and option groups VoicePi exposes in the UI.
+- [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) lists the shipped prompt assets.
+- [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) contains the starter prompt bodies such as `meeting_notes`, `json_output`, and `support_reply`.
 
-### How to add or change prompt parameters
-
-1. Edit [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) to register any new option groups or fragment IDs.
-2. Add or update a profile in [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) if you need a new base template body.
-3. Add or update a fragment in [`fragments/`](Sources/VoicePi/PromptLibrary/fragments) if you need a reusable option such as a format or strictness modifier.
-4. Update [`apps/voicepi.json`](Sources/VoicePi/PromptLibrary/apps/voicepi.json) to decide which templates and option groups VoicePi should expose.
-
-Each profile selects its available parameters through `optionGroupIDs`. Each option group chooses between one or more option IDs, and each option can inject a fragment body. This keeps the prompt files small and lets multiple apps reuse the same template pieces without copying large prompt bodies into every app-specific file.
+VoicePi loads these bundled starters as read-only presets. User-created prompts are persisted separately in app settings.
 
 ## Input Method Handling
 

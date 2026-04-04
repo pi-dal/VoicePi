@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import Testing
 @testable import VoicePi
@@ -6,203 +5,187 @@ import Testing
 struct SettingsWindowPromptTemplateTests {
     @Test
     @MainActor
-    func promptTemplatePopupsUseExplicitDarkTextInLightTheme() throws {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.promptTemplatePopupsUseExplicitDarkTextInLightTheme.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.interfaceTheme = .light
-        model.setPostProcessingMode(.refinement)
-        model.promptSettings.defaultSelection = .profile("meeting_notes")
-
-        let controller = SettingsWindowController(model: model, delegate: nil)
-        controller.showWindow(nil)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let popup = try #require(findPopup(in: controller.window?.contentView, titled: "Default Prompt Template"))
-        let selectedTitleColor = try #require(colorAttribute(from: popup.attributedTitle))
-        let menuItemColor = try #require(colorAttribute(from: popup.item(at: 0)?.attributedTitle))
-        let expectedColor = NSColor(calibratedWhite: 0.22, alpha: 1)
-
-        #expect(selectedTitleColor.isApproximatelyEqual(to: expectedColor))
-        #expect(menuItemColor.isApproximatelyEqual(to: expectedColor))
+    func promptEditorExposesBindingActionBarCopy() {
+        #expect(SettingsWindowController.promptBindingActionBarTitle == "Bindings")
+        #expect(SettingsWindowController.promptBindingsButtonTitle == "Bindings")
+        #expect(SettingsWindowController.captureFrontmostAppButtonTitle == "Capture Frontmost App")
+        #expect(SettingsWindowController.captureCurrentWebsiteButtonTitle == "Capture Current Website")
     }
 
     @Test
     @MainActor
-    func savingAppSpecificPromptOptionsDoesNotMutateGlobalDefaultSelection() throws {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.savingAppSpecificPromptOptionsDoesNotMutateGlobalDefaultSelection.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.setPostProcessingMode(.refinement)
-        model.promptSettings.defaultSelection = .profile(
-            "meeting_notes",
-            optionSelections: ["output_format": ["markdown"]]
-        )
-        model.setPromptSelection(
-            .profile("support_reply", optionSelections: ["output_format": ["plain_text"]]),
-            for: .voicePi
-        )
-
-        let controller = SettingsWindowController(model: model, delegate: nil)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let outputFormatPopup = try #require(findPopup(in: controller.window?.contentView, titled: "Output Format"))
-        try selectPopupItem(named: "JSON", in: outputFormatPopup)
-        savePromptSettings(in: controller)
-
-        #expect(
-            model.promptSettings.defaultSelection == .profile(
-                "meeting_notes",
-                optionSelections: ["output_format": ["markdown"]]
-            )
-        )
-        #expect(
-            model.promptSelection(for: .voicePi) == .profile(
-                "support_reply",
-                optionSelections: ["output_format": ["json"]]
-            )
-        )
+    func bindingEntryActionMatchesPromptSourceRules() {
+        #expect(SettingsWindowController.bindingEntryAction(for: .builtInDefault) == .createFromDefault)
+        #expect(SettingsWindowController.bindingEntryAction(for: .starter) == .duplicateStarter)
+        #expect(SettingsWindowController.bindingEntryAction(for: .user) == .editUser)
     }
 
     @Test
     @MainActor
-    func switchingVoicePiOverrideToInheritAndBackPreservesAppSpecificPromptOptions() throws {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.switchingVoicePiOverrideToInheritAndBackPreservesAppSpecificPromptOptions.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.setPostProcessingMode(.refinement)
-        model.promptSettings.defaultSelection = .profile(
-            "meeting_notes",
-            optionSelections: ["output_format": ["markdown"]]
-        )
-        model.setPromptSelection(
-            .profile("support_reply", optionSelections: ["output_format": ["json"]]),
-            for: .voicePi
+    func mergeBindingFieldTextNormalizesAndDeduplicatesAppBundleIDs() {
+        let merged = SettingsWindowController.mergeBindingFieldText(
+            existingText: "com.google.Chrome,  com.figma.Desktop",
+            capturedRawValue: " COM.GOOGLE.CHROME ",
+            kind: .appBundleID
         )
 
-        let controller = SettingsWindowController(model: model, delegate: nil)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let overridePopup = try #require(findPopup(in: controller.window?.contentView, titled: "VoicePi Override"))
-        try selectPopupItem(named: "Inherit Global Default", in: overridePopup)
-        try selectPopupItem(named: "Support Reply", in: overridePopup)
-        savePromptSettings(in: controller)
-
-        #expect(
-            model.promptSelection(for: .voicePi) == .profile(
-                "support_reply",
-                optionSelections: ["output_format": ["json"]]
-            )
-        )
+        #expect(merged == "com.google.chrome, com.figma.desktop")
     }
 
     @Test
     @MainActor
-    func savingGlobalDefaultChangesPreservesLegacyCustomOverride() throws {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.savingGlobalDefaultChangesPreservesLegacyCustomOverride.\(UUID().uuidString)")!
+    func mergeBindingFieldTextNormalizesAndDeduplicatesWebsiteHosts() {
+        let merged = SettingsWindowController.mergeBindingFieldText(
+            existingText: "mail.google.com",
+            capturedRawValue: "https://MAIL.google.com/inbox",
+            kind: .websiteHost
+        )
+
+        #expect(merged == "mail.google.com")
+    }
+
+    @Test
+    @MainActor
+    func mergeBindingFieldTextAppendsNewCapturedWebsiteHost() {
+        let merged = SettingsWindowController.mergeBindingFieldText(
+            existingText: "trello.com",
+            capturedRawValue: "https://app.notion.so/page",
+            kind: .websiteHost
+        )
+
+        #expect(merged == "trello.com, app.notion.so")
+    }
+
+    @Test
+    @MainActor
+    func creatingUserPromptSelectsItImmediately() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.creatingUserPromptSelectsItImmediately.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
-        model.setPostProcessingMode(.refinement)
-        model.saveLLMConfiguration(
-            baseURL: "https://llm.example.com",
-            apiKey: "sk",
-            model: "gpt",
-            refinementPrompt: "Use markdown bullets."
-        )
-        model.promptSettings = .init(
-            defaultSelection: .none,
-            appSelections: [PromptAppID.voicePi.rawValue: .legacyCustom]
+
+        let preset = model.createUserPromptPreset(
+            title: "Standup",
+            body: "Format as a short standup update."
         )
 
-        let controller = SettingsWindowController(model: model, delegate: nil)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let defaultPopup = try #require(findPopup(in: controller.window?.contentView, titled: "Default Prompt Template"))
-        try selectPopupItem(named: "Meeting Notes", in: defaultPopup)
-        savePromptSettings(in: controller)
-
-        #expect(model.promptSelection(for: .voicePi).mode == .legacyCustom)
-        #expect(model.promptSettings.defaultSelection.profileID == "meeting_notes")
+        #expect(model.promptWorkspace.activeSelection == .preset(preset.id))
+        #expect(model.promptWorkspace.userPresets == [preset])
+        #expect(model.resolvedPromptPreset().title == "Standup")
+        #expect(model.resolvedRefinementPrompt(for: .voicePi) == "Format as a short standup update.")
     }
 
-}
+    @Test
+    @MainActor
+    func duplicatePromptPresetCreatesEditableUserCopyOfStarterPrompt() throws {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.duplicatePromptPresetCreatesEditableUserCopyOfStarterPrompt.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
 
-@MainActor
-private func savePromptSettings(in controller: SettingsWindowController) {
-    _ = controller.perform(NSSelectorFromString("saveConfiguration"))
-}
+        let duplicated = try #require(model.duplicatePromptPreset(id: "meeting_notes"))
 
-@MainActor
-private func selectPopupItem(named title: String, in popup: NSPopUpButton) throws {
-    let index = popup.indexOfItem(withTitle: title)
-    #expect(index >= 0)
-    popup.selectItem(at: index)
-
-    if let action = popup.action {
-        NSApp.sendAction(action, to: popup.target, from: popup)
-    }
-}
-
-private func findPopup(in root: NSView?, titled title: String) -> NSPopUpButton? {
-    findPreferenceControl(in: root, titled: title, as: NSPopUpButton.self)
-}
-
-private func colorAttribute(from title: NSAttributedString?) -> NSColor? {
-    guard let title, title.length > 0 else { return nil }
-    return title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-}
-
-private func findPreferenceControl<T: NSView>(in root: NSView?, titled title: String, as type: T.Type) -> T? {
-    guard let root else { return nil }
-
-    for row in allSubviews(of: root).compactMap({ $0 as? NSStackView }) {
-        let labels = row.arrangedSubviews.compactMap { $0 as? NSTextField }
-        guard labels.contains(where: { $0.stringValue == title }) else { continue }
-
-        for arranged in row.arrangedSubviews {
-            if let control = arranged as? T {
-                return control
-            }
-            if let nested = findSubview(in: arranged, ofType: T.self) {
-                return nested
-            }
-        }
+        #expect(duplicated.source == .user)
+        #expect(duplicated.title == "Meeting Notes Copy")
+        #expect(duplicated.body.contains("concise structured notes") == true)
+        #expect(model.promptWorkspace.activeSelection == .preset(duplicated.id))
+        #expect(model.promptWorkspace.userPresets == [duplicated])
     }
 
-    return nil
-}
+    @Test
+    @MainActor
+    func duplicatePromptPresetCreatesCopyOfUserPromptAndSelectsCopy() throws {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.duplicatePromptPresetCreatesCopyOfUserPromptAndSelectsCopy.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let original = model.createUserPromptPreset(
+            title: "Slack Reply",
+            body: "Keep replies concise and friendly."
+        )
 
-private func findSubview<T: NSView>(
-    in root: NSView?,
-    ofType type: T.Type,
-    where predicate: ((T) -> Bool)? = nil
-) -> T? {
-    guard let root else { return nil }
-    if let match = root as? T, predicate?(match) ?? true {
-        return match
+        let duplicated = try #require(model.duplicatePromptPreset(id: original.id))
+
+        #expect(duplicated.id != original.id)
+        #expect(duplicated.source == .user)
+        #expect(duplicated.title == "Slack Reply Copy")
+        #expect(duplicated.body == "Keep replies concise and friendly.")
+        #expect(model.promptWorkspace.activeSelection == .preset(duplicated.id))
+        #expect(model.promptWorkspace.userPresets.count == 2)
     }
 
-    for subview in root.subviews {
-        if let match = findSubview(in: subview, ofType: type, where: predicate) {
-            return match
-        }
+    @Test
+    @MainActor
+    func creatingUserPromptStoresBindings() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.creatingUserPromptStoresBindings.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        let preset = model.createUserPromptPreset(
+            title: "Gmail Reply",
+            body: "Draft a concise email response.",
+            appBundleIDs: ["com.google.chrome"],
+            websiteHosts: ["mail.google.com"]
+        )
+
+        #expect(preset.appBundleIDs == ["com.google.chrome"])
+        #expect(preset.websiteHosts == ["mail.google.com"])
+        #expect(model.promptWorkspace.userPresets == [preset])
     }
 
-    return nil
-}
+    @Test
+    @MainActor
+    func duplicatePromptPresetPreservesBindings() throws {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.duplicatePromptPresetPreservesBindings.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let original = model.createUserPromptPreset(
+            title: "Support",
+            body: "Reply like a support agent.",
+            appBundleIDs: ["com.tinyspeck.slackmacgap"],
+            websiteHosts: ["trello.com"]
+        )
 
-private func allSubviews(of root: NSView) -> [NSView] {
-    [root] + root.subviews.flatMap(allSubviews(of:))
-}
+        let duplicated = try #require(model.duplicatePromptPreset(id: original.id))
 
-private extension NSColor {
-    func isApproximatelyEqual(to other: NSColor, tolerance: CGFloat = 0.002) -> Bool {
-        guard
-            let lhs = usingColorSpace(.deviceRGB),
-            let rhs = other.usingColorSpace(.deviceRGB)
-        else {
-            return false
-        }
+        #expect(duplicated.appBundleIDs == ["com.tinyspeck.slackmacgap"])
+        #expect(duplicated.websiteHosts == ["trello.com"])
+    }
 
-        return abs(lhs.redComponent - rhs.redComponent) <= tolerance &&
-            abs(lhs.greenComponent - rhs.greenComponent) <= tolerance &&
-            abs(lhs.blueComponent - rhs.blueComponent) <= tolerance &&
-            abs(lhs.alphaComponent - rhs.alphaComponent) <= tolerance
+    @Test
+    @MainActor
+    func builtInDefaultSelectionLeavesNoEditableMiddleSection() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.builtInDefaultSelectionLeavesNoEditableMiddleSection.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        model.setActivePromptSelection(.builtInDefault)
+
+        #expect(model.resolvedPromptPreset().title == "VoicePi Default")
+        #expect(model.resolvedPromptPreset().source == .builtInDefault)
+        #expect(model.resolvedRefinementPrompt(for: .voicePi) == nil)
+    }
+
+    @Test
+    @MainActor
+    func deletingActiveUserPromptFallsBackToDefault() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.deletingActiveUserPromptFallsBackToDefault.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let preset = model.createUserPromptPreset(
+            title: "Custom",
+            body: "Respond with a short summary."
+        )
+
+        model.deleteUserPromptPreset(id: preset.id)
+
+        #expect(model.promptWorkspace.activeSelection == .builtInDefault)
+        #expect(model.promptWorkspace.userPresets.isEmpty)
+        #expect(model.resolvedPromptPreset().source == .builtInDefault)
+    }
+
+    @Test
+    @MainActor
+    func deletingNonUserPromptIDDoesNothing() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.deletingNonUserPromptIDDoesNothing.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setActivePromptSelection(.preset("meeting_notes"))
+        let initialWorkspace = model.promptWorkspace
+
+        model.deleteUserPromptPreset(id: "meeting_notes")
+
+        #expect(model.promptWorkspace == initialWorkspace)
+        #expect(model.resolvedPromptPreset().title == "Meeting Notes")
+        #expect(model.resolvedPromptPreset().source == .starter)
     }
 }

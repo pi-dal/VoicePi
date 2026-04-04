@@ -6,26 +6,28 @@ import Testing
 struct AppModelPersistenceTests {
     @Test
     @MainActor
-    func postProcessingAndRemoteConfigurationsPersistAcrossReloads() {
+    func postProcessingRemoteConfigurationAndPromptWorkspacePersistAcrossReloads() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.postProcessingAndRemoteConfigurationsPersistAcrossReloads.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
+        let customPrompt = PromptPreset(
+            id: "user-release-notes",
+            title: "Release Notes",
+            body: "Write concise release notes with short bullet points.",
+            source: .user
+        )
 
         model.setPostProcessingMode(.refinement)
         model.setTranslationProvider(.llm)
         model.setTargetLanguage(.japanese)
-        model.promptSettings.defaultSelection = .profile(
-            "meeting_notes",
-            optionSelections: ["output_format": ["markdown"]]
-        )
-        model.setPromptSelection(
-            .none,
-            for: .voicePi
+        model.promptWorkspace = .init(
+            activeSelection: .preset(customPrompt.id),
+            userPresets: [customPrompt]
         )
         model.saveLLMConfiguration(
             baseURL: "https://llm.example.com",
             apiKey: "llm-key",
             model: "gpt-4o-mini",
-            refinementPrompt: "Return a markdown checklist."
+            refinementPrompt: ""
         )
         model.setASRBackend(.remoteOpenAICompatible)
         model.saveRemoteASRConfiguration(baseURL: "https://asr.example.com", apiKey: "asr-key", model: "whisper", prompt: "Prefer punctuation")
@@ -42,19 +44,16 @@ struct AppModelPersistenceTests {
         #expect(reloaded.postProcessingMode == .refinement)
         #expect(reloaded.translationProvider == .llm)
         #expect(reloaded.targetLanguage == .japanese)
-        #expect(
-            reloaded.promptSettings.defaultSelection == .profile(
-                "meeting_notes",
-                optionSelections: ["output_format": ["markdown"]]
-            )
-        )
-        #expect(reloaded.promptSelection(for: .voicePi) == .none)
+        #expect(reloaded.promptWorkspace.activeSelection == .preset("user-release-notes"))
+        #expect(reloaded.promptWorkspace.userPresets == [customPrompt])
+        #expect(reloaded.resolvedPromptPreset().title == "Release Notes")
+        #expect(reloaded.resolvedRefinementPrompt(for: .voicePi) == "Write concise release notes with short bullet points.")
         #expect(
             reloaded.llmConfiguration == .init(
                 baseURL: "https://llm.example.com",
                 apiKey: "llm-key",
                 model: "gpt-4o-mini",
-                refinementPrompt: "Return a markdown checklist."
+                refinementPrompt: ""
             )
         )
         #expect(reloaded.asrBackend == .remoteOpenAICompatible)
@@ -95,8 +94,8 @@ struct AppModelPersistenceTests {
 
     @Test
     @MainActor
-    func legacyRefinementPromptMigratesToLegacyCustomSelection() {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.legacyRefinementPromptMigratesToLegacyCustomSelection.\(UUID().uuidString)")!
+    func legacyRefinementPromptMigratesToImportedUserPreset() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.legacyRefinementPromptMigratesToImportedUserPreset.\(UUID().uuidString)")!
         let legacyConfiguration = LLMConfiguration(
             baseURL: "https://llm.example.com",
             apiKey: "llm-key",
@@ -108,14 +107,18 @@ struct AppModelPersistenceTests {
 
         let model = AppModel(defaults: defaults)
 
-        #expect(model.promptSelection(for: .voicePi).mode == .legacyCustom)
-        #expect(model.resolvedRefinementPrompt(for: .voicePi)?.contains("Use markdown bullets.") == true)
+        #expect(model.promptWorkspace.activeSelection.mode == .preset)
+        #expect(model.promptWorkspace.userPresets.count == 1)
+        #expect(model.promptWorkspace.userPresets[0].title == "Imported Prompt")
+        #expect(model.promptWorkspace.userPresets[0].body == "Use markdown bullets.")
+        #expect(model.resolvedPromptPreset().source == .user)
+        #expect(model.resolvedRefinementPrompt(for: .voicePi) == "Use markdown bullets.")
     }
 
     @Test
     @MainActor
-    func emptyLegacyRefinementPromptDefaultsToInherit() {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.emptyLegacyRefinementPromptDefaultsToInherit.\(UUID().uuidString)")!
+    func emptyLegacyRefinementPromptDefaultsToBuiltInPrompt() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.emptyLegacyRefinementPromptDefaultsToBuiltInPrompt.\(UUID().uuidString)")!
         let legacyConfiguration = LLMConfiguration(
             baseURL: "https://llm.example.com",
             apiKey: "llm-key",
@@ -127,24 +130,98 @@ struct AppModelPersistenceTests {
 
         let model = AppModel(defaults: defaults)
 
-        #expect(model.promptSelection(for: .voicePi) == .inherit)
+        #expect(model.promptWorkspace.activeSelection == .builtInDefault)
+        #expect(model.promptWorkspace.userPresets.isEmpty)
+        #expect(model.resolvedPromptPreset().source == .builtInDefault)
         #expect(model.resolvedRefinementPrompt(for: .voicePi) == nil)
     }
 
     @Test
     @MainActor
-    func promptResolutionDiagnosticsExposeResolverFailureWhileRemainingFailClosed() {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.promptResolutionDiagnosticsExposeResolverFailureWhileRemainingFailClosed.\(UUID().uuidString)")!
+    func legacyPromptSettingsProfileSelectionMigratesToImportedUserPreset() throws {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.legacyPromptSettingsProfileSelectionMigratesToImportedUserPreset.\(UUID().uuidString)")!
+        let settings = PromptSettings(
+            defaultSelection: .profile(
+                "meeting_notes",
+                optionSelections: ["output_format": ["markdown"]]
+            ),
+            appSelections: [PromptAppID.voicePi.rawValue: .inherit]
+        )
+        defaults.set(try JSONEncoder().encode(settings), forKey: AppModel.Keys.promptSettings)
+
         let model = AppModel(defaults: defaults)
-        model.promptSettings.defaultSelection = .profile("unsupported_profile")
-        model.setPromptSelection(.inherit, for: .voicePi)
 
-        let diagnostics = model.promptResolutionDiagnostics(for: .voicePi)
+        #expect(model.promptWorkspace.activeSelection.mode == .preset)
+        #expect(model.promptWorkspace.userPresets.count == 1)
+        #expect(model.promptWorkspace.userPresets[0].title == "Meeting Notes")
+        #expect(model.promptWorkspace.userPresets[0].body.contains("concise structured notes") == true)
+        #expect(model.promptWorkspace.userPresets[0].body.contains("Markdown") == true)
+        #expect(model.resolvedPromptPreset().source == .user)
+    }
 
-        #expect(diagnostics.resolvedSelection == nil)
-        #expect(diagnostics.error == .library(.disallowedProfile("unsupported_profile", .voicePi)))
-        #expect(model.resolvedPromptSelection(for: .voicePi) == nil)
+    @Test
+    @MainActor
+    func deletingActiveUserPresetFallsBackToBuiltInDefault() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.deletingActiveUserPresetFallsBackToBuiltInDefault.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let customPrompt = PromptPreset(
+            id: "user-standup",
+            title: "Standup",
+            body: "Format as a short daily standup update.",
+            source: .user
+        )
+
+        model.promptWorkspace = .init(
+            activeSelection: .preset(customPrompt.id),
+            userPresets: [customPrompt]
+        )
+
+        model.deleteUserPromptPreset(id: customPrompt.id)
+
+        #expect(model.promptWorkspace.activeSelection == .builtInDefault)
+        #expect(model.promptWorkspace.userPresets.isEmpty)
+        #expect(model.resolvedPromptPreset().source == .builtInDefault)
         #expect(model.resolvedRefinementPrompt(for: .voicePi) == nil)
+    }
+
+    @Test
+    @MainActor
+    func promptBindingsPersistAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.promptBindingsPersistAcrossReloads.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let slackPrompt = PromptPreset(
+            id: "user-slack",
+            title: "Slack Reply",
+            body: "Respond like a concise Slack reply.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let gmailPrompt = PromptPreset(
+            id: "user-gmail",
+            title: "Gmail Reply",
+            body: "Respond as a polished email draft.",
+            source: .user,
+            websiteHosts: ["mail.google.com"]
+        )
+
+        model.promptWorkspace = .init(
+            activeSelection: .builtInDefault,
+            userPresets: [slackPrompt, gmailPrompt]
+        )
+
+        let reloaded = AppModel(defaults: defaults)
+
+        #expect(reloaded.promptWorkspace.userPresets == [slackPrompt, gmailPrompt])
+        #expect(
+            reloaded.resolvedPromptPreset(
+                destination: .init(appBundleID: "com.tinyspeck.slackmacgap")
+            ).title == "Slack Reply"
+        )
+        #expect(
+            reloaded.resolvedPromptPreset(
+                destination: .init(appBundleID: "com.google.Chrome", websiteHost: "mail.google.com")
+            ).title == "Gmail Reply"
+        )
     }
 
     @Test

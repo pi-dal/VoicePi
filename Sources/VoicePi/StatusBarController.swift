@@ -754,6 +754,22 @@ protocol SettingsWindowControllerDelegate: AnyObject {
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    enum PromptBindingCaptureKind {
+        case appBundleID
+        case websiteHost
+    }
+
+    enum PromptBindingEntryAction {
+        case createFromDefault
+        case duplicateStarter
+        case editUser
+    }
+
+    static let promptBindingActionBarTitle = "Bindings"
+    static let promptBindingsButtonTitle = "Bindings"
+    static let captureFrontmostAppButtonTitle = "Capture Frontmost App"
+    static let captureCurrentWebsiteButtonTitle = "Capture Current Website"
+
     weak var delegate: SettingsWindowControllerDelegate?
 
     private let model: AppModel
@@ -802,15 +818,43 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let baseURLField = NSTextField(string: "")
     private let apiKeyField = NSSecureTextField(string: "")
     private let modelField = NSTextField(string: "")
-    private let defaultPromptTemplatePopup = ThemedPopUpButton()
-    private let appPromptOverridePopup = ThemedPopUpButton()
-    private let promptOptionRowsStack = NSStackView()
+    private let activePromptPopup = ThemedPopUpButton()
     private let resolvedPromptSummaryLabel = NSTextField(labelWithString: "")
     private lazy var resolvedPromptPreviewButton = StyledSettingsButton(
-        title: "Preview Resolved Prompt",
+        title: "Preview",
         role: .secondary,
         target: self,
         action: #selector(previewResolvedPrompt)
+    )
+    private lazy var editPromptButton = StyledSettingsButton(
+        title: "Edit",
+        role: .secondary,
+        target: self,
+        action: #selector(editPromptPreset)
+    )
+    private lazy var newPromptButton = StyledSettingsButton(
+        title: "New",
+        role: .secondary,
+        target: self,
+        action: #selector(createPromptPreset)
+    )
+    private lazy var duplicatePromptButton = StyledSettingsButton(
+        title: "Duplicate",
+        role: .secondary,
+        target: self,
+        action: #selector(duplicatePromptPreset)
+    )
+    private lazy var promptBindingsButton = StyledSettingsButton(
+        title: Self.promptBindingsButtonTitle,
+        role: .secondary,
+        target: self,
+        action: #selector(openPromptBindingsEditor)
+    )
+    private lazy var deletePromptButton = StyledSettingsButton(
+        title: "Delete",
+        role: .secondary,
+        target: self,
+        action: #selector(deletePromptPreset)
     )
     private let asrBackendPopup = ThemedPopUpButton()
     private let asrBaseURLField = NSTextField(string: "")
@@ -832,14 +876,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var currentSection: SettingsSection = .home
     private var aboutUpdateStatusText = "Use Homebrew for install and upgrades."
     private var promptLibrary: PromptLibrary?
-    private var promptPolicy: PromptAppPolicy?
     private var promptLibraryLoadError: String?
-    private var optionPopupsByGroupID: [String: NSPopUpButton] = [:]
-    private var promptTemplateFormState = PromptTemplateFormState(
-        globalSelection: .none,
-        appSelection: .inherit
-    )
-    private var promptSelectionDrafts: [PromptTemplateScope: PromptSelection] = [:]
+    private var promptWorkspaceDraft = PromptWorkspaceSettings()
+    private var promptDestinationInspector = PromptDestinationInspector()
+    private var promptEditorDraft: PromptPreset?
+    private weak var promptEditorNameField: NSTextField?
+    private weak var promptEditorAppBindingsField: NSTextField?
+    private weak var promptEditorWebsiteHostsField: NSTextField?
+    private weak var promptEditorBindingStatusLabel: NSTextField?
+    private weak var promptEditorBodyTextView: NSTextView?
 
     init(model: AppModel, delegate: SettingsWindowControllerDelegate?) {
         self.model = model
@@ -1237,7 +1282,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         apiKeyField.placeholderString = "sk-..."
         modelField.placeholderString = "gpt-4o-mini"
         configurePostProcessingPopups()
-        configurePromptTemplateControls()
+        configurePromptWorkspaceControls()
 
         testButton.target = self
         testButton.action = #selector(testConfiguration)
@@ -1246,10 +1291,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         saveButton.action = #selector(saveConfiguration)
         saveButton.keyEquivalent = "\r"
 
-        let resolvedPromptControl = NSStackView(views: [resolvedPromptSummaryLabel, resolvedPromptPreviewButton])
+        let resolvedPromptControl = NSStackView(views: [resolvedPromptSummaryLabel])
         resolvedPromptControl.orientation = .vertical
         resolvedPromptControl.alignment = .leading
         resolvedPromptControl.spacing = 8
+
+        let promptActionsRow = makeButtonGroup([
+            editPromptButton,
+            newPromptButton,
+            duplicatePromptButton,
+            promptBindingsButton,
+            deletePromptButton,
+            resolvedPromptPreviewButton
+        ])
 
         let configurationSection = makeGroupedSection(rows: [
             makePreferenceRow(title: "Mode", control: postProcessingModePopup),
@@ -1258,10 +1312,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "API Base URL", control: baseURLField),
             makePreferenceRow(title: "API Key", control: apiKeyField),
             makePreferenceRow(title: "Model", control: modelField),
-            makePreferenceRow(title: "Default Prompt Template", control: defaultPromptTemplatePopup),
-            makePreferenceRow(title: "VoicePi Override", control: appPromptOverridePopup),
-            makePreferenceRow(title: "Template Options", control: promptOptionRowsStack),
-            makePreferenceRow(title: "Resolved Prompt", control: resolvedPromptControl)
+            makePreferenceRow(title: "Active Prompt", control: activePromptPopup),
+            makePreferenceRow(title: "Prompt Summary", control: resolvedPromptControl),
+            makePreferenceRow(title: "Prompt Actions", control: promptActionsRow)
         ])
 
         let buttons = makeButtonGroup([
@@ -1271,7 +1324,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, conservative LLM refinement, or explicit translation."))
         contentStack.addArrangedSubview(makeBodyLabel("Refinement always uses the LLM provider. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
-        contentStack.addArrangedSubview(makeBodyLabel("Prompt templates control only the configurable middle section. Core ASR guardrails and language output instructions remain code-controlled."))
+        contentStack.addArrangedSubview(makeBodyLabel("When Active Prompt is VoicePi Default, VoicePi checks any saved app and website bindings first, then falls back to the built-in default prompt. Starter prompts give you a baseline, and user prompts let you take full control over the editable middle section."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
         contentStack.addArrangedSubview(llmStatusView)
@@ -1289,9 +1342,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             baseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             apiKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
-            defaultPromptTemplatePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
-            appPromptOverridePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
-            promptOptionRowsStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
+            activePromptPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
         ])
     }
 
@@ -1398,7 +1449,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             ).rawValue
         )
         selectPopupItem(in: targetLanguagePopup, matching: model.targetLanguage.rawValue)
-        loadPromptTemplateSelections()
+        loadPromptWorkspaceSelections()
 
         if !shortcutRecorderField.isRecordingShortcut {
             shortcutRecorderField.shortcut = model.activationShortcut
@@ -1478,10 +1529,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
         testButton.isEnabled = usesLLM
         let shouldEnablePromptControls = mode == .refinement
-        defaultPromptTemplatePopup.isEnabled = shouldEnablePromptControls
-        appPromptOverridePopup.isEnabled = shouldEnablePromptControls
-        setPromptOptionControlsEnabled(shouldEnablePromptControls)
-        resolvedPromptPreviewButton.isEnabled = shouldEnablePromptControls
+        setPromptWorkspaceControlsEnabled(shouldEnablePromptControls)
 
         setLLMFeedback(.neutral(
             LLMSectionFeedback.message(
@@ -1500,7 +1548,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             baseURL: baseURLField.stringValue,
             apiKey: apiKeyField.stringValue,
             model: modelField.stringValue,
-            refinementPrompt: model.llmConfiguration.refinementPrompt
+            refinementPrompt: ""
         )
     }
 
@@ -1731,46 +1779,128 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
-    private func defaultPromptTemplateChanged(_ sender: NSPopUpButton) {
-        updatePromptSelection(for: .globalDefault, from: sender)
-        refreshPromptTemplateControls()
+    private func activePromptChanged(_ sender: NSPopUpButton) {
+        promptWorkspaceDraft.activeSelection = promptSelectionFromPopup(sender)
+        updatePromptEditorState()
     }
 
     @objc
-    private func appPromptOverrideChanged(_ sender: NSPopUpButton) {
-        updatePromptSelection(for: .appOverride, from: sender)
-        refreshPromptTemplateControls()
-    }
-
-    @objc
-    private func promptOptionChanged(_ sender: NSPopUpButton) {
+    private func editPromptPreset() {
         guard
-            let identifier = sender.identifier?.rawValue,
-            identifier.hasPrefix("prompt-option-"),
-            let optionID = sender.selectedItem?.representedObject as? String,
-            let editableTarget = promptTemplateFormState.editableTarget
+            let selectedPreset = selectedPromptPresetFromDraft(),
+            selectedPreset.source == .user
         else {
-            updateResolvedPromptSummary()
             return
         }
 
-        let groupID = String(identifier.dropFirst("prompt-option-".count))
-        promptTemplateFormState.setSelectedOption(optionID, for: groupID, in: editableTarget.scope)
-        cachePromptSelectionDraft(for: editableTarget.scope)
-        updateResolvedPromptSummary()
+        presentPromptEditorSheet(for: selectedPreset)
+    }
+
+    @objc
+    private func createPromptPreset() {
+        let preset = PromptPreset(
+            id: "user.\(UUID().uuidString.lowercased())",
+            title: "New Prompt",
+            body: "",
+            source: .user
+        )
+        promptWorkspaceDraft.saveUserPreset(preset)
+        promptWorkspaceDraft.activeSelection = .preset(preset.id)
+        reloadPromptPopupItems()
+        updatePromptEditorState()
+        presentPromptEditorSheet(for: preset)
+    }
+
+    @objc
+    private func duplicatePromptPreset() {
+        guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
+
+        let duplicate = PromptPreset(
+            id: "user.\(UUID().uuidString.lowercased())",
+            title: "\(selectedPreset.resolvedTitle) Copy",
+            body: selectedPreset.body,
+            source: .user,
+            appBundleIDs: selectedPreset.appBundleIDs,
+            websiteHosts: selectedPreset.websiteHosts
+        )
+        promptWorkspaceDraft.saveUserPreset(duplicate)
+        promptWorkspaceDraft.activeSelection = .preset(duplicate.id)
+        reloadPromptPopupItems()
+        updatePromptEditorState()
+        presentPromptEditorSheet(for: duplicate)
+    }
+
+    static func bindingEntryAction(for source: PromptPresetSource) -> PromptBindingEntryAction {
+        switch source {
+        case .builtInDefault:
+            return .createFromDefault
+        case .starter:
+            return .duplicateStarter
+        case .user:
+            return .editUser
+        }
+    }
+
+    @objc
+    private func openPromptBindingsEditor() {
+        guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
+
+        switch Self.bindingEntryAction(for: selectedPreset.source) {
+        case .editUser:
+            presentPromptEditorSheet(for: selectedPreset)
+        case .duplicateStarter:
+            duplicatePromptPreset()
+        case .createFromDefault:
+            createPromptPreset()
+        }
+    }
+
+    @objc
+    private func deletePromptPreset() {
+        guard
+            let selectedPreset = selectedPromptPresetFromDraft(),
+            selectedPreset.source == .user
+        else {
+            return
+        }
+
+        promptWorkspaceDraft.deleteUserPreset(id: selectedPreset.id)
+        reloadPromptPopupItems()
+        updatePromptEditorState()
     }
 
     @objc
     private func previewResolvedPrompt() {
-        let diagnostics = resolvePromptSelectionFromControls()
         let previewText: String
+        if promptWorkspaceDraft.activeSelection == .builtInDefault {
+            let boundPresets = promptWorkspaceDraft.userPresets.filter {
+                !$0.appBundleIDs.isEmpty || !$0.websiteHosts.isEmpty
+            }
 
-        if let resolved = diagnostics.resolvedSelection {
-            previewText = resolved.middleSection ?? "No template selected. Core prompt behavior only."
-        } else if let error = diagnostics.error {
-            previewText = error.diagnosticDescription
+            if boundPresets.isEmpty {
+                previewText = resolvedPromptTextFromControls()
+                    ?? "VoicePi Default adds no extra editable middle section."
+            } else {
+                let bindingLines = boundPresets.map { preset in
+                    let appSummary = preset.appBundleIDs.isEmpty
+                        ? "Apps none"
+                        : "Apps \(preset.appBundleIDs.joined(separator: ", "))"
+                    let websiteSummary = preset.websiteHosts.isEmpty
+                        ? "Sites none"
+                        : "Sites \(preset.websiteHosts.joined(separator: ", "))"
+                    return "- \(preset.resolvedTitle): \(appSummary) • \(websiteSummary)"
+                }.joined(separator: "\n")
+
+                previewText = """
+                VoicePi Default remains the fallback when no manual binding matches.
+
+                Automatic bindings:
+                \(bindingLines)
+                """
+            }
         } else {
-            previewText = "No template selected. Core prompt behavior only."
+            previewText = resolvedPromptTextFromControls()
+                ?? "VoicePi Default adds no extra editable middle section."
         }
 
         presentResolvedPromptPreview(text: previewText)
@@ -1832,15 +1962,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             model.setTranslationProvider(currentTranslationProvider())
         }
         model.setTargetLanguage(currentTargetLanguage())
-        savePromptTemplateSelections()
+        model.promptWorkspace = promptWorkspaceDraft
         if mode == .refinement {
             configuration.refinementPrompt = resolvedPromptTextFromControls() ?? ""
+        } else {
+            configuration.refinementPrompt = ""
         }
         model.saveLLMConfiguration(
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
             model: configuration.model,
-            refinementPrompt: mode == .refinement ? configuration.refinementPrompt : nil
+            refinementPrompt: ""
         )
         setLLMFeedback(.neutral("Saved."))
         delegate?.settingsWindowController(self, didSave: configuration)
@@ -1910,11 +2042,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         postProcessingModePopup.syncTheme()
         translationProviderPopup.syncTheme()
         targetLanguagePopup.syncTheme()
-        defaultPromptTemplatePopup.syncTheme()
-        appPromptOverridePopup.syncTheme()
-        for popup in optionPopupsByGroupID.values {
-            (popup as? ThemedPopUpButton)?.syncTheme()
-        }
+        activePromptPopup.syncTheme()
         syncAppearanceControlTheme()
         refreshNavigationAppearance()
     }
@@ -1967,6 +2095,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func availableTranslationProviders() -> [TranslationProvider] {
         TranslationProvider.availableProviders(appleTranslateSupported: appleTranslateSupported)
+    }
+
+    private func starterPromptPresets() -> [PromptPreset] {
+        model.starterPromptPresets()
     }
 
     private func setASRFeedback(_ presentation: ConnectionFeedbackPresentation, animated: Bool = false) {
@@ -2094,268 +2226,424 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return row
     }
 
-    private func configurePromptTemplateControls() {
+    private func configurePromptWorkspaceControls() {
         do {
             promptLibrary = try PromptLibrary.loadBundled()
-            promptPolicy = promptLibrary?.policy(for: .voicePi)
             promptLibraryLoadError = nil
         } catch let error as PromptLibraryError {
             promptLibrary = nil
-            promptPolicy = nil
             promptLibraryLoadError = error.diagnosticDescription
         } catch {
             promptLibrary = nil
-            promptPolicy = nil
             promptLibraryLoadError = String(describing: error)
         }
-
-        promptOptionRowsStack.orientation = .vertical
-        promptOptionRowsStack.alignment = .leading
-        promptOptionRowsStack.spacing = 10
 
         resolvedPromptSummaryLabel.font = .systemFont(ofSize: 12)
         resolvedPromptSummaryLabel.textColor = .secondaryLabelColor
         resolvedPromptSummaryLabel.lineBreakMode = .byWordWrapping
         resolvedPromptSummaryLabel.maximumNumberOfLines = 4
-        resolvedPromptSummaryLabel.stringValue = "No template selected. Core prompt behavior only."
+        resolvedPromptSummaryLabel.stringValue = "Active prompt: VoicePi Default"
         resolvedPromptPreviewButton.isEnabled = false
 
-        defaultPromptTemplatePopup.target = self
-        defaultPromptTemplatePopup.action = #selector(defaultPromptTemplateChanged(_:))
-        appPromptOverridePopup.target = self
-        appPromptOverridePopup.action = #selector(appPromptOverrideChanged(_:))
+        activePromptPopup.target = self
+        activePromptPopup.action = #selector(activePromptChanged(_:))
 
-        reloadPromptTemplatePopupItems()
+        reloadPromptPopupItems()
     }
 
-    private func reloadPromptTemplatePopupItems() {
-        defaultPromptTemplatePopup.removeAllItems()
-        appPromptOverridePopup.removeAllItems()
+    private func reloadPromptPopupItems() {
+        activePromptPopup.removeAllItems()
 
-        defaultPromptTemplatePopup.addItem(withTitle: "None")
-        defaultPromptTemplatePopup.lastItem?.representedObject = "none"
+        activePromptPopup.addItem(withTitle: PromptPreset.builtInDefault.title)
+        activePromptPopup.lastItem?.representedObject = "default"
 
-        appPromptOverridePopup.addItem(withTitle: "Inherit Global Default")
-        appPromptOverridePopup.lastItem?.representedObject = "inherit"
-        appPromptOverridePopup.addItem(withTitle: "None")
-        appPromptOverridePopup.lastItem?.representedObject = "none"
-
-        if model.promptSelection(for: .voicePi).mode == .legacyCustom {
-            appPromptOverridePopup.addItem(withTitle: "Legacy Custom (Migrated)")
-            appPromptOverridePopup.lastItem?.representedObject = "legacy-custom"
+        for preset in starterPromptPresets() {
+            activePromptPopup.addItem(withTitle: preset.title)
+            activePromptPopup.lastItem?.representedObject = "preset:\(preset.id)"
         }
 
-        guard
-            let library = promptLibrary,
-            let policy = promptPolicy
-        else {
-            resolvedPromptSummaryLabel.stringValue = promptLibraryLoadError ?? "Prompt profile library is unavailable."
-            return
-        }
-
-        for profileID in policy.allowedProfileIDs {
-            guard let profile = library.profile(id: profileID) else { continue }
-
-            defaultPromptTemplatePopup.addItem(withTitle: profile.title)
-            defaultPromptTemplatePopup.lastItem?.representedObject = "profile:\(profile.id)"
-
-            appPromptOverridePopup.addItem(withTitle: profile.title)
-            appPromptOverridePopup.lastItem?.representedObject = "profile:\(profile.id)"
+        for preset in promptWorkspaceDraft.userPresets.sorted(by: {
+            $0.resolvedTitle.localizedCaseInsensitiveCompare($1.resolvedTitle) == .orderedAscending
+        }) {
+            activePromptPopup.addItem(withTitle: preset.resolvedTitle)
+            activePromptPopup.lastItem?.representedObject = "preset:\(preset.id)"
         }
     }
 
-    private func loadPromptTemplateSelections() {
-        promptTemplateFormState = .init(
-            globalSelection: model.promptSettings.defaultSelection,
-            appSelection: model.promptSelection(for: .voicePi)
-        )
-        promptSelectionDrafts = [:]
-        cachePromptSelectionDraft(for: .globalDefault)
-        cachePromptSelectionDraft(for: .appOverride)
-
-        selectPromptTemplateItem(
-            in: defaultPromptTemplatePopup,
-            for: promptTemplateFormState.globalSelection,
-            fallbackToken: "none"
-        )
-        selectPromptTemplateItem(
-            in: appPromptOverridePopup,
-            for: promptTemplateFormState.appSelection,
-            fallbackToken: "inherit"
-        )
-        refreshPromptTemplateControls()
+    private func loadPromptWorkspaceSelections() {
+        promptWorkspaceDraft = model.promptWorkspace
+        reloadPromptPopupItems()
+        selectPromptWorkspaceItem(in: activePromptPopup, for: promptWorkspaceDraft.activeSelection)
+        promptEditorDraft = nil
+        updatePromptEditorState()
     }
 
-    private func selectPromptTemplateItem(
+    private func selectPromptWorkspaceItem(
         in popup: NSPopUpButton,
-        for selection: PromptSelection,
-        fallbackToken: String
+        for selection: PromptActiveSelection
     ) {
         let token: String
         switch selection.mode {
-        case .none:
-            token = "none"
-        case .inherit:
-            token = "inherit"
-        case .profile:
-            token = selection.profileID.map { "profile:\($0)" } ?? fallbackToken
-        case .legacyCustom:
-            token = "legacy-custom"
+        case .builtInDefault:
+            token = "default"
+        case .preset:
+            token = selection.presetID.map { "preset:\($0)" } ?? "default"
         }
 
         let index = popup.indexOfItem(withRepresentedObject: token)
-        let fallbackIndex = popup.indexOfItem(withRepresentedObject: fallbackToken)
         if index >= 0 {
             popup.selectItem(at: index)
-        } else if fallbackIndex >= 0 {
-            popup.selectItem(at: fallbackIndex)
         } else {
             popup.selectItem(at: 0)
         }
     }
 
-    private func refreshPromptTemplateControls() {
-        rebuildPromptOptionRows()
+    private func promptSelectionFromPopup(_ popup: NSPopUpButton) -> PromptActiveSelection {
+        guard let token = popup.selectedItem?.representedObject as? String else {
+            return .builtInDefault
+        }
+
+        switch token {
+        case "default":
+            return .builtInDefault
+        case let token where token.hasPrefix("preset:"):
+            return .preset(String(token.dropFirst("preset:".count)))
+        default:
+            return .builtInDefault
+        }
+    }
+
+    private func selectedPromptPresetFromDraft() -> PromptPreset? {
+        switch promptWorkspaceDraft.activeSelection.mode {
+        case .builtInDefault:
+            return PromptPreset.builtInDefault
+        case .preset:
+            guard let presetID = promptWorkspaceDraft.activeSelection.presetID else { return nil }
+            if let userPreset = promptWorkspaceDraft.userPreset(id: presetID) {
+                return userPreset
+            }
+            return starterPromptPresets().first(where: { $0.id == presetID })
+        }
+    }
+
+    private func updatePromptEditorState() {
+        let selectedPreset = selectedPromptPresetFromDraft() ?? PromptPreset.builtInDefault
+        editPromptButton.isEnabled = selectedPreset.source == .user
+        deletePromptButton.isEnabled = selectedPreset.source == .user
+
         updateResolvedPromptSummary()
     }
 
-    private func rebuildPromptOptionRows() {
-        optionPopupsByGroupID = [:]
-
-        for view in promptOptionRowsStack.arrangedSubviews {
-            promptOptionRowsStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-
-        guard
-            let library = promptLibrary,
-            let policy = promptPolicy,
-            let editable = promptTemplateFormState.editableTarget
-        else {
-            return
-        }
-
-        guard editable.selection.mode == .profile, let profileID = editable.selection.profileID else {
-            return
-        }
-        guard let profile = library.profile(id: profileID) else {
-            return
-        }
-
-        for groupID in profile.optionGroupIDs where policy.visibleOptionGroupIDs.contains(groupID) {
-            guard let group = library.optionGroups[groupID], group.selection == .single else { continue }
-
-            let popup = ThemedPopUpButton()
-            for option in group.options {
-                popup.addItem(withTitle: option.title)
-                popup.lastItem?.representedObject = option.id
-            }
-            popup.target = self
-            popup.action = #selector(promptOptionChanged(_:))
-            popup.identifier = NSUserInterfaceItemIdentifier(rawValue: "prompt-option-\(groupID)")
-            popup.syncTheme()
-
-            if
-                let selectedOption = editable.selection.optionSelections[groupID]?.first,
-                popup.indexOfItem(withRepresentedObject: selectedOption) >= 0
-            {
-                let selectedIndex = popup.indexOfItem(withRepresentedObject: selectedOption)
-                popup.selectItem(at: selectedIndex)
-            } else {
-                popup.selectItem(at: 0)
-            }
-
-            optionPopupsByGroupID[groupID] = popup
-            promptOptionRowsStack.addArrangedSubview(makePreferenceRow(title: group.title, control: popup))
-        }
+    private func setPromptWorkspaceControlsEnabled(_ enabled: Bool) {
+        activePromptPopup.isEnabled = enabled
+        editPromptButton.isEnabled = enabled && (selectedPromptPresetFromDraft()?.source == .user)
+        newPromptButton.isEnabled = enabled
+        duplicatePromptButton.isEnabled = enabled
+        promptBindingsButton.isEnabled = enabled
+        deletePromptButton.isEnabled = enabled && (selectedPromptPresetFromDraft()?.source == .user)
+        resolvedPromptPreviewButton.isEnabled = enabled
     }
 
-    private func setPromptOptionControlsEnabled(_ enabled: Bool) {
-        for popup in optionPopupsByGroupID.values {
-            popup.isEnabled = enabled
-        }
-    }
+    private func resolvedPromptFromControls() -> ResolvedPromptPreset {
+        let library = promptLibrary ?? PromptLibrary(
+            optionGroups: [:],
+            profiles: [:],
+            fragments: [:],
+            appPolicies: [:]
+        )
 
-    private func updatePromptSelection(
-        for scope: PromptTemplateScope,
-        from popup: NSPopUpButton
-    ) {
-        let selection = selectionFromPopup(popup, scope: scope)
-        promptTemplateFormState.updateSelection(selection, for: scope)
-        cachePromptSelectionDraft(for: scope)
-    }
-
-    private func cachePromptSelectionDraft(for scope: PromptTemplateScope) {
-        let selection = promptTemplateFormState.selection(for: scope)
-        guard selection.mode == .profile else { return }
-        promptSelectionDrafts[scope] = selection
-    }
-
-    private func selectionFromPopup(
-        _ popup: NSPopUpButton,
-        scope: PromptTemplateScope
-    ) -> PromptSelection {
-        let token = popup.selectedItem?.representedObject as? String
-        let currentSelection = promptTemplateFormState.selection(for: scope)
-        let draftSelection = promptSelectionDrafts[scope]
-
-        switch token {
-        case "inherit":
-            return .inherit
-        case "none":
-            return .none
-        case "legacy-custom":
-            return .legacyCustom
-        case let token? where token.hasPrefix("profile:"):
-            let profileID = String(token.dropFirst("profile:".count))
-            if currentSelection.mode == .profile, currentSelection.profileID == profileID {
-                return currentSelection
-            }
-            if let draftSelection, draftSelection.mode == .profile, draftSelection.profileID == profileID {
-                return draftSelection
-            }
-            return .profile(profileID)
-        default:
-            return scope == .appOverride ? .inherit : .none
-        }
-    }
-
-    private func savePromptTemplateSelections() {
-        var settings = model.promptSettings
-        settings.defaultSelection = promptTemplateFormState.globalSelection
-        model.promptSettings = settings
-        model.setPromptSelection(promptTemplateFormState.appSelection, for: .voicePi)
-    }
-
-    private func resolvePromptSelectionFromControls() -> PromptResolutionDiagnostics {
-        guard let library = promptLibrary else {
-            return .init(
-                resolvedSelection: nil,
-                error: .unknown(promptLibraryLoadError ?? "Prompt profile library is unavailable.")
-            )
-        }
-
-        do {
-            let resolved = try PromptResolver.resolve(
-                appID: .voicePi,
-                globalSelection: promptTemplateFormState.globalSelection,
-                appSelection: promptTemplateFormState.appSelection,
-                library: library,
-                legacyCustomPrompt: model.llmConfiguration.refinementPrompt
-            )
-            return .init(resolvedSelection: resolved, error: nil)
-        } catch let error as PromptLibraryError {
-            return .init(resolvedSelection: nil, error: .library(error))
-        } catch {
-            return .init(
-                resolvedSelection: nil,
-                error: .unknown(String(describing: error))
-            )
-        }
+        return PromptWorkspaceResolver.resolve(
+            workspace: promptWorkspaceDraft,
+            library: library
+        )
     }
 
     private func resolvedPromptTextFromControls() -> String? {
-        resolvePromptSelectionFromControls().resolvedSelection?.middleSection
+        return resolvedPromptFromControls().middleSection
+    }
+
+    private func presentPromptEditorSheet(for preset: PromptPreset) {
+        guard preset.source == .user else { return }
+
+        promptEditorDraft = preset
+
+        let sheetSize = NSSize(width: 760, height: 664)
+        let sheet = PreviewSheetWindow(
+            contentRect: NSRect(origin: .zero, size: sheetSize),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        sheet.title = "Edit Prompt"
+        sheet.setContentSize(sheetSize)
+        sheet.minSize = sheetSize
+        sheet.appearance = window?.effectiveAppearance ?? window?.appearance
+        sheet.onCloseRequest = { [weak self] in
+            self?.cancelPromptEditorSheet()
+        }
+
+        let nameLabel = NSTextField(labelWithString: "Prompt Name")
+        nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        nameLabel.textColor = .secondaryLabelColor
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let nameField = NSTextField(string: preset.resolvedTitle)
+        nameField.placeholderString = "Prompt name"
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+
+        let bindingActionsLabel = NSTextField(labelWithString: Self.promptBindingActionBarTitle)
+        bindingActionsLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        bindingActionsLabel.textColor = .secondaryLabelColor
+        bindingActionsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let captureFrontmostAppButton = makeSecondaryActionButton(
+            title: Self.captureFrontmostAppButtonTitle,
+            action: #selector(captureFrontmostAppBinding)
+        )
+        captureFrontmostAppButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let captureCurrentWebsiteButton = makeSecondaryActionButton(
+            title: Self.captureCurrentWebsiteButtonTitle,
+            action: #selector(captureCurrentWebsiteBinding)
+        )
+        captureCurrentWebsiteButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let bindingActionButtons = NSStackView(views: [captureFrontmostAppButton, captureCurrentWebsiteButton])
+        bindingActionButtons.orientation = .horizontal
+        bindingActionButtons.alignment = .centerY
+        bindingActionButtons.distribution = .fillEqually
+        bindingActionButtons.spacing = 8
+        bindingActionButtons.translatesAutoresizingMaskIntoConstraints = false
+
+        let bindingStatusLabel = NSTextField(labelWithString: "")
+        bindingStatusLabel.font = .systemFont(ofSize: 12)
+        bindingStatusLabel.textColor = .secondaryLabelColor
+        bindingStatusLabel.lineBreakMode = .byWordWrapping
+        bindingStatusLabel.maximumNumberOfLines = 2
+        bindingStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let appBindingsLabel = NSTextField(labelWithString: "App Bundle IDs")
+        appBindingsLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        appBindingsLabel.textColor = .secondaryLabelColor
+        appBindingsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let appBindingsField = NSTextField(string: preset.appBundleIDs.joined(separator: ", "))
+        appBindingsField.placeholderString = "com.tinyspeck.slackmacgap, com.figma.Desktop"
+        appBindingsField.translatesAutoresizingMaskIntoConstraints = false
+
+        let websiteBindingsLabel = NSTextField(labelWithString: "Website Hosts")
+        websiteBindingsLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        websiteBindingsLabel.textColor = .secondaryLabelColor
+        websiteBindingsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let websiteBindingsField = NSTextField(string: preset.websiteHosts.joined(separator: ", "))
+        websiteBindingsField.placeholderString = "mail.google.com, trello.com, *.notion.so"
+        websiteBindingsField.translatesAutoresizingMaskIntoConstraints = false
+
+        let bindingsHintLabel = NSTextField(
+            wrappingLabelWithString: "Bindings are optional. When Active Prompt stays on VoicePi Default, VoicePi checks matching app bundle IDs and website hosts before falling back to the default prompt."
+        )
+        bindingsHintLabel.font = .systemFont(ofSize: 12)
+        bindingsHintLabel.textColor = .secondaryLabelColor
+        bindingsHintLabel.maximumNumberOfLines = 0
+        bindingsHintLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let bodyLabel = NSTextField(labelWithString: "Prompt Body")
+        bodyLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        bodyLabel.textColor = .secondaryLabelColor
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let textView = NSTextView(frame: .zero)
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.font = .systemFont(ofSize: 13)
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.textContainer?.widthTracksTextView = true
+        textView.string = preset.body
+
+        let scrollView = NSScrollView(frame: .zero)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .bezelBorder
+        scrollView.documentView = textView
+
+        let cancelButton = makeSecondaryActionButton(
+            title: "Cancel",
+            action: #selector(cancelPromptEditorSheet)
+        )
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.keyEquivalent = "\u{1b}"
+
+        let saveButton = makePrimaryActionButton(
+            title: "Save Prompt",
+            action: #selector(savePromptEditorSheet)
+        )
+        saveButton.translatesAutoresizingMaskIntoConstraints = false
+        saveButton.keyEquivalent = "\r"
+
+        let buttonRow = NSStackView(views: [NSView(), cancelButton, saveButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 10
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentView = NSView()
+        contentView.addSubview(nameLabel)
+        contentView.addSubview(nameField)
+        contentView.addSubview(bindingActionsLabel)
+        contentView.addSubview(bindingActionButtons)
+        contentView.addSubview(bindingStatusLabel)
+        contentView.addSubview(appBindingsLabel)
+        contentView.addSubview(appBindingsField)
+        contentView.addSubview(websiteBindingsLabel)
+        contentView.addSubview(websiteBindingsField)
+        contentView.addSubview(bindingsHintLabel)
+        contentView.addSubview(bodyLabel)
+        contentView.addSubview(scrollView)
+        contentView.addSubview(buttonRow)
+        sheet.contentView = contentView
+
+        NSLayoutConstraint.activate([
+            contentView.widthAnchor.constraint(equalToConstant: sheetSize.width),
+            contentView.heightAnchor.constraint(equalToConstant: sheetSize.height),
+
+            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+
+            nameField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            nameField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            nameField.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
+
+            bindingActionsLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            bindingActionsLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            bindingActionsLabel.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 14),
+
+            bindingActionButtons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            bindingActionButtons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            bindingActionButtons.topAnchor.constraint(equalTo: bindingActionsLabel.bottomAnchor, constant: 8),
+
+            bindingStatusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            bindingStatusLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            bindingStatusLabel.topAnchor.constraint(equalTo: bindingActionButtons.bottomAnchor, constant: 6),
+
+            appBindingsLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            appBindingsLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            appBindingsLabel.topAnchor.constraint(equalTo: bindingStatusLabel.bottomAnchor, constant: 10),
+
+            appBindingsField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            appBindingsField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            appBindingsField.topAnchor.constraint(equalTo: appBindingsLabel.bottomAnchor, constant: 8),
+
+            websiteBindingsLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            websiteBindingsLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            websiteBindingsLabel.topAnchor.constraint(equalTo: appBindingsField.bottomAnchor, constant: 14),
+
+            websiteBindingsField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            websiteBindingsField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            websiteBindingsField.topAnchor.constraint(equalTo: websiteBindingsLabel.bottomAnchor, constant: 8),
+
+            bindingsHintLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            bindingsHintLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            bindingsHintLabel.topAnchor.constraint(equalTo: websiteBindingsField.bottomAnchor, constant: 10),
+
+            bodyLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            bodyLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            bodyLabel.topAnchor.constraint(equalTo: bindingsHintLabel.bottomAnchor, constant: 14),
+
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            scrollView.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 8),
+            scrollView.bottomAnchor.constraint(equalTo: buttonRow.topAnchor, constant: -16),
+
+            buttonRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            buttonRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            buttonRow.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
+        ])
+
+        promptEditorNameField = nameField
+        promptEditorAppBindingsField = appBindingsField
+        promptEditorWebsiteHostsField = websiteBindingsField
+        promptEditorBindingStatusLabel = bindingStatusLabel
+        promptEditorBodyTextView = textView
+
+        if let attachedSheet = window?.attachedSheet {
+            window?.endSheet(attachedSheet)
+        }
+        window?.beginSheet(sheet)
+        sheet.makeFirstResponder(nameField)
+    }
+
+    @objc
+    private func savePromptEditorSheet() {
+        guard var draft = promptEditorDraft else {
+            closePromptEditorSheet()
+            return
+        }
+
+        let title = promptEditorNameField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let body = promptEditorBodyTextView?.string ?? draft.body
+        let appBundleIDs = promptBindingValues(from: promptEditorAppBindingsField?.stringValue ?? "")
+        let websiteHosts = promptBindingValues(from: promptEditorWebsiteHostsField?.stringValue ?? "")
+        draft = PromptPreset(
+            id: draft.id,
+            title: title.isEmpty ? "Untitled Prompt" : title,
+            body: body,
+            source: draft.source,
+            appBundleIDs: appBundleIDs,
+            websiteHosts: websiteHosts
+        )
+
+        promptWorkspaceDraft.saveUserPreset(draft)
+        promptWorkspaceDraft.activeSelection = .preset(draft.id)
+        reloadPromptPopupItems()
+        selectPromptWorkspaceItem(in: activePromptPopup, for: .preset(draft.id))
+        updatePromptEditorState()
+        closePromptEditorSheet()
+    }
+
+    @objc
+    private func cancelPromptEditorSheet() {
+        closePromptEditorSheet()
+    }
+
+    @objc
+    private func captureFrontmostAppBinding() {
+        let destination = promptDestinationInspector.currentDestinationContext()
+        applyCapturedPromptBinding(
+            kind: .appBundleID,
+            capturedRawValue: destination.appBundleID,
+            field: promptEditorAppBindingsField,
+            unavailableMessage: "Couldn't capture a frontmost app bundle ID. Bring the target app to the front and try again."
+        )
+    }
+
+    @objc
+    private func captureCurrentWebsiteBinding() {
+        let destination = promptDestinationInspector.currentDestinationContext()
+        applyCapturedPromptBinding(
+            kind: .websiteHost,
+            capturedRawValue: destination.websiteHost,
+            field: promptEditorWebsiteHostsField,
+            unavailableMessage: "Couldn't capture a website host from the frontmost browser tab. Make sure Safari or a supported Chromium browser is frontmost."
+        )
+    }
+
+    private func closePromptEditorSheet() {
+        promptEditorDraft = nil
+        promptEditorNameField = nil
+        promptEditorAppBindingsField = nil
+        promptEditorWebsiteHostsField = nil
+        promptEditorBindingStatusLabel = nil
+        promptEditorBodyTextView = nil
+        if let sheet = window?.attachedSheet {
+            window?.endSheet(sheet)
+        }
     }
 
     private func presentResolvedPromptPreview(text: String) {
@@ -2433,26 +2721,127 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateResolvedPromptSummary() {
-        let diagnostics = resolvePromptSelectionFromControls()
-        if let error = diagnostics.error {
-            resolvedPromptSummaryLabel.stringValue = error.diagnosticDescription
-            return
-        }
-
-        guard let resolved = diagnostics.resolvedSelection else {
-            resolvedPromptSummaryLabel.stringValue = "No template selected. Core prompt behavior only."
-            return
-        }
-
-        let title = resolved.title ?? "None"
+        let resolved = resolvedPromptFromControls()
         switch resolved.source {
-        case .appOverride:
-            resolvedPromptSummaryLabel.stringValue = "VoicePi override: \(title)"
-        case .globalDefault:
-            resolvedPromptSummaryLabel.stringValue = "Inherited default: \(title)"
-        case .none:
-            resolvedPromptSummaryLabel.stringValue = "No template selected. Core prompt behavior only."
+        case .builtInDefault:
+            resolvedPromptSummaryLabel.stringValue = "Active prompt: \(resolved.title)"
+        case .starter:
+            resolvedPromptSummaryLabel.stringValue = "Active starter prompt: \(resolved.title)"
+        case .user:
+            resolvedPromptSummaryLabel.stringValue = "Active custom prompt: \(resolved.title)"
         }
+
+        if let selectedPreset = selectedPromptPresetFromDraft(),
+           let bindingSummary = promptBindingSummary(for: selectedPreset) {
+            resolvedPromptSummaryLabel.stringValue += " • \(bindingSummary)"
+        } else if promptWorkspaceDraft.activeSelection == .builtInDefault {
+            let automaticBindingsCount = promptWorkspaceDraft.userPresets.filter {
+                !$0.appBundleIDs.isEmpty || !$0.websiteHosts.isEmpty
+            }.count
+            if automaticBindingsCount > 0 {
+                let noun = automaticBindingsCount == 1 ? "bound prompt" : "bound prompts"
+                resolvedPromptSummaryLabel.stringValue += " • Automatic mode checks \(automaticBindingsCount) \(noun)"
+            }
+        }
+
+        if let promptLibraryLoadError {
+            resolvedPromptSummaryLabel.stringValue += " (\(promptLibraryLoadError))"
+        }
+    }
+
+    static func bindingValues(from text: String) -> [String] {
+        text
+            .split(whereSeparator: { $0 == "," || $0 == "\n" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func mergeBindingFieldText(
+        existingText: String,
+        capturedRawValue: String?,
+        kind: PromptBindingCaptureKind
+    ) -> String {
+        var merged: [String] = []
+        var seen: Set<String> = []
+
+        for value in bindingValues(from: existingText) {
+            let normalized = normalizedCapturedBinding(value, kind: kind) ?? value
+            if seen.insert(normalized).inserted {
+                merged.append(normalized)
+            }
+        }
+
+        if let captured = normalizedCapturedBinding(capturedRawValue, kind: kind),
+           seen.insert(captured).inserted {
+            merged.append(captured)
+        }
+
+        return merged.joined(separator: ", ")
+    }
+
+    private static func normalizedCapturedBinding(
+        _ rawValue: String?,
+        kind: PromptBindingCaptureKind
+    ) -> String? {
+        switch kind {
+        case .appBundleID:
+            return PromptDestinationContext.normalizedAppBundleID(rawValue)
+        case .websiteHost:
+            return PromptDestinationContext.normalizedWebsiteHost(rawValue)
+        }
+    }
+
+    private func promptBindingValues(from text: String) -> [String] {
+        Self.bindingValues(from: text)
+    }
+
+    private func applyCapturedPromptBinding(
+        kind: PromptBindingCaptureKind,
+        capturedRawValue: String?,
+        field: NSTextField?,
+        unavailableMessage: String
+    ) {
+        guard let field else { return }
+
+        guard let captured = Self.normalizedCapturedBinding(capturedRawValue, kind: kind) else {
+            setPromptEditorBindingStatus(unavailableMessage, isError: true)
+            return
+        }
+
+        let previousValues = Set(Self.bindingValues(from: field.stringValue))
+        field.stringValue = Self.mergeBindingFieldText(
+            existingText: field.stringValue,
+            capturedRawValue: captured,
+            kind: kind
+        )
+
+        if previousValues.contains(captured) {
+            setPromptEditorBindingStatus("Already added: \(captured)")
+            return
+        }
+
+        setPromptEditorBindingStatus("Added \(captured)")
+    }
+
+    private func setPromptEditorBindingStatus(_ message: String, isError: Bool = false) {
+        promptEditorBindingStatusLabel?.stringValue = message
+        promptEditorBindingStatusLabel?.textColor = isError ? .systemRed : .secondaryLabelColor
+    }
+
+    private func promptBindingSummary(for preset: PromptPreset) -> String? {
+        var parts: [String] = []
+
+        if !preset.appBundleIDs.isEmpty {
+            let noun = preset.appBundleIDs.count == 1 ? "app" : "apps"
+            parts.append("\(preset.appBundleIDs.count) \(noun)")
+        }
+
+        if !preset.websiteHosts.isEmpty {
+            let noun = preset.websiteHosts.count == 1 ? "site" : "sites"
+            parts.append("\(preset.websiteHosts.count) \(noun)")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
     @objc

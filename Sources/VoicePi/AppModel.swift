@@ -890,6 +890,7 @@ final class AppModel: ObservableObject {
         static let llmEnabled = "llmEnabled"
         static let llmConfig = "llmConfig"
         static let promptSettings = "promptSettings"
+        static let promptWorkspace = "promptWorkspace"
         static let postProcessingMode = "postProcessingMode"
         static let translationProvider = "translationProvider"
         static let targetLanguage = "targetLanguage"
@@ -912,9 +913,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    @Published var promptSettings: PromptSettings {
+    @Published var promptWorkspace: PromptWorkspaceSettings {
         didSet {
-            persistPromptSettings()
+            persistPromptWorkspace()
         }
     }
 
@@ -1005,19 +1006,23 @@ final class AppModel: ObservableObject {
         }
         self.llmConfiguration = initialLLMConfiguration
 
+        let initialPromptWorkspace: PromptWorkspaceSettings
+        let shouldPersistMigratedPromptWorkspace: Bool
         if
-            let data = defaults.data(forKey: Keys.promptSettings),
-            let decoded = try? decoder.decode(PromptSettings.self, from: data)
+            let data = defaults.data(forKey: Keys.promptWorkspace),
+            let decoded = try? decoder.decode(PromptWorkspaceSettings.self, from: data)
         {
-            self.promptSettings = decoded
-        } else if !initialLLMConfiguration.trimmedRefinementPrompt.isEmpty {
-            self.promptSettings = PromptSettings(
-                defaultSelection: .none,
-                appSelections: [PromptAppID.voicePi.rawValue: .legacyCustom]
-            )
+            initialPromptWorkspace = decoded
+            shouldPersistMigratedPromptWorkspace = false
         } else {
-            self.promptSettings = .init()
+            initialPromptWorkspace = AppModel.migratePromptWorkspace(
+                defaults: defaults,
+                decoder: decoder,
+                initialLLMConfiguration: initialLLMConfiguration
+            )
+            shouldPersistMigratedPromptWorkspace = true
         }
+        self.promptWorkspace = initialPromptWorkspace
 
         if
             let storedMode = defaults.string(forKey: Keys.postProcessingMode),
@@ -1092,6 +1097,10 @@ final class AppModel: ObservableObject {
         } else {
             self.interfaceTheme = .system
         }
+
+        if shouldPersistMigratedPromptWorkspace {
+            persistPromptWorkspace()
+        }
     }
 
     var isLLMReady: Bool {
@@ -1160,43 +1169,105 @@ final class AppModel: ObservableObject {
         )
     }
 
-    func promptSelection(for appID: PromptAppID) -> PromptSelection {
-        promptSettings.selection(for: appID) ?? .inherit
+    func starterPromptPresets() -> [PromptPreset] {
+        (try? PromptLibrary.loadBundled().starterPresets) ?? []
     }
 
-    func setPromptSelection(_ selection: PromptSelection, for appID: PromptAppID) {
-        var next = promptSettings
-        next.setSelection(selection, for: appID)
-        promptSettings = next
+    func promptPreset(id: String) -> PromptPreset? {
+        if id == PromptPreset.builtInDefaultID {
+            return PromptPreset.builtInDefault
+        }
+
+        if let userPreset = promptWorkspace.userPreset(id: id) {
+            return userPreset
+        }
+
+        return starterPromptPresets().first(where: { $0.id == id })
     }
 
-    func promptResolutionDiagnostics(for appID: PromptAppID) -> PromptResolutionDiagnostics {
-        do {
-            let library = try PromptLibrary.loadBundled()
-            let resolved = try PromptResolver.resolve(
-                appID: appID,
-                globalSelection: promptSettings.defaultSelection,
-                appSelection: promptSelection(for: appID),
-                library: library,
-                legacyCustomPrompt: llmConfiguration.refinementPrompt
-            )
-            return .init(resolvedSelection: resolved, error: nil)
-        } catch let error as PromptLibraryError {
-            return .init(resolvedSelection: nil, error: .library(error))
-        } catch {
-            return .init(
-                resolvedSelection: nil,
-                error: .unknown(String(describing: error))
+    func setActivePromptSelection(_ selection: PromptActiveSelection) {
+        var next = promptWorkspace
+        next.activeSelection = selection
+        promptWorkspace = next
+    }
+
+    func saveUserPromptPreset(_ preset: PromptPreset) {
+        var next = promptWorkspace
+        next.saveUserPreset(preset)
+        promptWorkspace = next
+    }
+
+    func createUserPromptPreset(
+        title: String = "New Prompt",
+        body: String = "",
+        appBundleIDs: [String] = [],
+        websiteHosts: [String] = []
+    ) -> PromptPreset {
+        let preset = PromptPreset(
+            id: "user.\(UUID().uuidString.lowercased())",
+            title: title,
+            body: body,
+            source: .user,
+            appBundleIDs: appBundleIDs,
+            websiteHosts: websiteHosts
+        )
+        saveUserPromptPreset(preset)
+        setActivePromptSelection(.preset(preset.id))
+        return preset
+    }
+
+    func duplicatePromptPreset(id: String) -> PromptPreset? {
+        guard let sourcePreset = promptPreset(id: id) else { return nil }
+
+        let duplicate = PromptPreset(
+            id: "user.\(UUID().uuidString.lowercased())",
+            title: "\(sourcePreset.resolvedTitle) Copy",
+            body: sourcePreset.body,
+            source: .user,
+            appBundleIDs: sourcePreset.appBundleIDs,
+            websiteHosts: sourcePreset.websiteHosts
+        )
+        saveUserPromptPreset(duplicate)
+        setActivePromptSelection(.preset(duplicate.id))
+        return duplicate
+    }
+
+    func deleteUserPromptPreset(id: String) {
+        var next = promptWorkspace
+        next.deleteUserPreset(id: id)
+        promptWorkspace = next
+    }
+
+    func resolvedPromptPreset(
+        for appID: PromptAppID = .voicePi,
+        destination: PromptDestinationContext? = nil
+    ) -> ResolvedPromptPreset {
+        _ = appID
+        guard let library = try? PromptLibrary.loadBundled() else {
+            return PromptWorkspaceResolver.resolve(
+                workspace: promptWorkspace,
+                destination: destination,
+                library: PromptLibrary(
+                    optionGroups: [:],
+                    profiles: [:],
+                    fragments: [:],
+                    appPolicies: [:]
+                )
             )
         }
+
+        return PromptWorkspaceResolver.resolve(
+            workspace: promptWorkspace,
+            destination: destination,
+            library: library
+        )
     }
 
-    func resolvedPromptSelection(for appID: PromptAppID) -> ResolvedPromptSelection? {
-        promptResolutionDiagnostics(for: appID).resolvedSelection
-    }
-
-    func resolvedRefinementPrompt(for appID: PromptAppID) -> String? {
-        resolvedPromptSelection(for: appID)?.middleSection
+    func resolvedRefinementPrompt(
+        for appID: PromptAppID = .voicePi,
+        destination: PromptDestinationContext? = nil
+    ) -> String? {
+        resolvedPromptPreset(for: appID, destination: destination).middleSection
     }
 
     func setPostProcessingMode(_ mode: PostProcessingMode) {
@@ -1270,9 +1341,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func persistPromptSettings() {
-        if let data = try? encoder.encode(promptSettings) {
-            defaults.set(data, forKey: Keys.promptSettings)
+    private func persistPromptWorkspace() {
+        if let data = try? encoder.encode(promptWorkspace) {
+            defaults.set(data, forKey: Keys.promptWorkspace)
         }
     }
 
@@ -1292,5 +1363,52 @@ final class AppModel: ObservableObject {
         if let data = try? encoder.encode(remoteASRConfiguration) {
             defaults.set(data, forKey: Keys.remoteASRConfig)
         }
+    }
+
+    private static func migratePromptWorkspace(
+        defaults: UserDefaults,
+        decoder: JSONDecoder,
+        initialLLMConfiguration: LLMConfiguration
+    ) -> PromptWorkspaceSettings {
+        if
+            let data = defaults.data(forKey: Keys.promptSettings),
+            let decoded = try? decoder.decode(PromptSettings.self, from: data),
+            let library = try? PromptLibrary.loadBundled(),
+            let resolved = try? PromptResolver.resolve(
+                appID: .voicePi,
+                globalSelection: decoded.defaultSelection,
+                appSelection: decoded.selection(for: .voicePi) ?? .inherit,
+                library: library,
+                legacyCustomPrompt: initialLLMConfiguration.refinementPrompt
+            ),
+            let middleSection = resolved.middleSection,
+            !middleSection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            let imported = PromptPreset(
+                id: "user.imported.\(UUID().uuidString.lowercased())",
+                title: resolved.title ?? "Imported Prompt",
+                body: middleSection,
+                source: .user
+            )
+            return .init(
+                activeSelection: .preset(imported.id),
+                userPresets: [imported]
+            )
+        }
+
+        if !initialLLMConfiguration.trimmedRefinementPrompt.isEmpty {
+            let imported = PromptPreset(
+                id: "user.imported.\(UUID().uuidString.lowercased())",
+                title: "Imported Prompt",
+                body: initialLLMConfiguration.trimmedRefinementPrompt,
+                source: .user
+            )
+            return .init(
+                activeSelection: .preset(imported.id),
+                userPresets: [imported]
+            )
+        }
+
+        return .init()
     }
 }

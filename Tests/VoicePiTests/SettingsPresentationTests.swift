@@ -83,18 +83,14 @@ struct SettingsPresentationTests {
         let model = AppModel(defaults: defaults)
         model.setPostProcessingMode(.refinement)
         model.setTargetLanguage(.english)
-        model.promptSettings.defaultSelection = .profile(
-            "meeting_notes",
-            optionSelections: ["output_format": ["markdown"]]
-        )
-        model.setPromptSelection(.inherit, for: .voicePi)
+        model.promptWorkspace = .init(activeSelection: .preset("meeting_notes"))
         model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "sk", model: "gpt")
 
         let presentation = SettingsPresentation.homeSectionPresentation(model: model)
 
         #expect(
             presentation.llmSummary
-                == "Text processing: Refinement via LLM • Target English • Template Meeting Notes • LLM configured"
+                == "Text processing: Refinement via LLM • Target English • Prompt Meeting Notes • LLM configured"
         )
     }
 
@@ -105,15 +101,14 @@ struct SettingsPresentationTests {
         let model = AppModel(defaults: defaults)
         model.setPostProcessingMode(.refinement)
         model.setTargetLanguage(.english)
-        model.promptSettings.defaultSelection = .profile("meeting_notes")
-        model.setPromptSelection(.none, for: .voicePi)
+        model.promptWorkspace = .init(activeSelection: .builtInDefault)
         model.saveLLMConfiguration(baseURL: "https://llm.example.com", apiKey: "sk", model: "gpt")
 
         let presentation = SettingsPresentation.homeSectionPresentation(model: model)
 
         #expect(
             presentation.llmSummary
-                == "Text processing: Refinement via LLM • Target English • Template None • LLM configured"
+                == "Text processing: Refinement via LLM • Target English • Prompt VoicePi Default • LLM configured"
         )
     }
 

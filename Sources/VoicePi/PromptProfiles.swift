@@ -1,5 +1,271 @@
 import Foundation
 
+enum PromptPresetSource: String, Codable, Equatable {
+    case builtInDefault
+    case starter
+    case user
+}
+
+struct PromptPreset: Codable, Equatable, Identifiable {
+    static let builtInDefaultID = "voicepi.default"
+
+    let id: String
+    var title: String
+    var body: String
+    let source: PromptPresetSource
+    var appBundleIDs: [String]
+    var websiteHosts: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case body
+        case source
+        case appBundleIDs
+        case websiteHosts
+    }
+
+    init(
+        id: String,
+        title: String,
+        body: String,
+        source: PromptPresetSource,
+        appBundleIDs: [String] = [],
+        websiteHosts: [String] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.source = source
+        self.appBundleIDs = Self.normalizedUniqueValues(appBundleIDs)
+        self.websiteHosts = Self.normalizedWebsiteHosts(websiteHosts)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.body = try container.decode(String.self, forKey: .body)
+        self.source = try container.decode(PromptPresetSource.self, forKey: .source)
+        self.appBundleIDs = Self.normalizedUniqueValues(
+            try container.decodeIfPresent([String].self, forKey: .appBundleIDs) ?? []
+        )
+        self.websiteHosts = Self.normalizedWebsiteHosts(
+            try container.decodeIfPresent([String].self, forKey: .websiteHosts) ?? []
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(body, forKey: .body)
+        try container.encode(source, forKey: .source)
+        try container.encode(Self.normalizedUniqueValues(appBundleIDs), forKey: .appBundleIDs)
+        try container.encode(Self.normalizedWebsiteHosts(websiteHosts), forKey: .websiteHosts)
+    }
+
+    var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var trimmedBody: String {
+        body.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var resolvedTitle: String {
+        let trimmed = trimmedTitle
+        return trimmed.isEmpty ? "Untitled Prompt" : trimmed
+    }
+
+    var isEditable: Bool {
+        source == .user
+    }
+
+    func matches(destination: PromptDestinationContext?) -> Bool {
+        guard let destination else { return false }
+
+        if let bundleID = destination.appBundleID,
+           appBundleIDs.contains(bundleID) {
+            return true
+        }
+
+        guard let websiteHost = destination.websiteHost else { return false }
+        return websiteHosts.contains(where: { Self.websiteHost($0, matches: websiteHost) })
+    }
+
+    static var builtInDefault: Self {
+        .init(
+            id: builtInDefaultID,
+            title: "VoicePi Default",
+            body: "",
+            source: .builtInDefault
+        )
+    }
+
+    private static func normalizedUniqueValues(_ values: [String]) -> [String] {
+        var normalized: [String] = []
+        var seen: Set<String> = []
+
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            normalized.append(trimmed)
+        }
+
+        return normalized
+    }
+
+    private static func normalizedWebsiteHosts(_ values: [String]) -> [String] {
+        normalizedUniqueValues(values.compactMap(PromptDestinationContext.normalizedWebsiteHost))
+    }
+
+    private static func websiteHost(_ pattern: String, matches host: String) -> Bool {
+        if pattern.hasPrefix("*.") {
+            let suffix = String(pattern.dropFirst(1))
+            let bareDomain = String(pattern.dropFirst(2))
+            return host.hasSuffix(suffix) && host != bareDomain
+        }
+
+        return host == pattern
+    }
+}
+
+enum PromptActiveSelectionMode: String, Codable, Equatable {
+    case builtInDefault
+    case preset
+}
+
+struct PromptActiveSelection: Codable, Equatable {
+    var mode: PromptActiveSelectionMode
+    var presetID: String?
+
+    init(
+        mode: PromptActiveSelectionMode,
+        presetID: String? = nil
+    ) {
+        self.mode = mode
+        self.presetID = presetID
+    }
+
+    static var builtInDefault: Self {
+        .init(mode: .builtInDefault)
+    }
+
+    static func preset(_ id: String) -> Self {
+        .init(mode: .preset, presetID: id)
+    }
+}
+
+struct PromptWorkspaceSettings: Codable, Equatable {
+    var activeSelection: PromptActiveSelection
+    var userPresets: [PromptPreset]
+
+    init(
+        activeSelection: PromptActiveSelection = .builtInDefault,
+        userPresets: [PromptPreset] = []
+    ) {
+        self.activeSelection = activeSelection
+        self.userPresets = userPresets
+    }
+
+    func userPreset(id: String) -> PromptPreset? {
+        userPresets.first(where: { $0.id == id })
+    }
+
+    mutating func saveUserPreset(_ preset: PromptPreset) {
+        guard preset.source == .user else { return }
+        if let index = userPresets.firstIndex(where: { $0.id == preset.id }) {
+            userPresets[index] = preset
+        } else {
+            userPresets.append(preset)
+        }
+    }
+
+    mutating func deleteUserPreset(id: String) {
+        let removedUserPreset = userPresets.contains(where: { $0.id == id })
+        userPresets.removeAll(where: { $0.id == id })
+        if removedUserPreset && activeSelection == .preset(id) {
+            activeSelection = .builtInDefault
+        }
+    }
+}
+
+enum ResolvedPromptPresetSource: Equatable {
+    case builtInDefault
+    case starter
+    case user
+}
+
+struct ResolvedPromptPreset: Equatable {
+    let presetID: String?
+    let title: String
+    let middleSection: String?
+    let source: ResolvedPromptPresetSource
+}
+
+enum PromptWorkspaceResolver {
+    static func resolve(
+        workspace: PromptWorkspaceSettings,
+        destination: PromptDestinationContext? = nil,
+        library: PromptLibrary
+    ) -> ResolvedPromptPreset {
+        switch workspace.activeSelection.mode {
+        case .builtInDefault:
+            if let boundPreset = workspace.userPresets.first(where: { $0.matches(destination: destination) }) {
+                return resolvedPreset(from: boundPreset)
+            }
+            return resolvedPreset(from: PromptPreset.builtInDefault)
+        case .preset:
+            guard
+                let presetID = workspace.activeSelection.presetID,
+                let preset = resolvePreset(
+                    id: presetID,
+                    userPresets: workspace.userPresets,
+                    starterPresets: library.starterPresets
+                )
+            else {
+                return resolvedPreset(from: PromptPreset.builtInDefault)
+            }
+            return resolvedPreset(from: preset)
+        }
+    }
+
+    private static func resolvePreset(
+        id: String,
+        userPresets: [PromptPreset],
+        starterPresets: [PromptPreset]
+    ) -> PromptPreset? {
+        if let userPreset = userPresets.first(where: { $0.id == id }) {
+            return userPreset
+        }
+
+        return starterPresets.first(where: { $0.id == id })
+    }
+
+    private static func resolvedPreset(from preset: PromptPreset) -> ResolvedPromptPreset {
+        let middleSection = preset.trimmedBody.isEmpty ? nil : preset.trimmedBody
+
+        return .init(
+            presetID: preset.id,
+            title: preset.resolvedTitle,
+            middleSection: middleSection,
+            source: resolvedSource(for: preset.source)
+        )
+    }
+
+    private static func resolvedSource(for source: PromptPresetSource) -> ResolvedPromptPresetSource {
+        switch source {
+        case .builtInDefault:
+            return .builtInDefault
+        case .starter:
+            return .starter
+        case .user:
+            return .user
+        }
+    }
+}
+
 enum PromptAppID: String, Codable, CaseIterable {
     case voicePi = "com.pi-dal.voicepi"
 
@@ -189,6 +455,21 @@ struct PromptLibrary: Equatable {
 
     func fragment(id: String) -> PromptFragment? {
         fragments[id]
+    }
+
+    var starterPresets: [PromptPreset] {
+        profiles.values
+            .sorted { lhs, rhs in
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            .map {
+                PromptPreset(
+                    id: $0.id,
+                    title: $0.title,
+                    body: $0.body,
+                    source: .starter
+                )
+            }
     }
 
     static func loadBundled(bundle: Bundle = .module) throws -> PromptLibrary {

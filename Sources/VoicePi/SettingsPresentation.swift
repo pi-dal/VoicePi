@@ -120,9 +120,9 @@ enum SettingsPresentation {
             llmSummary = "Text processing: Disabled"
         case .refinement:
             let target = model.targetLanguage.recognitionDisplayName
-            let templateTitle = model.resolvedPromptSelection(for: .voicePi)?.title ?? "None"
+            let promptTitle = model.resolvedPromptPreset().title
             let suffix = model.llmConfiguration.isConfigured ? "LLM configured" : "LLM not configured"
-            llmSummary = "Text processing: Refinement via LLM • Target \(target) • Template \(templateTitle) • \(suffix)"
+            llmSummary = "Text processing: Refinement via LLM • Target \(target) • Prompt \(promptTitle) • \(suffix)"
         case .translation:
             llmSummary = "Text processing: Translate via \(effectiveTranslationProvider.title) • Target \(model.targetLanguage.recognitionDisplayName)"
         }
