@@ -30,11 +30,18 @@ struct SettingsLayoutMetricsTests {
     func aboutOverviewPlacesUpdateActionAfterInspirationRow() {
         #expect(
             StatusBarController.aboutOverviewRowOrder == [
-                .repository,
                 .builtBy,
-                .inspiredBy,
-                .checkForUpdates
+                .inspiredBy
             ]
         )
+    }
+
+    @Test
+    @MainActor
+    func updatePanelUsesSettingsAlignedMetrics() {
+        #expect(SettingsLayoutMetrics.updatePanelWidth == 436)
+        #expect(SettingsLayoutMetrics.updatePanelMinHeight == 408)
+        #expect(SettingsLayoutMetrics.updatePanelNotesHeight == 120)
+        #expect(SettingsLayoutMetrics.updatePanelOuterInset == 18)
     }
 }

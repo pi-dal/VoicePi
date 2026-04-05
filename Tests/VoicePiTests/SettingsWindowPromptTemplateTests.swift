@@ -16,8 +16,38 @@ struct SettingsWindowPromptTemplateTests {
     @MainActor
     func bindingEntryActionMatchesPromptSourceRules() {
         #expect(SettingsWindowController.bindingEntryAction(for: .builtInDefault) == .createFromDefault)
-        #expect(SettingsWindowController.bindingEntryAction(for: .starter) == .duplicateStarter)
+        #expect(SettingsWindowController.bindingEntryAction(for: .starter) == .createFromStarter)
         #expect(SettingsWindowController.bindingEntryAction(for: .user) == .editUser)
+    }
+
+    @Test
+    @MainActor
+    func makeNewUserPromptDraftCreatesEmptyUserPromptWhenNoTemplateProvided() {
+        let draft = SettingsWindowController.makeNewUserPromptDraft()
+        #expect(draft.source == .user)
+        #expect(draft.title == "New Prompt")
+        #expect(draft.body.isEmpty)
+        #expect(draft.appBundleIDs.isEmpty)
+        #expect(draft.websiteHosts.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func makeNewUserPromptDraftCopiesTemplateBindingsAndBody() {
+        let template = PromptPreset(
+            id: "meeting_notes",
+            title: "Meeting Notes",
+            body: "Turn this into concise structured notes.",
+            source: .starter,
+            appBundleIDs: ["com.figma.desktop"],
+            websiteHosts: ["mail.google.com"]
+        )
+        let draft = SettingsWindowController.makeNewUserPromptDraft(template: template)
+        #expect(draft.source == .user)
+        #expect(draft.title == "Meeting Notes Copy")
+        #expect(draft.body == template.body)
+        #expect(draft.appBundleIDs == ["com.figma.desktop"])
+        #expect(draft.websiteHosts == ["mail.google.com"])
     }
 
     @Test

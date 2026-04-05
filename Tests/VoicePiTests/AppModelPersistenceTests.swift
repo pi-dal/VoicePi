@@ -292,4 +292,30 @@ struct AppModelPersistenceTests {
         #expect(model.activationShortcut.isRegisteredHotkeyCompatible)
         #expect(model.activationShortcut.requiresInputMonitoring == false)
     }
+
+    @Test
+    @MainActor
+    func freshInstallPersistsStandardDefaultActivationShortcutAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.freshInstallPersistsStandardDefaultActivationShortcutAcrossReloads.\(UUID().uuidString)")!
+        let initial = AppModel(defaults: defaults)
+        let reloaded = AppModel(defaults: defaults)
+
+        #expect(initial.activationShortcut.isRegisteredHotkeyCompatible)
+        #expect(reloaded.activationShortcut == initial.activationShortcut)
+        #expect(reloaded.activationShortcut.requiresInputMonitoring == false)
+        #expect(defaults.data(forKey: AppModel.Keys.activationShortcut) != nil)
+    }
+
+    @Test
+    @MainActor
+    func activationShortcutFallsBackToLegacyDefaultForExistingInstallWithoutSavedShortcut() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.activationShortcutFallsBackToLegacyDefaultForExistingInstallWithoutSavedShortcut.\(UUID().uuidString)")!
+        defaults.set(SupportedLanguage.english.rawValue, forKey: AppModel.Keys.selectedLanguage)
+
+        let model = AppModel(defaults: defaults)
+
+        #expect(model.activationShortcut.menuTitle == "Option + Fn")
+        #expect(model.activationShortcut.isModifierOnly)
+        #expect(model.activationShortcut.requiresInputMonitoring)
+    }
 }
