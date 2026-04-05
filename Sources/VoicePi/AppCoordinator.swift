@@ -1,4 +1,5 @@
 import AppKit
+import AppUpdater
 import AVFoundation
 import ApplicationServices
 import Combine
@@ -86,6 +87,17 @@ final class AppController: NSObject {
         case ignore
     }
 
+    enum AppUpdateInstallError: LocalizedError {
+        case downloadedBundleMissing
+
+        var errorDescription: String? {
+            switch self {
+            case .downloadedBundleMissing:
+                return "VoicePi downloaded the update, but the new app bundle was not ready to install."
+            }
+        }
+    }
+
     private let model = AppModel()
     private let recordingShortcutAction = ShortcutActionController()
     private let modeCycleShortcutAction = ShortcutActionController()
@@ -96,6 +108,7 @@ final class AppController: NSObject {
     private let remoteASRClient = RemoteASRClient()
     private let textInjector = TextInjector.shared
     private let updateChecker = GitHubReleaseUpdateChecker()
+    private let homebrewInstallationDetector = HomebrewInstallationDetector()
     private let appDefaults = UserDefaults.standard
     private let promptDestinationInspector = PromptDestinationInspector()
 
@@ -109,7 +122,11 @@ final class AppController: NSObject {
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
     private var inputMonitoringAuthorizationFollowUpTask: Task<Void, Never>?
     private var modeCycleRepeatTask: Task<Void, Never>?
+    private var startupHotkeyBootstrapTask: Task<Void, Never>?
     private var modeCycleSessionActive = false
+    private var activeDirectUpdateInstaller: AppUpdater?
+    private var installationSource: AppInstallationSource = .unknown
+    private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -132,6 +149,8 @@ final class AppController: NSObject {
     static let modeCycleShortcutRegistrationFailureMessage =
         "Mode-switch shortcut registration is unavailable. Choose a different shortcut."
 
+    static let startupHotkeyBootstrapRetryNanoseconds: UInt64 = 500_000_000
+    static let startupHotkeyBootstrapMaxAttempts = 6
     static let modeCycleRepeatDelayNanoseconds: UInt64 = 350_000_000
     static let modeCycleRepeatIntervalNanoseconds: UInt64 = 170_000_000
 
@@ -158,11 +177,16 @@ final class AppController: NSObject {
     }
 
     static func releaseAction(
+        shortcut: ActivationShortcut,
         isRecording: Bool,
         isStartingRecording: Bool,
         isProcessingRelease: Bool
     ) -> ReleaseAction {
-        .ignore
+        _ = shortcut
+        _ = isRecording
+        _ = isStartingRecording
+        _ = isProcessingRelease
+        return .ignore
     }
 
     static func shouldPresentUpdatePrompt(
@@ -187,6 +211,15 @@ final class AppController: NSObject {
             return true
         case .automatic:
             return false
+        }
+    }
+
+    static func updateDelivery(for installationSource: AppInstallationSource) -> AppUpdateDelivery {
+        switch installationSource {
+        case .homebrewManaged:
+            return .homebrew
+        case .directDownload, .unknown:
+            return .inAppInstaller
         }
     }
 
@@ -319,6 +352,22 @@ final class AppController: NSObject {
         )
     }
 
+    static func hotkeyMonitorFallbackPlanAfterRegistrationFailure(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: shortcutInjectionWarningMessage,
+            eventTapAccessibilityWarning: shortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: shortcutMonitoringFailureMessage,
+            preferRegisteredHotkey: false
+        )
+    }
+
     static func modeCycleShortcutMonitorPlan(
         shortcut: ActivationShortcut,
         inputMonitoringState: AuthorizationState,
@@ -340,13 +389,14 @@ final class AppController: NSObject {
         accessibilityState: AuthorizationState,
         registeredHotkeyAccessibilityWarning: String?,
         eventTapAccessibilityWarning: String?,
-        inputMonitoringFailureMessage: String
+        inputMonitoringFailureMessage: String,
+        preferRegisteredHotkey: Bool = true
     ) -> HotkeyMonitorPlan {
         guard !shortcut.isEmpty else {
             return HotkeyMonitorPlan(strategy: nil, statusMessage: nil)
         }
 
-        if shortcut.isRegisteredHotkeyCompatible {
+        if preferRegisteredHotkey, shortcut.isRegisteredHotkeyCompatible {
             let statusMessage = accessibilityState == .granted ? nil : registeredHotkeyAccessibilityWarning
             return HotkeyMonitorPlan(strategy: .registeredHotkey, statusMessage: statusMessage)
         }
@@ -490,7 +540,11 @@ final class AppController: NSObject {
             .store(in: &cancellables)
 
         speechRecorder.delegate = self
-        recordingShortcutAction.delegate = self
+        recordingShortcutAction.onPress = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.beginRecording()
+            }
+        }
         recordingShortcutAction.shortcut = model.activationShortcut
 
         modeCycleShortcutAction.onPress = { [weak self] in
@@ -504,9 +558,13 @@ final class AppController: NSObject {
         statusBarController.delegate = self
         statusBarController.start()
         self.statusBarController = statusBarController
+        applyUpdateExperience(.idle(source: .unknown))
+        bootstrapHotkeyMonitoring()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let source = await self.refreshInstallationSource(forceRefresh: true)
+            self.applyUpdateExperience(.idle(source: source))
             let launchPermissionPlan = Self.launchPermissionPlan(
                 activationShortcut: self.model.activationShortcut,
                 modeCycleShortcut: self.model.modeCycleShortcut,
@@ -528,7 +586,9 @@ final class AppController: NSObject {
         inputMonitoringAuthorizationFollowUpTask?.cancel()
         pendingErrorHideTask?.cancel()
         modeCycleRepeatTask?.cancel()
+        startupHotkeyBootstrapTask?.cancel()
         modeCycleRepeatTask = nil
+        startupHotkeyBootstrapTask = nil
         recordingShortcutAction.stop()
         modeCycleShortcutAction.stop()
 
@@ -551,10 +611,38 @@ final class AppController: NSObject {
         let autoHideDelay: UInt64? = modeCycleSessionActive ? nil : 1_100_000_000
         floatingPanelController.showModeSwitch(
             modeTitle: model.postProcessingMode.title,
+            refinementPromptTitle: model.resolvedPromptPreset().title,
             autoHideDelayNanoseconds: autoHideDelay
         )
         statusBarController?.refreshAll()
-        statusBarController?.setTransientStatus("Text processing: \(model.postProcessingMode.title)")
+        statusBarController?.setTransientStatus("Text processing: \(model.modeDisplayTitle(for: model.postProcessingMode))")
+    }
+
+    private func bootstrapHotkeyMonitoring() {
+        startupHotkeyBootstrapTask?.cancel()
+        let initialStatus = ensureHotkeyMonitorRunning()
+        guard initialStatus == Self.shortcutRegistrationFailureMessage
+            || initialStatus == Self.modeCycleShortcutRegistrationFailureMessage else {
+            return
+        }
+
+        startupHotkeyBootstrapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.startupHotkeyBootstrapTask = nil
+            }
+
+            for _ in 0..<Self.startupHotkeyBootstrapMaxAttempts {
+                try? await Task.sleep(nanoseconds: Self.startupHotkeyBootstrapRetryNanoseconds)
+                guard !Task.isCancelled else { return }
+
+                let status = self.ensureHotkeyMonitorRunning()
+                guard status == Self.shortcutRegistrationFailureMessage
+                    || status == Self.modeCycleShortcutRegistrationFailureMessage else {
+                    return
+                }
+            }
+        }
     }
 
     private func handleModeCycleShortcutPress() {
@@ -614,6 +702,7 @@ final class AppController: NSObject {
                     self.modeCycleSessionActive = false
                     self.floatingPanelController.showModeSwitch(
                         modeTitle: self.model.postProcessingMode.title,
+                        refinementPromptTitle: self.model.resolvedPromptPreset().title,
                         autoHideDelayNanoseconds: 220_000_000
                     )
                     self.modeCycleRepeatTask = nil
@@ -979,23 +1068,33 @@ final class AppController: NSObject {
         }
     }
 
-    private func ensureHotkeyMonitorRunning() {
+    @discardableResult
+    private func ensureHotkeyMonitorRunning() -> String? {
+        let inputMonitoringState = currentInputMonitoringAuthorizationState()
+        let accessibilityState = currentAccessibilityAuthorizationState(prompt: false)
         let activationPlan = Self.hotkeyMonitorPlan(
             shortcut: model.activationShortcut,
-            inputMonitoringState: currentInputMonitoringAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState
         )
         let cyclePlan = Self.modeCycleShortcutMonitorPlan(
             shortcut: model.modeCycleShortcut,
-            inputMonitoringState: currentInputMonitoringAuthorizationState(),
-            accessibilityState: currentAccessibilityAuthorizationState(prompt: false)
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState
         )
 
         let activationStatus = applyHotkeyMonitorPlan(
             activationPlan,
             actionController: recordingShortcutAction,
             registrationFailureMessage: Self.shortcutRegistrationFailureMessage,
-            monitoringFailureMessage: Self.shortcutMonitoringFailureMessage
+            monitoringFailureMessage: Self.shortcutMonitoringFailureMessage,
+            fallbackPlanAfterRegistrationFailure: inputMonitoringState == .granted
+                ? Self.hotkeyMonitorFallbackPlanAfterRegistrationFailure(
+                    shortcut: model.activationShortcut,
+                    inputMonitoringState: inputMonitoringState,
+                    accessibilityState: accessibilityState
+                )
+                : nil
         )
         let cycleStatus = applyHotkeyMonitorPlan(
             cyclePlan,
@@ -1010,16 +1109,29 @@ final class AppController: NSObject {
         } else if statusBarController != nil, model.errorState == nil {
             statusBarController?.setTransientStatus(nil)
         }
+        return statusMessage
     }
 
     private func applyHotkeyMonitorPlan(
         _ plan: HotkeyMonitorPlan,
         actionController: ShortcutActionController,
         registrationFailureMessage: String,
-        monitoringFailureMessage: String
+        monitoringFailureMessage: String,
+        fallbackPlanAfterRegistrationFailure: HotkeyMonitorPlan? = nil
     ) -> String? {
-        actionController.apply(
+        let status = actionController.apply(
             plan,
+            registrationFailureMessage: registrationFailureMessage,
+            monitoringFailureMessage: monitoringFailureMessage
+        )
+
+        guard status == registrationFailureMessage,
+              let fallbackPlanAfterRegistrationFailure else {
+            return status
+        }
+
+        return actionController.apply(
+            fallbackPlanAfterRegistrationFailure,
             registrationFailureMessage: registrationFailureMessage,
             monitoringFailureMessage: monitoringFailureMessage
         )
@@ -1207,35 +1319,58 @@ final class AppController: NSObject {
     }
 
     private func checkForUpdates(trigger: UpdateCheckTrigger) async -> String {
+        let source = await refreshInstallationSource()
+        applyUpdateExperience(.checking(source: source))
+
         do {
             let result = try await updateChecker.checkForUpdates(currentVersion: currentAppVersion())
             let statusText = AppUpdateCopy.statusText(for: result)
 
             switch result {
             case .updateAvailable(let release):
+                let delivery = Self.updateDelivery(for: source)
+                let phase = AppUpdateExperiencePhase.updateAvailable(
+                    release: release,
+                    delivery: delivery,
+                    source: source
+                )
+                applyUpdateExperience(
+                    phase,
+                    presentPanel: Self.shouldPresentUpdatePrompt(
+                        trigger: trigger,
+                        availableVersion: release.version,
+                        lastPromptedVersion: appDefaults.string(forKey: Self.lastPromptedUpdateVersionKey)
+                    )
+                )
                 if Self.shouldPresentUpdatePrompt(
                     trigger: trigger,
                     availableVersion: release.version,
                     lastPromptedVersion: appDefaults.string(forKey: Self.lastPromptedUpdateVersionKey)
                 ) {
                     appDefaults.set(release.version, forKey: Self.lastPromptedUpdateVersionKey)
-                    presentUpdatePrompt(for: release)
                 }
             case .upToDate(let currentVersion):
-                if Self.shouldPresentManualUpdateResultDialog(trigger: trigger, result: result) {
-                    presentInformationalUpdatePrompt(
-                        content: AppUpdateCopy.upToDatePromptContent(currentVersion: currentVersion)
-                    )
-                }
+                applyUpdateExperience(
+                    .upToDate(currentVersion: currentVersion, source: source),
+                    presentPanel: Self.shouldPresentManualUpdateResultDialog(trigger: trigger, result: result)
+                )
             }
 
             return statusText
         } catch {
             let message = "Update check failed: \(error.localizedDescription)"
             if trigger == .manual {
-                presentInformationalUpdatePrompt(
-                    content: AppUpdateCopy.failurePromptContent(message: message)
+                applyUpdateExperience(
+                    .failed(
+                        message: message,
+                        delivery: Self.updateDelivery(for: source),
+                        source: source,
+                        release: currentUpdateRelease()
+                    ),
+                    presentPanel: true
                 )
+            } else {
+                applyUpdateExperience(.idle(source: source))
             }
 
             switch trigger {
@@ -1247,47 +1382,198 @@ final class AppController: NSObject {
         }
     }
 
-    private func presentUpdatePrompt(for release: AppUpdateRelease) {
-        let content = AppUpdateCopy.promptContent(for: release)
-        NSApp.activate(ignoringOtherApps: true)
+    private func installDirectUpdate(for release: AppUpdateRelease) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let source = self.installationSource
 
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = content.messageText
-        alert.informativeText = content.informativeText
-        alert.addButton(withTitle: "Copy Homebrew Commands")
-        alert.addButton(withTitle: "Open Homebrew Guide")
-        alert.addButton(withTitle: "Later")
-
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(HomebrewUpdateInstructions.combinedCommands, forType: .string)
-            statusBarController?.setTransientStatus("Copied Homebrew update commands")
-        case .alertSecondButtonReturn:
-            if let url = URL(string: HomebrewUpdateInstructions.readmeInstallURL) {
-                NSWorkspace.shared.open(url)
-                statusBarController?.setTransientStatus("Opened Homebrew install guide")
+            do {
+                self.applyUpdateExperience(
+                    .downloading(release: release, source: source, progress: 0),
+                    presentPanel: true
+                )
+                try await self.installDirectUpdate(release: release, source: source)
+            } catch {
+                self.applyUpdateExperience(
+                    .failed(
+                        message: "Automatic install failed: \(error.localizedDescription)",
+                        delivery: .inAppInstaller,
+                        source: source,
+                        release: release
+                    ),
+                    presentPanel: true
+                )
             }
-        default:
-            break
         }
     }
 
-    private func presentInformationalUpdatePrompt(content: AppUpdatePromptContent) {
-        NSApp.activate(ignoringOtherApps: true)
+    private func installDirectUpdate(release: AppUpdateRelease, source: AppInstallationSource) async throws {
+        let updater = AppUpdater(
+            owner: "pi-dal",
+            repo: "VoicePi",
+            releasePrefix: "VoicePi",
+            interval: 365 * 24 * 60 * 60,
+            provider: VoicePiAppUpdateReleaseProvider()
+        )
+        activeDirectUpdateInstaller = updater
+        let stateObserver = updater.$state.sink { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.handleUpdaterState(state, release: release, source: source)
+            }
+        }
 
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = content.messageText
-        alert.informativeText = content.informativeText
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Open Homebrew Guide")
+        defer {
+            stateObserver.cancel()
+            activeDirectUpdateInstaller = nil
+        }
 
-        if alert.runModal() == .alertSecondButtonReturn,
-           let url = URL(string: HomebrewUpdateInstructions.readmeInstallURL) {
-            NSWorkspace.shared.open(url)
-            statusBarController?.setTransientStatus("Opened Homebrew install guide")
+        try await updater.checkThrowing()
+
+        let downloadedBundle = try await downloadedBundle(from: updater)
+        applyUpdateExperience(.installing(release: release, source: source), presentPanel: true)
+        try updater.installThrowing(downloadedBundle)
+    }
+
+    private func downloadedBundle(from updater: AppUpdater) async throws -> Bundle {
+        for _ in 0..<20 {
+            let currentState = await MainActor.run(body: { updater.state })
+            if case .downloaded(_, _, let bundle) = currentState {
+                return bundle
+            }
+
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        throw AppUpdateInstallError.downloadedBundleMissing
+    }
+
+    private func refreshInstallationSource(forceRefresh: Bool = false) async -> AppInstallationSource {
+        if forceRefresh || installationSource == .unknown {
+            installationSource = await homebrewInstallationDetector.detectInstallationSource()
+        }
+        return installationSource
+    }
+
+    private func applyUpdateExperience(_ phase: AppUpdateExperiencePhase, presentPanel: Bool = false) {
+        updateExperiencePhase = phase
+
+        let handler = makeUpdateExperienceActionHandler(for: phase)
+        let card = AppUpdateExperience.cardPresentation(for: phase)
+        statusBarController?.setAboutUpdateExperience(
+            card,
+            primaryAction: { handler(card.primaryAction.role) },
+            secondaryAction: card.secondaryAction.map { secondary in
+                { handler(secondary.role) }
+            }
+        )
+        statusBarController?.setTransientStatus(transientStatusText(for: phase))
+
+        if presentPanel, let panel = AppUpdateExperience.panelPresentation(for: phase) {
+            statusBarController?.presentUpdatePanel(panel, actionHandler: handler)
+        } else if case .idle = phase {
+            statusBarController?.dismissUpdatePanel()
+        }
+    }
+
+    private func makeUpdateExperienceActionHandler(
+        for phase: AppUpdateExperiencePhase
+    ) -> (AppUpdateActionRole) -> Void {
+        { [weak self] role in
+            guard let self else { return }
+
+            switch role {
+            case .check:
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    _ = await self.checkForUpdates(trigger: .manual)
+                }
+            case .install:
+                if case .updateAvailable(let release, let delivery, _) = phase, delivery == .inAppInstaller {
+                    self.installDirectUpdate(for: release)
+                }
+            case .openRelease:
+                if let release = self.release(from: phase) {
+                    NSWorkspace.shared.open(release.releasePageURL)
+                    self.statusBarController?.setTransientStatus("Opened VoicePi release page")
+                }
+            case .copyHomebrew:
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(HomebrewUpdateInstructions.combinedCommands, forType: .string)
+                self.statusBarController?.setTransientStatus("Copied Homebrew update commands")
+            case .openHomebrewGuide:
+                if let url = URL(string: HomebrewUpdateInstructions.readmeInstallURL) {
+                    NSWorkspace.shared.open(url)
+                    self.statusBarController?.setTransientStatus("Opened Homebrew install guide")
+                }
+            case .retry:
+                switch phase {
+                case .failed(_, let delivery, _, let release) where delivery == .inAppInstaller && release != nil:
+                    self.installDirectUpdate(for: release!)
+                default:
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        _ = await self.checkForUpdates(trigger: .manual)
+                    }
+                }
+            case .dismiss, .acknowledge:
+                self.statusBarController?.dismissUpdatePanel()
+            }
+        }
+    }
+
+    private func release(from phase: AppUpdateExperiencePhase) -> AppUpdateRelease? {
+        switch phase {
+        case .updateAvailable(let release, _, _):
+            return release
+        case .downloading(let release, _, _):
+            return release
+        case .installing(let release, _):
+            return release
+        case .failed(_, _, _, let release):
+            return release
+        case .idle, .checking, .upToDate:
+            return nil
+        }
+    }
+
+    private func currentUpdateRelease() -> AppUpdateRelease? {
+        release(from: updateExperiencePhase)
+    }
+
+    private func transientStatusText(for phase: AppUpdateExperiencePhase) -> String? {
+        switch phase {
+        case .idle:
+            return nil
+        case .checking:
+            return "Checking GitHub Releases…"
+        case .updateAvailable(let release, _, _):
+            return "Update available: VoicePi \(release.version)"
+        case .downloading(let release, _, _):
+            return "Downloading VoicePi \(release.version)…"
+        case .installing:
+            return "Installing VoicePi update…"
+        case .upToDate(let currentVersion, _):
+            return "VoicePi \(currentVersion) is up to date."
+        case .failed(let message, _, _, _):
+            return message
+        }
+    }
+
+    private func handleUpdaterState(
+        _ state: AppUpdater.UpdateState,
+        release: AppUpdateRelease,
+        source: AppInstallationSource
+    ) {
+        switch state {
+        case .downloading(_, _, let fraction):
+            applyUpdateExperience(
+                .downloading(release: release, source: source, progress: fraction),
+                presentPanel: true
+            )
+        case .downloaded:
+            applyUpdateExperience(.installing(release: release, source: source), presentPanel: true)
+        case .none, .newVersionDetected:
+            break
         }
     }
 
@@ -1305,6 +1591,7 @@ extension AppController: ShortcutMonitorDelegate {
             guard let self else { return }
 
             switch Self.releaseAction(
+                shortcut: self.model.activationShortcut,
                 isRecording: self.speechRecorder.isRecording,
                 isStartingRecording: self.isStartingRecording,
                 isProcessingRelease: self.isProcessingRelease

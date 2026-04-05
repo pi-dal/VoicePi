@@ -64,6 +64,7 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func showRecording(transcript: String = "") {
+        contentController.loadViewIfNeeded()
         autoHideTask?.cancel()
         presentationStyle = .banner
         contentController.setPhase(.recording)
@@ -78,6 +79,7 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func showRefining(transcript: String) {
+        contentController.loadViewIfNeeded()
         autoHideTask?.cancel()
         presentationStyle = .banner
         contentController.setPhase(.refining)
@@ -86,13 +88,18 @@ final class FloatingPanelController: NSWindowController {
         presentIfNeeded()
     }
 
-    func showModeSwitch(modeTitle: String, autoHideDelayNanoseconds: UInt64? = 1_100_000_000) {
+    func showModeSwitch(
+        modeTitle: String,
+        refinementPromptTitle: String? = nil,
+        autoHideDelayNanoseconds: UInt64? = 1_100_000_000
+    ) {
+        contentController.loadViewIfNeeded()
         autoHideTask?.cancel()
         autoHideTask = nil
         isModeSwitchAutoHideScheduled = false
         presentationStyle = .hud
         contentController.setPhase(.modeSwitch)
-        contentController.updateModeSwitchTitle(modeTitle)
+        contentController.updateModeSwitchTitle(modeTitle, refinementPromptTitle: refinementPromptTitle)
         presentIfNeeded()
 
         guard let autoHideDelayNanoseconds else {
@@ -141,6 +148,7 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func reset() {
+        contentController.loadViewIfNeeded()
         autoHideTask?.cancel()
         autoHideTask = nil
         isModeSwitchAutoHideScheduled = false
@@ -166,7 +174,9 @@ final class FloatingPanelController: NSWindowController {
 
         panel.alphaValue = 0
         panel.setFrame(targetFrame.insetBy(dx: -10, dy: -6), display: false)
+        panel.contentView?.layoutSubtreeIfNeeded()
         panel.orderFrontRegardless()
+        panel.contentView?.layoutSubtreeIfNeeded()
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.35
@@ -236,6 +246,7 @@ private final class FloatingPanelContentViewController: NSViewController {
     private let stackView = NSStackView()
     private let modeSwitchContainer = NSStackView()
     private let waveformView = WaveformBarsView(frame: .zero)
+    private let refiningIndicatorView = RefiningDotsView(frame: .zero)
     private let transcriptLabel = NSTextField(labelWithString: "")
     private let modeCapsules: [ModeSwitchCapsuleView] = [
         ModeSwitchCapsuleView(title: "Disabled"),
@@ -244,9 +255,14 @@ private final class FloatingPanelContentViewController: NSViewController {
     ]
     private let transcriptFadeMask = CAGradientLayer()
     private var heightConstraint: NSLayoutConstraint?
+    private var bannerLayoutConstraints: [NSLayoutConstraint] = []
+    private var modeSwitchLayoutConstraints: [NSLayoutConstraint] = []
 
     private(set) var preferredPanelWidth: CGFloat = 260
     private var phase: Phase = .recording
+    private let compactBannerWidth: CGFloat = 260
+    private let recordingIndicatorSpacing: CGFloat = 14
+    private let refiningIndicatorSpacing: CGFloat = 22
     private let transcriptFadeWidth: CGFloat = 28
     private let maximumVisibleTranscriptWidth: CGFloat = 560
     private let transcriptUpdateAnimationKey = "voicepi.transcriptUpdate"
@@ -287,13 +303,21 @@ private final class FloatingPanelContentViewController: NSViewController {
         transcriptLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         waveformView.translatesAutoresizingMaskIntoConstraints = false
+        waveformView.identifier = NSUserInterfaceItemIdentifier("voicepi-recording-waveform")
         waveformView.setContentHuggingPriority(.required, for: .horizontal)
         waveformView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        refiningIndicatorView.translatesAutoresizingMaskIntoConstraints = false
+        refiningIndicatorView.identifier = NSUserInterfaceItemIdentifier("voicepi-refining-indicator")
+        refiningIndicatorView.isHidden = true
+        refiningIndicatorView.setContentHuggingPriority(.required, for: .horizontal)
+        refiningIndicatorView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.orientation = .horizontal
-        stackView.spacing = 14
+        stackView.spacing = recordingIndicatorSpacing
         stackView.alignment = .centerY
+        stackView.detachesHiddenViews = true
         stackView.edgeInsets = NSEdgeInsets(top: 12, left: 18, bottom: 12, right: 18)
 
         modeSwitchContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -301,6 +325,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         modeSwitchContainer.spacing = 12
         modeSwitchContainer.alignment = .centerY
         modeSwitchContainer.distribution = .fillEqually
+        modeSwitchContainer.detachesHiddenViews = true
         modeSwitchContainer.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         modeSwitchContainer.isHidden = true
 
@@ -309,7 +334,10 @@ private final class FloatingPanelContentViewController: NSViewController {
         blurView.addSubview(modeSwitchContainer)
 
         stackView.addArrangedSubview(waveformView)
+        stackView.addArrangedSubview(refiningIndicatorView)
         stackView.addArrangedSubview(transcriptLabel)
+        stackView.setCustomSpacing(recordingIndicatorSpacing, after: waveformView)
+        stackView.setCustomSpacing(refiningIndicatorSpacing, after: refiningIndicatorView)
         modeCapsules.forEach(modeSwitchContainer.addArrangedSubview)
 
         NSLayoutConstraint.activate([
@@ -318,19 +346,24 @@ private final class FloatingPanelContentViewController: NSViewController {
             blurView.topAnchor.constraint(equalTo: rootView.topAnchor),
             blurView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
+            waveformView.widthAnchor.constraint(equalToConstant: 44),
+            waveformView.heightAnchor.constraint(equalToConstant: 32),
+            refiningIndicatorView.widthAnchor.constraint(equalToConstant: 44),
+            refiningIndicatorView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        bannerLayoutConstraints = [
             stackView.leadingAnchor.constraint(equalTo: blurView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: blurView.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: blurView.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: blurView.bottomAnchor),
-
+            stackView.bottomAnchor.constraint(equalTo: blurView.bottomAnchor)
+        ]
+        modeSwitchLayoutConstraints = [
             modeSwitchContainer.leadingAnchor.constraint(equalTo: blurView.leadingAnchor),
             modeSwitchContainer.trailingAnchor.constraint(equalTo: blurView.trailingAnchor),
             modeSwitchContainer.topAnchor.constraint(equalTo: blurView.topAnchor),
-            modeSwitchContainer.bottomAnchor.constraint(equalTo: blurView.bottomAnchor),
-
-            waveformView.widthAnchor.constraint(equalToConstant: 44),
-            waveformView.heightAnchor.constraint(equalToConstant: 32),
-        ])
+            modeSwitchContainer.bottomAnchor.constraint(equalTo: blurView.bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(bannerLayoutConstraints)
 
         let heightConstraint = rootView.heightAnchor.constraint(equalToConstant: 56)
         heightConstraint.isActive = true
@@ -344,7 +377,10 @@ private final class FloatingPanelContentViewController: NSViewController {
 
     func setPhase(_ phase: Phase) {
         self.phase = phase
-        waveformView.isHidden = phase == .modeSwitch
+        waveformView.isHidden = phase != .recording
+        refiningIndicatorView.isHidden = phase != .refining
+        refiningIndicatorView.setAnimating(phase == .refining)
+        applyLayout(for: phase)
         stackView.isHidden = phase == .modeSwitch
         modeSwitchContainer.isHidden = phase != .modeSwitch
         transcriptLabel.alignment = .left
@@ -368,8 +404,8 @@ private final class FloatingPanelContentViewController: NSViewController {
         recalculatePreferredWidth()
     }
 
-    func updateModeSwitchTitle(_ title: String) {
-        updateModeSelection(title)
+    func updateModeSwitchTitle(_ title: String, refinementPromptTitle: String? = nil) {
+        updateModeSelection(title, refinementPromptTitle: refinementPromptTitle)
         recalculatePreferredWidth()
     }
 
@@ -380,6 +416,9 @@ private final class FloatingPanelContentViewController: NSViewController {
     func resetForNextSession() {
         phase = .recording
         transcriptLabel.stringValue = ""
+        waveformView.isHidden = false
+        refiningIndicatorView.isHidden = true
+        refiningIndicatorView.setAnimating(false)
         waveformView.update(level: 0.02)
         updateTranscriptFadeMask()
         recalculatePreferredWidth()
@@ -397,14 +436,19 @@ private final class FloatingPanelContentViewController: NSViewController {
         case .refining:
             setTranscriptText("Refining...", animated: false)
         case .modeSwitch:
-            updateModeSelection(currentText.isEmpty ? "Disabled" : currentText)
+            updateModeSelection(currentText.isEmpty ? "Disabled" : currentText, refinementPromptTitle: nil)
         }
 
         recalculatePreferredWidth()
     }
 
-    private func updateModeSelection(_ title: String) {
-        modeCapsules.forEach { $0.setSelected($0.title == title, animated: view.window?.isVisible == true) }
+    private func updateModeSelection(_ title: String, refinementPromptTitle: String?) {
+        modeCapsules.forEach { capsule in
+            if capsule.title == PostProcessingMode.refinement.title {
+                capsule.setSubtitle(refinementPromptTitle ?? "Polish")
+            }
+            capsule.setSelected(capsule.title == title, animated: view.window?.isVisible == true)
+        }
     }
 
     private func setTranscriptText(_ text: String, animated: Bool) {
@@ -424,15 +468,28 @@ private final class FloatingPanelContentViewController: NSViewController {
     private func recalculatePreferredWidth() {
         let measuredTextWidth = measuredTranscriptWidth()
         switch phase {
-        case .recording, .refining:
+        case .recording:
             let elasticTextWidth = max(160, min(560, measuredTextWidth + 8))
             preferredPanelWidth = 18 + 44 + 14 + elasticTextWidth + 18
+            heightConstraint?.constant = 56
+        case .refining:
+            preferredPanelWidth = compactBannerWidth
             heightConstraint?.constant = 56
         case .modeSwitch:
             preferredPanelWidth = 452
             heightConstraint?.constant = 136
         }
         widthDidChange?(preferredPanelWidth)
+    }
+
+    private func applyLayout(for phase: Phase) {
+        if phase == .modeSwitch {
+            NSLayoutConstraint.deactivate(bannerLayoutConstraints)
+            NSLayoutConstraint.activate(modeSwitchLayoutConstraints)
+        } else {
+            NSLayoutConstraint.deactivate(modeSwitchLayoutConstraints)
+            NSLayoutConstraint.activate(bannerLayoutConstraints)
+        }
     }
 
     private func shouldAnimateTranscriptUpdate(to text: String) -> Bool {
@@ -503,6 +560,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         blurView.layer?.borderColor = palette.borderColor.cgColor
         transcriptLabel.textColor = palette.textColor
         waveformView.applyAppearance(barColor: palette.waveformColor)
+        refiningIndicatorView.applyAppearance(dotColor: palette.waveformColor)
         modeCapsules.forEach { $0.applyPalette(palette) }
     }
 }
@@ -546,6 +604,8 @@ final class ModeSwitchCapsuleView: NSView {
         case "Refinement": "Polish"
         default: "Convert"
         }
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.maximumNumberOfLines = 1
 
         let stack = NSStackView(views: [titleLabel, subtitleLabel])
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -573,6 +633,10 @@ final class ModeSwitchCapsuleView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func setSubtitle(_ subtitle: String) {
+        subtitleLabel.stringValue = subtitle
     }
 
     fileprivate func applyPalette(_ palette: FloatingPanelPalette) {
@@ -752,6 +816,113 @@ private final class WaveformBarsView: NSView {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             bar.frame = CGRect(x: x, y: y, width: barWidth, height: finalHeight)
+            CATransaction.commit()
+        }
+    }
+}
+
+private final class RefiningDotsView: NSView {
+    private let dotLayers: [CALayer] = (0..<5).map { _ in CALayer() }
+    private let animationKey = "voicepi.refiningDotsPulse"
+    private var dotColor = NSColor.white.withAlphaComponent(0.95)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override func layout() {
+        super.layout()
+        render()
+    }
+
+    func applyAppearance(dotColor: NSColor) {
+        self.dotColor = dotColor
+        dotLayers.forEach { $0.backgroundColor = dotColor.cgColor }
+    }
+
+    func setAnimating(_ isAnimating: Bool) {
+        if isAnimating {
+            startAnimating()
+        } else {
+            stopAnimating()
+        }
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer = CALayer()
+        layer?.masksToBounds = false
+
+        for dot in dotLayers {
+            dot.backgroundColor = dotColor.cgColor
+            dot.masksToBounds = true
+            layer?.addSublayer(dot)
+        }
+    }
+
+    private func render() {
+        let availableWidth = bounds.width
+        let availableHeight = bounds.height
+        guard availableWidth > 0, availableHeight > 0 else { return }
+
+        let dotDiameter = min(availableHeight * 0.56, 9)
+        let totalDotsWidth = dotDiameter * CGFloat(dotLayers.count)
+        let spacing = max(4, (availableWidth - totalDotsWidth) / CGFloat(max(dotLayers.count - 1, 1)))
+        let occupiedWidth = totalDotsWidth + spacing * CGFloat(dotLayers.count - 1)
+        let originX = max(0, (availableWidth - occupiedWidth) / 2)
+        let originY = (availableHeight - dotDiameter) / 2
+
+        for (index, dot) in dotLayers.enumerated() {
+            let x = originX + CGFloat(index) * (dotDiameter + spacing)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            dot.frame = CGRect(x: x, y: originY, width: dotDiameter, height: dotDiameter)
+            dot.cornerRadius = dotDiameter / 2
+            CATransaction.commit()
+        }
+    }
+
+    private func startAnimating() {
+        for (index, dot) in dotLayers.enumerated() {
+            guard dot.animation(forKey: animationKey) == nil else { continue }
+
+            let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+            scale.values = [0.78, 1.0, 0.78]
+            scale.keyTimes = [0, 0.5, 1]
+
+            let opacity = CAKeyframeAnimation(keyPath: "opacity")
+            opacity.values = [0.38, 1.0, 0.38]
+            opacity.keyTimes = [0, 0.5, 1]
+
+            let group = CAAnimationGroup()
+            group.animations = [scale, opacity]
+            group.duration = 0.92
+            group.repeatCount = .infinity
+            group.beginTime = CACurrentMediaTime() + Double(index) * 0.08
+            group.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+            group.isRemovedOnCompletion = false
+
+            dot.add(group, forKey: animationKey)
+        }
+    }
+
+    private func stopAnimating() {
+        for dot in dotLayers {
+            dot.removeAnimation(forKey: animationKey)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            dot.opacity = 1
+            dot.transform = CATransform3DIdentity
             CATransaction.commit()
         }
     }

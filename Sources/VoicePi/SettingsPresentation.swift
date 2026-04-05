@@ -37,6 +37,7 @@ struct AboutSectionPresentation: Equatable {
     let websiteDisplay: String
     let githubDisplay: String
     let xDisplay: String
+    let repositoryLinkDisplay: String
 }
 
 enum PermissionsCopy {
@@ -83,7 +84,8 @@ enum SettingsPresentation {
             author: AboutProfile.author,
             websiteDisplay: AboutProfile.websiteDisplay,
             githubDisplay: AboutProfile.githubDisplay,
-            xDisplay: AboutProfile.xDisplay
+            xDisplay: AboutProfile.xDisplay,
+            repositoryLinkDisplay: AboutProfile.repositoryLinkDisplay
         )
     }
 
