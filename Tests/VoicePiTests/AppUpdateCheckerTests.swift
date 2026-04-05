@@ -44,8 +44,8 @@ struct AppUpdateCheckerTests {
                   "prerelease": false,
                   "assets": [
                     {
-                      "name": "VoicePi-macOS.zip",
-                      "browser_download_url": "https://github.com/pi-dal/VoicePi/releases/download/v1.4.0/VoicePi-macOS.zip"
+                      "name": "VoicePi-1.4.0.zip",
+                      "browser_download_url": "https://github.com/pi-dal/VoicePi/releases/download/v1.4.0/VoicePi-1.4.0.zip"
                     }
                   ]
                 }
@@ -62,7 +62,7 @@ struct AppUpdateCheckerTests {
                 .init(
                     version: "1.4.0",
                     releasePageURL: URL(string: "https://github.com/pi-dal/VoicePi/releases/tag/v1.4.0")!,
-                    assetURL: URL(string: "https://github.com/pi-dal/VoicePi/releases/download/v1.4.0/VoicePi-macOS.zip")!,
+                    assetURL: URL(string: "https://github.com/pi-dal/VoicePi/releases/download/v1.4.0/VoicePi-1.4.0.zip")!,
                     notes: "Bug fixes and polish"
                 )
             )
@@ -122,12 +122,18 @@ struct AppUpdateCheckerTests {
             for: .init(
                 version: "1.4.0",
                 releasePageURL: URL(string: "https://github.com/pi-dal/VoicePi/releases/tag/v1.4.0")!,
-                assetURL: URL(string: "https://github.com/pi-dal/VoicePi/releases/download/v1.4.0/VoicePi-macOS.zip")!,
+                assetURL: URL(string: "https://github.com/pi-dal/VoicePi/releases/download/v1.4.0/VoicePi-1.4.0.zip")!,
                 notes: "Bug fixes"
-            )
+            ),
+            delivery: .homebrew
         )
 
         #expect(content.informativeText.contains("https://github.com/pi-dal/VoicePi#install-with-homebrew"))
+    }
+
+    @Test
+    func releaseAssetNamingUsesVersionedZipName() {
+        #expect(ReleaseAssetNaming.zipAssetName(version: "1.4.0") == "VoicePi-1.4.0.zip")
     }
 }
 

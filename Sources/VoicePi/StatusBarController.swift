@@ -193,7 +193,6 @@ final class StatusBarController: NSObject {
         case repository
         case builtBy
         case inspiredBy
-        case checkForUpdates
     }
 
     weak var delegate: StatusBarControllerDelegate?
@@ -212,24 +211,42 @@ final class StatusBarController: NSObject {
     private var outputLanguageItems: [SupportedLanguage: NSMenuItem] = [:]
 
     private var settingsWindowController: SettingsWindowController?
+    private var updatePanelController: AppUpdatePanelController?
+    private var aboutUpdatePresentation = AppUpdateExperience.cardPresentation(for: .idle(source: .unknown))
+    private var aboutUpdatePrimaryAction: (() -> Void)?
+    private var aboutUpdateSecondaryAction: (() -> Void)?
+    private var updatePanelActionHandler: ((AppUpdateActionRole) -> Void)?
 
     private var isRecording = false
     private var transientStatus: String?
 
     static let aboutOverviewRowOrder: [AboutOverviewRow] = [
-        .repository,
         .builtBy,
-        .inspiredBy,
-        .checkForUpdates
+        .inspiredBy
     ]
 
     static let primaryMenuActionTitles = [
         "Language",
         "Text Processing",
+        "Refinement Prompt",
         "Check for Updates…",
         "Settings…",
         "Quit VoicePi"
     ]
+
+    static func disabledRefinementPromptTitle(_ title: String) -> NSAttributedString {
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 1
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+        return NSAttributedString(
+            string: title,
+            attributes: [
+                .foregroundColor: NSColor.disabledControlTextColor,
+                .shadow: shadow
+            ]
+        )
+    }
 
     init(model: AppModel) {
         self.model = model
@@ -241,6 +258,42 @@ final class StatusBarController: NSObject {
 
     func start() {
         refreshAll()
+    }
+
+    func setAboutUpdateExperience(
+        _ presentation: AppUpdateCardPresentation,
+        primaryAction: (() -> Void)? = nil,
+        secondaryAction: (() -> Void)? = nil
+    ) {
+        aboutUpdatePresentation = presentation
+        aboutUpdatePrimaryAction = primaryAction
+        aboutUpdateSecondaryAction = secondaryAction
+        settingsWindowController?.setAboutUpdatePresentation(
+            presentation,
+            primaryAction: primaryAction,
+            secondaryAction: secondaryAction
+        )
+    }
+
+    func presentUpdatePanel(
+        _ presentation: AppUpdatePanelPresentation,
+        actionHandler: @escaping (AppUpdateActionRole) -> Void
+    ) {
+        updatePanelActionHandler = actionHandler
+        if updatePanelController == nil {
+            updatePanelController = AppUpdatePanelController()
+        }
+        updatePanelController?.interfaceAppearance = model.interfaceTheme.appearance
+        updatePanelController?.present(
+            presentation,
+            actionHandler: { [weak self] role in
+                self?.updatePanelActionHandler?(role)
+            }
+        )
+    }
+
+    func dismissUpdatePanel() {
+        updatePanelController?.dismissPanel()
     }
 
     func setRecording(_ recording: Bool) {
@@ -267,6 +320,11 @@ final class StatusBarController: NSObject {
             settingsWindowController = SettingsWindowController(
                 model: model,
                 delegate: self
+            )
+            settingsWindowController?.setAboutUpdatePresentation(
+                aboutUpdatePresentation,
+                primaryAction: aboutUpdatePrimaryAction,
+                secondaryAction: aboutUpdateSecondaryAction
             )
         }
 
@@ -457,8 +515,16 @@ final class StatusBarController: NSObject {
         llmMenu.removeAllItems()
 
         for mode in PostProcessingMode.allCases {
+            let title: String
+            if mode == .refinement {
+                let promptTitle = model.resolvedPromptPreset().title
+                title = "\(mode.title) (\(promptTitle))"
+            } else {
+                title = mode.title
+            }
+
             let item = NSMenuItem(
-                title: mode.title,
+                title: title,
                 action: #selector(selectPostProcessingModeFromMenu(_:)),
                 keyEquivalent: ""
             )
@@ -509,6 +575,51 @@ final class StatusBarController: NSObject {
         )
         modelSummary.isEnabled = false
         llmMenu.addItem(modelSummary)
+
+        llmMenu.addItem(.separator())
+
+        let promptRoot = NSMenuItem(title: "Refinement Prompt", action: nil, keyEquivalent: "")
+        let promptMenu = NSMenu(title: "Refinement Prompt")
+        promptRoot.submenu = promptMenu
+        llmMenu.addItem(promptRoot)
+        rebuildRefinementPromptMenu(promptMenu)
+    }
+
+    private func rebuildRefinementPromptMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let canSelectPrompt = model.postProcessingMode == .refinement
+        let currentSelection = model.promptWorkspace.activeSelection
+        let allPresets = [PromptPreset.builtInDefault] + model.starterPromptPresets()
+            + model.promptWorkspace.userPresets.sorted(by: {
+                $0.resolvedTitle.localizedCaseInsensitiveCompare($1.resolvedTitle) == .orderedAscending
+            })
+
+        for preset in allPresets {
+            let item = NSMenuItem(
+                title: preset.resolvedTitle,
+                action: #selector(selectRefinementPromptFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = preset.id
+            switch currentSelection.mode {
+            case .builtInDefault:
+                item.state = preset.id == PromptPreset.builtInDefaultID ? .on : .off
+            case .preset:
+                item.state = preset.id == currentSelection.presetID ? .on : .off
+            }
+            item.isEnabled = canSelectPrompt
+            menu.addItem(item)
+        }
+
+        if !canSelectPrompt {
+            for item in menu.items {
+                item.state = .off
+                item.indentationLevel = 1
+                item.attributedTitle = Self.disabledRefinementPromptTitle(item.title)
+            }
+        }
     }
 
     private func refreshLanguageMenuState() {
@@ -625,6 +736,24 @@ final class StatusBarController: NSObject {
     }
 
     @objc
+    private func selectRefinementPromptFromMenu(_ sender: NSMenuItem) {
+        guard model.postProcessingMode == .refinement else { return }
+        guard let presetID = sender.representedObject as? String else { return }
+
+        if presetID == PromptPreset.builtInDefaultID {
+            model.setActivePromptSelection(.builtInDefault)
+        } else {
+            model.setActivePromptSelection(.preset(presetID))
+        }
+
+        refreshLLMMenuState()
+        refreshStatusSummary()
+        settingsWindowController?.reloadFromModel()
+        let title = model.resolvedPromptPreset().title
+        setTransientStatus("Prompt: \(title)")
+    }
+
+    @objc
     private func openSettings() {
         showSettingsWindow(section: .home)
     }
@@ -640,8 +769,6 @@ final class StatusBarController: NSObject {
             guard let self else { return }
             let status = await delegate?.statusBarControllerDidRequestCheckForUpdates(self)
                 ?? "No update handler is available."
-            self.settingsWindowController?.setAboutUpdateStatus(status)
-            self.settingsWindowController?.reloadFromModel()
             self.setTransientStatus(status)
         }
     }
@@ -689,6 +816,10 @@ enum SettingsLayoutMetrics {
     static let contentMinWidth: CGFloat = 660
     static let contentMaxWidth: CGFloat = 792
     static let contentMinHeight: CGFloat = 360
+    static let updatePanelWidth: CGFloat = 436
+    static let updatePanelMinHeight: CGFloat = 408
+    static let updatePanelNotesHeight: CGFloat = 120
+    static let updatePanelOuterInset: CGFloat = 18
 }
 
 enum AboutProfile {
@@ -697,6 +828,7 @@ enum AboutProfile {
     static let websiteURL = "https://pi-dal.com"
     static let githubDisplay = "@pi-dal"
     static let githubURL = "https://github.com/pi-dal"
+    static let repositoryLinkDisplay = "VoicePi"
     static let repositoryDisplay = "VoicePi"
     static let repositoryURL = "https://github.com/pi-dal/VoicePi"
     static let inspirationAuthorDisplay = "yetone"
@@ -761,7 +893,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     enum PromptBindingEntryAction {
         case createFromDefault
-        case duplicateStarter
+        case createFromStarter
         case editUser
     }
 
@@ -803,16 +935,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let aboutVersionLabel = NSTextField(labelWithString: "")
     private let aboutBuildLabel = NSTextField(labelWithString: "")
     private let aboutAuthorLabel = NSTextField(labelWithString: "")
+    private let aboutRepositoryLabel = NSTextField(labelWithString: "")
     private let aboutWebsiteLabel = NSTextField(labelWithString: "")
     private let aboutGitHubLabel = NSTextField(labelWithString: "")
     private let aboutXLabel = NSTextField(labelWithString: "")
-    private lazy var aboutCheckForUpdatesButton = StyledSettingsButton(
+    private let aboutUpdateTitleLabel = NSTextField(labelWithString: "")
+    private let aboutUpdateSummaryLabel = NSTextField(labelWithString: "")
+    private let aboutUpdateStatusLabel = NSTextField(labelWithString: "")
+    private let aboutUpdateSourceLabel = NSTextField(labelWithString: "")
+    private let aboutUpdateStrategyLabel = NSTextField(labelWithString: "")
+    private let aboutUpdateProgressLabel = NSTextField(labelWithString: "")
+    private let aboutUpdateProgressIndicator = NSProgressIndicator()
+    private lazy var aboutUpdatePrimaryButton = StyledSettingsButton(
         title: "Check for Updates",
         role: .primary,
         target: self,
-        action: #selector(checkForUpdates)
+        action: #selector(handleAboutUpdatePrimaryAction)
     )
-    private let aboutUpdateStatusLabel = NSTextField(labelWithString: "")
+    private lazy var aboutUpdateSecondaryButton = StyledSettingsButton(
+        title: "View Release",
+        role: .secondary,
+        target: self,
+        action: #selector(handleAboutUpdateSecondaryAction)
+    )
     private let interfaceThemeControl = NSSegmentedControl()
 
     private let baseURLField = NSTextField(string: "")
@@ -837,12 +982,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         role: .secondary,
         target: self,
         action: #selector(createPromptPreset)
-    )
-    private lazy var duplicatePromptButton = StyledSettingsButton(
-        title: "Duplicate",
-        role: .secondary,
-        target: self,
-        action: #selector(duplicatePromptPreset)
     )
     private lazy var promptBindingsButton = StyledSettingsButton(
         title: Self.promptBindingsButtonTitle,
@@ -874,7 +1013,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private var sectionButtons: [SettingsSection: NSButton] = [:]
     private var currentSection: SettingsSection = .home
-    private var aboutUpdateStatusText = "Use Homebrew for install and upgrades."
+    private var aboutUpdatePresentation = AppUpdateExperience.cardPresentation(for: .idle(source: .unknown))
+    private var aboutUpdatePrimaryAction: (() -> Void)?
+    private var aboutUpdateSecondaryAction: (() -> Void)?
     private var promptLibrary: PromptLibrary?
     private var promptLibraryLoadError: String?
     private var promptWorkspaceDraft = PromptWorkspaceSettings()
@@ -929,9 +1070,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         selectSection(section)
     }
 
-    func setAboutUpdateStatus(_ text: String) {
-        aboutUpdateStatusText = text
-        aboutUpdateStatusLabel.stringValue = text
+    func setAboutUpdatePresentation(
+        _ presentation: AppUpdateCardPresentation,
+        primaryAction: (() -> Void)? = nil,
+        secondaryAction: (() -> Void)? = nil
+    ) {
+        aboutUpdatePresentation = presentation
+        aboutUpdatePrimaryAction = primaryAction
+        aboutUpdateSecondaryAction = secondaryAction
+        applyAboutUpdatePresentation()
     }
 
     func reloadFromModel() {
@@ -941,6 +1088,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshHomeSection()
         refreshASRSection()
         refreshLLMSection()
+    }
+
+    @objc
+    private func handleAboutUpdatePrimaryAction() {
+        aboutUpdatePrimaryAction?()
+    }
+
+    @objc
+    private func handleAboutUpdateSecondaryAction() {
+        aboutUpdateSecondaryAction?()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -1299,7 +1456,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let promptActionsRow = makeButtonGroup([
             editPromptButton,
             newPromptButton,
-            duplicatePromptButton,
             promptBindingsButton,
             deletePromptButton,
             resolvedPromptPreviewButton
@@ -1355,6 +1511,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         aboutBuildLabel.alignment = .left
         aboutAuthorLabel.font = .systemFont(ofSize: 13)
         aboutAuthorLabel.alignment = .left
+        aboutRepositoryLabel.font = .systemFont(ofSize: 13)
+        aboutRepositoryLabel.alignment = .left
+        aboutRepositoryLabel.lineBreakMode = .byTruncatingTail
         aboutWebsiteLabel.font = .systemFont(ofSize: 13)
         aboutWebsiteLabel.alignment = .left
         aboutWebsiteLabel.lineBreakMode = .byTruncatingTail
@@ -1364,12 +1523,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         aboutXLabel.font = .systemFont(ofSize: 13)
         aboutXLabel.alignment = .left
         aboutXLabel.lineBreakMode = .byTruncatingTail
-        aboutUpdateStatusLabel.font = .systemFont(ofSize: 12)
-        aboutUpdateStatusLabel.alignment = .left
+        aboutUpdateTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        aboutUpdateSummaryLabel.font = .systemFont(ofSize: 12.5)
+        aboutUpdateSummaryLabel.textColor = .secondaryLabelColor
+        aboutUpdateSummaryLabel.lineBreakMode = .byWordWrapping
+        aboutUpdateSummaryLabel.maximumNumberOfLines = 0
+        aboutUpdateStatusLabel.font = .systemFont(ofSize: 11.5, weight: .semibold)
         aboutUpdateStatusLabel.textColor = .secondaryLabelColor
-        aboutUpdateStatusLabel.lineBreakMode = .byWordWrapping
-        aboutUpdateStatusLabel.maximumNumberOfLines = 4
-        aboutCheckForUpdatesButton.heightAnchor.constraint(
+        aboutUpdateSourceLabel.font = .systemFont(ofSize: 12)
+        aboutUpdateSourceLabel.textColor = .secondaryLabelColor
+        aboutUpdateStrategyLabel.font = .systemFont(ofSize: 12)
+        aboutUpdateStrategyLabel.textColor = .secondaryLabelColor
+        aboutUpdateStrategyLabel.lineBreakMode = .byWordWrapping
+        aboutUpdateStrategyLabel.maximumNumberOfLines = 0
+        aboutUpdateProgressLabel.font = .systemFont(ofSize: 11.5)
+        aboutUpdateProgressLabel.textColor = .tertiaryLabelColor
+        aboutUpdateProgressIndicator.isIndeterminate = false
+        aboutUpdateProgressIndicator.minValue = 0
+        aboutUpdateProgressIndicator.maxValue = 1
+        aboutUpdateProgressIndicator.controlSize = .small
+        aboutUpdatePrimaryButton.heightAnchor.constraint(
+            equalToConstant: SettingsLayoutMetrics.actionButtonHeight
+        ).isActive = true
+        aboutUpdateSecondaryButton.heightAnchor.constraint(
             equalToConstant: SettingsLayoutMetrics.actionButtonHeight
         ).isActive = true
 
@@ -1377,6 +1553,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makeAboutMetaRow(title: "Version", valueView: aboutVersionLabel),
             makeAboutMetaRow(title: "Build", valueView: aboutBuildLabel),
             makeAboutMetaRow(title: "Author", valueView: aboutAuthorLabel),
+            makeAboutLinkRow(
+                title: "Repository",
+                valueView: aboutRepositoryLabel,
+                buttonTitle: "Open",
+                action: #selector(openRepository)
+            ),
             makeAboutLinkRow(
                 title: "Website",
                 valueView: aboutWebsiteLabel,
@@ -1403,7 +1585,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let overviewCard = makeAboutOverviewCard(
             title: "VoicePi",
-            description: "VoicePi is a lightweight macOS dictation utility that lives in the menu bar, captures speech with a shortcut, optionally refines or translates transcripts, and pastes the final text into the active app."
+            description: "VoicePi is a lightweight macOS dictation utility that lives in the menu bar, captures speech with a shortcut, optionally refines or translates transcripts, and pastes the final text into the active app.",
+            supplementaryContent: makeUpdateExperienceSection()
         )
 
         let capabilitiesCard = makeFeatureCard(
@@ -1411,7 +1594,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             title: "Project Focus",
             description: "Fast dictation, conservative transcript cleanup, safe paste injection, and a compact settings experience that feels closer to Raycast than a generic form."
         )
-
         contentStack.addArrangedSubview(makeSectionHeader(title: "About", subtitle: "Version info and a concise overview of what VoicePi does."))
         contentStack.addArrangedSubview(makeTwoColumnSection(
             left: makeVerticalStack([overviewCard, capabilitiesCard], spacing: 12),
@@ -1464,10 +1646,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         aboutVersionLabel.stringValue = aboutPresentation.version
         aboutBuildLabel.stringValue = aboutPresentation.build
         aboutAuthorLabel.stringValue = aboutPresentation.author
+        aboutRepositoryLabel.stringValue = aboutPresentation.repositoryLinkDisplay
         aboutWebsiteLabel.stringValue = aboutPresentation.websiteDisplay
         aboutGitHubLabel.stringValue = aboutPresentation.githubDisplay
         aboutXLabel.stringValue = aboutPresentation.xDisplay
-        aboutUpdateStatusLabel.stringValue = aboutUpdateStatusText
+        applyAboutUpdatePresentation()
     }
 
     private func refreshHomeSection() {
@@ -1635,21 +1818,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
-    private func checkForUpdates() {
-        aboutUpdateStatusLabel.stringValue = "Checking GitHub Releases…"
-        aboutCheckForUpdatesButton.isEnabled = false
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let status = await delegate?.settingsWindowControllerDidRequestCheckForUpdates(self)
-                ?? "No update handler is available."
-            self.aboutUpdateStatusText = status
-            self.aboutUpdateStatusLabel.stringValue = status
-            self.aboutCheckForUpdatesButton.isEnabled = true
-        }
-    }
-
-    @objc
     private func interfaceThemeChanged(_ sender: NSSegmentedControl) {
         let index = max(0, sender.selectedSegment)
         model.interfaceTheme = InterfaceTheme.allCases[index]
@@ -1765,6 +1933,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc
     private func postProcessingModeChanged(_ sender: NSPopUpButton) {
+        model.setPostProcessingMode(currentPostProcessingMode())
         refreshLLMSection()
     }
 
@@ -1798,36 +1967,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc
     private func createPromptPreset() {
-        let preset = PromptPreset(
-            id: "user.\(UUID().uuidString.lowercased())",
-            title: "New Prompt",
-            body: "",
-            source: .user
-        )
-        promptWorkspaceDraft.saveUserPreset(preset)
-        promptWorkspaceDraft.activeSelection = .preset(preset.id)
-        reloadPromptPopupItems()
-        updatePromptEditorState()
-        presentPromptEditorSheet(for: preset)
-    }
-
-    @objc
-    private func duplicatePromptPreset() {
-        guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
-
-        let duplicate = PromptPreset(
-            id: "user.\(UUID().uuidString.lowercased())",
-            title: "\(selectedPreset.resolvedTitle) Copy",
-            body: selectedPreset.body,
-            source: .user,
-            appBundleIDs: selectedPreset.appBundleIDs,
-            websiteHosts: selectedPreset.websiteHosts
-        )
-        promptWorkspaceDraft.saveUserPreset(duplicate)
-        promptWorkspaceDraft.activeSelection = .preset(duplicate.id)
-        reloadPromptPopupItems()
-        updatePromptEditorState()
-        presentPromptEditorSheet(for: duplicate)
+        let draft = Self.makeNewUserPromptDraft()
+        presentPromptEditorSheet(for: draft)
     }
 
     static func bindingEntryAction(for source: PromptPresetSource) -> PromptBindingEntryAction {
@@ -1835,12 +1976,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .builtInDefault:
             return .createFromDefault
         case .starter:
-            return .duplicateStarter
+            return .createFromStarter
         case .user:
             return .editUser
         }
     }
 
+    static func makeNewUserPromptDraft(template: PromptPreset? = nil) -> PromptPreset {
+        let id = "user.\(UUID().uuidString.lowercased())"
+        guard let template else {
+            return PromptPreset(
+                id: id,
+                title: "New Prompt",
+                body: "",
+                source: .user
+            )
+        }
+
+        return PromptPreset(
+            id: id,
+            title: "\(template.resolvedTitle) Copy",
+            body: template.body,
+            source: .user,
+            appBundleIDs: template.appBundleIDs,
+            websiteHosts: template.websiteHosts
+        )
+    }
     @objc
     private func openPromptBindingsEditor() {
         guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
@@ -1848,10 +2009,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         switch Self.bindingEntryAction(for: selectedPreset.source) {
         case .editUser:
             presentPromptEditorSheet(for: selectedPreset)
-        case .duplicateStarter:
-            duplicatePromptPreset()
+        case .createFromStarter:
+            presentPromptEditorSheet(for: Self.makeNewUserPromptDraft(template: selectedPreset))
         case .createFromDefault:
-            createPromptPreset()
+            presentPromptEditorSheet(for: Self.makeNewUserPromptDraft())
         }
     }
 
@@ -2338,7 +2499,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         activePromptPopup.isEnabled = enabled
         editPromptButton.isEnabled = enabled && (selectedPromptPresetFromDraft()?.source == .user)
         newPromptButton.isEnabled = enabled
-        duplicatePromptButton.isEnabled = enabled
         promptBindingsButton.isEnabled = enabled
         deletePromptButton.isEnabled = enabled && (selectedPromptPresetFromDraft()?.source == .user)
         resolvedPromptPreviewButton.isEnabled = enabled
@@ -2455,6 +2615,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let textView = NSTextView(frame: .zero)
         textView.isRichText = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -2576,7 +2739,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             window?.endSheet(attachedSheet)
         }
         window?.beginSheet(sheet)
-        sheet.makeFirstResponder(nameField)
+        sheet.initialFirstResponder = textView
+        sheet.makeFirstResponder(textView)
     }
 
     @objc
@@ -3047,7 +3211,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return card
     }
 
-    private func makeAboutOverviewCard(title: String, description: String) -> NSView {
+    private func makeAboutOverviewCard(
+        title: String,
+        description: String,
+        supplementaryContent: NSView? = nil
+    ) -> NSView {
         let card = makeCardView()
 
         var views: [NSView] = [
@@ -3078,14 +3246,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                     secondLinkTitle: "this tweet",
                     secondAction: #selector(openInspirationPost)
                 )
-            case .checkForUpdates:
-                let stack = NSStackView(views: [aboutCheckForUpdatesButton, aboutUpdateStatusLabel])
-                stack.orientation = .vertical
-                stack.alignment = .leading
-                stack.spacing = 6
-                return stack
             }
         })
+
+        if let supplementaryContent {
+            let divider = NSBox()
+            divider.boxType = .separator
+            views.append(divider)
+            views.append(supplementaryContent)
+        }
 
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
@@ -3094,6 +3263,74 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         pinCardContent(stack, into: card)
         return card
+    }
+
+    private func makeUpdateExperienceSection() -> NSView {
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath.circle", accessibilityDescription: "Updates")
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+
+        let headerStack = NSStackView(views: [iconView, aboutUpdateTitleLabel, NSView(), makeStatusPill(label: aboutUpdateStatusLabel)])
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .centerY
+        headerStack.spacing = 8
+
+        let detailStack = NSStackView(views: [aboutUpdateSourceLabel, aboutUpdateStrategyLabel])
+        detailStack.orientation = .vertical
+        detailStack.spacing = 4
+        detailStack.alignment = .leading
+
+        let progressStack = NSStackView(views: [aboutUpdateProgressLabel, aboutUpdateProgressIndicator])
+        progressStack.orientation = .vertical
+        progressStack.spacing = 6
+        progressStack.alignment = .leading
+
+        let buttonRow = makeButtonGroup([aboutUpdatePrimaryButton, aboutUpdateSecondaryButton])
+
+        let stack = NSStackView(views: [headerStack, aboutUpdateSummaryLabel, detailStack, progressStack, buttonRow])
+        stack.orientation = .vertical
+        stack.spacing = SettingsLayoutMetrics.pageSpacing
+        stack.alignment = .leading
+        return stack
+    }
+
+    private func applyAboutUpdatePresentation() {
+        aboutUpdateTitleLabel.stringValue = aboutUpdatePresentation.title
+        aboutUpdateSummaryLabel.stringValue = aboutUpdatePresentation.summary
+        aboutUpdateStatusLabel.stringValue = aboutUpdatePresentation.statusText
+        aboutUpdateSourceLabel.stringValue = aboutUpdatePresentation.sourceText
+        aboutUpdateStrategyLabel.stringValue = aboutUpdatePresentation.strategyText
+
+        aboutUpdatePrimaryButton.title = aboutUpdatePresentation.primaryAction.title
+        aboutUpdatePrimaryButton.isEnabled = aboutUpdatePresentation.primaryAction.isEnabled && aboutUpdatePrimaryAction != nil
+        aboutUpdatePrimaryButton.applyAppearance(isSelected: false)
+
+        if let secondary = aboutUpdatePresentation.secondaryAction {
+            aboutUpdateSecondaryButton.title = secondary.title
+            aboutUpdateSecondaryButton.isHidden = false
+            aboutUpdateSecondaryButton.isEnabled = secondary.isEnabled && aboutUpdateSecondaryAction != nil
+            aboutUpdateSecondaryButton.applyAppearance(isSelected: false)
+        } else {
+            aboutUpdateSecondaryButton.isHidden = true
+            aboutUpdateSecondaryButton.isEnabled = false
+        }
+
+        if let progress = aboutUpdatePresentation.progress {
+            aboutUpdateProgressLabel.stringValue = progress.label
+            aboutUpdateProgressLabel.isHidden = false
+            aboutUpdateProgressIndicator.isHidden = false
+            aboutUpdateProgressIndicator.isIndeterminate = progress.isIndeterminate
+            if progress.isIndeterminate {
+                aboutUpdateProgressIndicator.startAnimation(nil)
+            } else {
+                aboutUpdateProgressIndicator.stopAnimation(nil)
+                aboutUpdateProgressIndicator.doubleValue = progress.fraction ?? 0
+            }
+        } else {
+            aboutUpdateProgressLabel.isHidden = true
+            aboutUpdateProgressIndicator.isHidden = true
+            aboutUpdateProgressIndicator.stopAnimation(nil)
+        }
     }
 
     private func makeSubtleCaption(_ text: String) -> NSTextField {
@@ -3430,6 +3667,298 @@ extension StatusBarController: SettingsWindowControllerDelegate {
     func settingsWindowControllerDidRequestCheckForUpdates(_ controller: SettingsWindowController) async -> String {
         await delegate?.statusBarControllerDidRequestCheckForUpdates(self)
             ?? "No update handler is available."
+    }
+}
+
+@MainActor
+private final class AppUpdatePanelController: NSWindowController, NSWindowDelegate {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let summaryLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let sourceLabel = NSTextField(labelWithString: "")
+    private let strategyLabel = NSTextField(labelWithString: "")
+    private let progressLabel = NSTextField(labelWithString: "")
+    private let progressIndicator = NSProgressIndicator()
+    private let releaseNotesTitleLabel = NSTextField(labelWithString: "Release Notes")
+    private let releaseNotesTextView = NSTextView()
+    private let releaseNotesScrollView = NSScrollView()
+    private lazy var primaryButton = StyledSettingsButton(
+        title: "",
+        role: .primary,
+        target: self,
+        action: #selector(handlePrimaryAction)
+    )
+    private lazy var secondaryButton = StyledSettingsButton(
+        title: "",
+        role: .secondary,
+        target: self,
+        action: #selector(handleSecondaryAction)
+    )
+    private lazy var tertiaryButton = StyledSettingsButton(
+        title: "",
+        role: .secondary,
+        target: self,
+        action: #selector(handleTertiaryAction)
+    )
+
+    private var primaryRole: AppUpdateActionRole = .dismiss
+    private var secondaryRole: AppUpdateActionRole?
+    private var tertiaryRole: AppUpdateActionRole?
+    private var actionHandler: ((AppUpdateActionRole) -> Void)?
+    var interfaceAppearance: NSAppearance? {
+        didSet {
+            window?.appearance = interfaceAppearance
+            syncTheme()
+        }
+    }
+
+    init() {
+        let window = NSWindow(
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: SettingsLayoutMetrics.updatePanelWidth,
+                height: SettingsLayoutMetrics.updatePanelMinHeight
+            ),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "VoicePi Update"
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(
+            width: SettingsLayoutMetrics.updatePanelWidth,
+            height: SettingsLayoutMetrics.updatePanelMinHeight
+        )
+        window.titlebarAppearsTransparent = true
+        window.center()
+
+        super.init(window: window)
+        window.delegate = self
+        buildUI()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func present(
+        _ presentation: AppUpdatePanelPresentation,
+        actionHandler: @escaping (AppUpdateActionRole) -> Void
+    ) {
+        self.actionHandler = actionHandler
+        syncTheme()
+        apply(presentation)
+        showWindow(nil)
+        window?.center()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func dismissPanel() {
+        close()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        actionHandler = nil
+    }
+
+    private func buildUI() {
+        guard let contentView = window?.contentView else { return }
+        contentView.wantsLayer = true
+        syncTheme()
+
+        titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
+        summaryLabel.font = .systemFont(ofSize: 13)
+        summaryLabel.textColor = .secondaryLabelColor
+        summaryLabel.lineBreakMode = .byWordWrapping
+        summaryLabel.maximumNumberOfLines = 0
+        statusLabel.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        statusLabel.textColor = .secondaryLabelColor
+        sourceLabel.font = .systemFont(ofSize: 12)
+        sourceLabel.textColor = .secondaryLabelColor
+        strategyLabel.font = .systemFont(ofSize: 12)
+        strategyLabel.textColor = .secondaryLabelColor
+        strategyLabel.lineBreakMode = .byWordWrapping
+        strategyLabel.maximumNumberOfLines = 0
+        progressLabel.font = .systemFont(ofSize: 11.5)
+        progressLabel.textColor = .tertiaryLabelColor
+        progressIndicator.controlSize = .small
+        progressIndicator.minValue = 0
+        progressIndicator.maxValue = 1
+        progressIndicator.isIndeterminate = false
+        releaseNotesTitleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        releaseNotesTextView.isEditable = false
+        releaseNotesTextView.isSelectable = true
+        releaseNotesTextView.drawsBackground = false
+        releaseNotesTextView.textContainerInset = NSSize(width: 0, height: 4)
+        releaseNotesTextView.textColor = .secondaryLabelColor
+        releaseNotesTextView.font = .systemFont(ofSize: 12)
+        releaseNotesScrollView.drawsBackground = false
+        releaseNotesScrollView.hasVerticalScroller = true
+        releaseNotesScrollView.documentView = releaseNotesTextView
+        releaseNotesScrollView.translatesAutoresizingMaskIntoConstraints = false
+        releaseNotesScrollView.heightAnchor.constraint(
+            equalToConstant: SettingsLayoutMetrics.updatePanelNotesHeight
+        ).isActive = true
+
+        let statusPill = ThemedSurfaceView(style: .pill)
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.addSubview(statusLabel)
+        NSLayoutConstraint.activate([
+            statusLabel.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 10),
+            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -10),
+            statusLabel.topAnchor.constraint(equalTo: statusPill.topAnchor, constant: 4),
+            statusLabel.bottomAnchor.constraint(equalTo: statusPill.bottomAnchor, constant: -4)
+        ])
+
+        let headerRow = NSStackView(views: [titleLabel, NSView(), statusPill])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 10
+
+        let detailStack = NSStackView(views: [sourceLabel, strategyLabel])
+        detailStack.orientation = .vertical
+        detailStack.spacing = 4
+        detailStack.alignment = .leading
+
+        let progressStack = NSStackView(views: [progressLabel, progressIndicator])
+        progressStack.orientation = .vertical
+        progressStack.spacing = 6
+        progressStack.alignment = .leading
+
+        let notesStack = NSStackView(views: [releaseNotesTitleLabel, releaseNotesScrollView])
+        notesStack.orientation = .vertical
+        notesStack.spacing = 8
+        notesStack.alignment = .leading
+
+        let buttonRow = NSStackView(views: [primaryButton, secondaryButton, tertiaryButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 8
+        buttonRow.alignment = .centerY
+
+        let container = ThemedSurfaceView(style: .card)
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView(views: [headerRow, summaryLabel, detailStack, progressStack, notesStack, buttonRow])
+        stack.orientation = .vertical
+        stack.spacing = 12
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        contentView.addSubview(container)
+
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: SettingsLayoutMetrics.updatePanelOuterInset),
+            container.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -SettingsLayoutMetrics.updatePanelOuterInset),
+            container.topAnchor.constraint(equalTo: contentView.topAnchor, constant: SettingsLayoutMetrics.updatePanelOuterInset),
+            container.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -SettingsLayoutMetrics.updatePanelOuterInset),
+
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: SettingsLayoutMetrics.cardPaddingHorizontal),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -SettingsLayoutMetrics.cardPaddingHorizontal),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: SettingsLayoutMetrics.cardPaddingVertical),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -SettingsLayoutMetrics.cardPaddingVertical),
+
+            progressIndicator.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            releaseNotesScrollView.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        ])
+    }
+
+    private func syncTheme() {
+        guard let window, let contentView = window.contentView else { return }
+        window.appearance = interfaceAppearance
+        let appearance = interfaceAppearance ?? window.effectiveAppearance
+        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let pageBackgroundColor = isDarkTheme
+            ? NSColor(calibratedWhite: 0.16, alpha: 1)
+            : NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 1)
+        window.backgroundColor = pageBackgroundColor
+        contentView.layer?.backgroundColor = pageBackgroundColor.cgColor
+    }
+
+    private func apply(_ presentation: AppUpdatePanelPresentation) {
+        titleLabel.stringValue = presentation.title
+        summaryLabel.stringValue = presentation.summary
+        statusLabel.stringValue = presentation.statusText
+        sourceLabel.stringValue = presentation.sourceText
+        strategyLabel.stringValue = presentation.strategyText
+
+        primaryButton.title = presentation.primaryAction.title
+        primaryButton.isEnabled = presentation.primaryAction.isEnabled
+        primaryButton.applyAppearance(isSelected: false)
+        primaryRole = presentation.primaryAction.role
+
+        if let secondary = presentation.secondaryAction {
+            secondaryButton.isHidden = false
+            secondaryButton.title = secondary.title
+            secondaryButton.isEnabled = secondary.isEnabled
+            secondaryButton.applyAppearance(isSelected: false)
+            secondaryRole = secondary.role
+        } else {
+            secondaryButton.isHidden = true
+            secondaryButton.isEnabled = false
+            secondaryRole = nil
+        }
+
+        if let tertiary = presentation.tertiaryAction {
+            tertiaryButton.isHidden = false
+            tertiaryButton.title = tertiary.title
+            tertiaryButton.isEnabled = tertiary.isEnabled
+            tertiaryButton.applyAppearance(isSelected: false)
+            tertiaryRole = tertiary.role
+        } else {
+            tertiaryButton.isHidden = true
+            tertiaryButton.isEnabled = false
+            tertiaryRole = nil
+        }
+
+        if let progress = presentation.progress {
+            progressLabel.isHidden = false
+            progressIndicator.isHidden = false
+            progressLabel.stringValue = progress.label
+            progressIndicator.isIndeterminate = progress.isIndeterminate
+            if progress.isIndeterminate {
+                progressIndicator.startAnimation(nil)
+            } else {
+                progressIndicator.stopAnimation(nil)
+                progressIndicator.doubleValue = progress.fraction ?? 0
+            }
+        } else {
+            progressLabel.isHidden = true
+            progressIndicator.isHidden = true
+            progressIndicator.stopAnimation(nil)
+        }
+
+        if let notes = presentation.releaseNotes {
+            releaseNotesTitleLabel.isHidden = false
+            releaseNotesScrollView.isHidden = false
+            releaseNotesTextView.string = notes
+        } else {
+            releaseNotesTitleLabel.isHidden = true
+            releaseNotesScrollView.isHidden = true
+            releaseNotesTextView.string = ""
+        }
+    }
+
+    @objc
+    private func handlePrimaryAction() {
+        actionHandler?(primaryRole)
+    }
+
+    @objc
+    private func handleSecondaryAction() {
+        if let secondaryRole {
+            actionHandler?(secondaryRole)
+        }
+    }
+
+    @objc
+    private func handleTertiaryAction() {
+        if let tertiaryRole {
+            actionHandler?(tertiaryRole)
+        }
     }
 }
 
@@ -3866,7 +4395,7 @@ final class ShortcutRecorderField: NSButton {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         handleKeyDownEvent(event)
-        return true
+        return isRecordingShortcut && !event.isARepeat
     }
 
     override func keyDown(with event: NSEvent) {

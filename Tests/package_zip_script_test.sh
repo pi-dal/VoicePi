@@ -45,7 +45,7 @@ cat > "$TMP_DIR/bin/ditto" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' "$*" > .ditto-args
-touch dist/release/VoicePi-macOS.zip
+touch dist/release/VoicePi-1.2.3.zip
 EOF
 chmod +x "$TMP_DIR/bin/ditto"
 
@@ -62,8 +62,9 @@ cp "$ROOT_DIR/Scripts/package_zip.sh" "$TMP_DIR/Scripts/package_zip.sh" 2>/dev/n
 (
   cd "$TMP_DIR"
   PATH="$TMP_DIR/bin:$PATH" \
+  PACKAGE_VERSION="1.2.3" \
   ./Scripts/package_zip.sh >/dev/null
 )
 
-[ -f "$TMP_DIR/dist/release/VoicePi-macOS.zip" ]
-grep -q -- '--keepParent dist/release/VoicePi.app dist/release/VoicePi-macOS.zip' "$TMP_DIR/.ditto-args"
+[ -f "$TMP_DIR/dist/release/VoicePi-1.2.3.zip" ]
+grep -q -- '--keepParent dist/release/VoicePi.app dist/release/VoicePi-1.2.3.zip' "$TMP_DIR/.ditto-args"

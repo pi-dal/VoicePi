@@ -91,6 +91,11 @@ struct ActivationShortcut: Codable, Equatable {
         try container.encode(modifierFlagsRawValue, forKey: .modifierFlagsRawValue)
     }
 
+    static let legacyDefault = ActivationShortcut(
+        keyCodes: [],
+        modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+    )
+
     static let `default` = ActivationShortcut(
         keyCodes: [35],
         modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
@@ -979,6 +984,7 @@ final class AppModel: ObservableObject {
     private let defaults: UserDefaults
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private lazy var cachedPromptLibrary: PromptLibrary? = try? PromptLibrary.loadBundled()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -1052,23 +1058,29 @@ final class AppModel: ObservableObject {
             self.targetLanguage = initialSelectedLanguage
         }
 
+        let shouldPersistActivationShortcut: Bool
         if
             let data = defaults.data(forKey: Keys.activationShortcut),
             let decoded = try? decoder.decode(ActivationShortcut.self, from: data),
             !decoded.isEmpty
         {
             self.activationShortcut = decoded
+            shouldPersistActivationShortcut = false
         } else {
-            self.activationShortcut = .default
+            self.activationShortcut = AppModel.defaultActivationShortcut(defaults: defaults)
+            shouldPersistActivationShortcut = true
         }
 
+        let shouldPersistModeCycleShortcut: Bool
         if
             let data = defaults.data(forKey: Keys.modeCycleShortcut),
             let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
         {
             self.modeCycleShortcut = decoded
+            shouldPersistModeCycleShortcut = false
         } else {
             self.modeCycleShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+            shouldPersistModeCycleShortcut = true
         }
 
         if
@@ -1100,6 +1112,12 @@ final class AppModel: ObservableObject {
 
         if shouldPersistMigratedPromptWorkspace {
             persistPromptWorkspace()
+        }
+        if shouldPersistActivationShortcut {
+            persistActivationShortcut()
+        }
+        if shouldPersistModeCycleShortcut {
+            persistModeCycleShortcut()
         }
     }
 
@@ -1170,7 +1188,7 @@ final class AppModel: ObservableObject {
     }
 
     func starterPromptPresets() -> [PromptPreset] {
-        (try? PromptLibrary.loadBundled().starterPresets) ?? []
+        cachedPromptLibrary?.starterPresets ?? []
     }
 
     func promptPreset(id: String) -> PromptPreset? {
@@ -1243,18 +1261,12 @@ final class AppModel: ObservableObject {
         destination: PromptDestinationContext? = nil
     ) -> ResolvedPromptPreset {
         _ = appID
-        guard let library = try? PromptLibrary.loadBundled() else {
-            return PromptWorkspaceResolver.resolve(
-                workspace: promptWorkspace,
-                destination: destination,
-                library: PromptLibrary(
-                    optionGroups: [:],
-                    profiles: [:],
-                    fragments: [:],
-                    appPolicies: [:]
-                )
-            )
-        }
+        let library = cachedPromptLibrary ?? PromptLibrary(
+            optionGroups: [:],
+            profiles: [:],
+            fragments: [:],
+            appPolicies: [:]
+        )
 
         return PromptWorkspaceResolver.resolve(
             workspace: promptWorkspace,
@@ -1280,6 +1292,14 @@ final class AppModel: ObservableObject {
 
     func setTargetLanguage(_ language: SupportedLanguage) {
         targetLanguage = language
+    }
+
+    func modeDisplayTitle(for mode: PostProcessingMode) -> String {
+        if mode == .refinement {
+            let promptTitle = resolvedPromptPreset().title
+            return "\(mode.title) (\(promptTitle))"
+        }
+        return mode.title
     }
 
     func effectiveTranslationProvider(appleTranslateSupported: Bool) -> TranslationProvider {
@@ -1410,5 +1430,31 @@ final class AppModel: ObservableObject {
         }
 
         return .init()
+    }
+    private static func defaultActivationShortcut(defaults: UserDefaults) -> ActivationShortcut {
+        if hasExistingInstallationState(defaults: defaults) {
+            return .legacyDefault
+        }
+
+        return .default
+    }
+
+    private static func hasExistingInstallationState(defaults: UserDefaults) -> Bool {
+        let legacyAndCurrentKeys = [
+            Keys.selectedLanguage,
+            Keys.llmEnabled,
+            Keys.llmConfig,
+            Keys.promptSettings,
+            Keys.promptWorkspace,
+            Keys.postProcessingMode,
+            Keys.translationProvider,
+            Keys.targetLanguage,
+            Keys.modeCycleShortcut,
+            Keys.asrBackend,
+            Keys.remoteASRConfig,
+            Keys.interfaceTheme
+        ]
+
+        return legacyAndCurrentKeys.contains { defaults.object(forKey: $0) != nil }
     }
 }

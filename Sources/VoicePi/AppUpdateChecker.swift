@@ -55,6 +55,17 @@ struct AppUpdateRelease: Equatable, Sendable {
     let notes: String
 }
 
+enum AppInstallationSource: Equatable, Sendable {
+    case homebrewManaged
+    case directDownload
+    case unknown
+}
+
+enum AppUpdateDelivery: Equatable, Sendable {
+    case homebrew
+    case inAppInstaller
+}
+
 enum AppUpdateCheckResult: Equatable, Sendable {
     case upToDate(currentVersion: String)
     case updateAvailable(AppUpdateRelease)
@@ -110,26 +121,50 @@ struct AppUpdatePromptContent: Equatable {
     let statusText: String
 }
 
+enum ReleaseAssetNaming {
+    static func zipAssetName(version: String, appName: String = "VoicePi") -> String {
+        "\(appName)-\(version).zip"
+    }
+}
+
 enum AppUpdateCopy {
-    static func promptContent(for release: AppUpdateRelease) -> AppUpdatePromptContent {
+    static func promptContent(
+        for release: AppUpdateRelease,
+        delivery: AppUpdateDelivery
+    ) -> AppUpdatePromptContent {
         let notes = release.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let notesSection = notes.isEmpty ? "" : "\n\nRelease notes:\n\(notes)"
-        return AppUpdatePromptContent(
-            messageText: "VoicePi \(release.version) Is Available",
-            informativeText:
-                """
-                A newer VoicePi release is available on GitHub.
+        switch delivery {
+        case .homebrew:
+            return AppUpdatePromptContent(
+                messageText: "VoicePi \(release.version) Is Available",
+                informativeText:
+                    """
+                    A newer VoicePi release is available on GitHub.
 
-                Homebrew is the recommended installation and update path:
-                Guide: \(HomebrewUpdateInstructions.readmeInstallURL)
-                \(HomebrewUpdateInstructions.tapCommand)
-                \(HomebrewUpdateInstructions.installCommand)
+                    Homebrew is the recommended installation and update path:
+                    Guide: \(HomebrewUpdateInstructions.readmeInstallURL)
+                    \(HomebrewUpdateInstructions.tapCommand)
+                    \(HomebrewUpdateInstructions.installCommand)
 
-                If you already installed VoicePi with Homebrew:
-                \(HomebrewUpdateInstructions.upgradeCommand)\(notesSection)
-                """,
-            statusText: "Update available: VoicePi \(release.version)"
-        )
+                    If you already installed VoicePi with Homebrew:
+                    \(HomebrewUpdateInstructions.upgradeCommand)\(notesSection)
+                    """,
+                statusText: "Update available: VoicePi \(release.version)"
+            )
+        case .inAppInstaller:
+            return AppUpdatePromptContent(
+                messageText: "VoicePi \(release.version) Is Available",
+                informativeText:
+                    """
+                    A newer VoicePi release is available on GitHub.
+
+                    VoicePi can download and install this update automatically for direct-download installs.
+                    If you prefer the manual route, you can still open the release page and install it yourself.\(notesSection)
+                    """,
+                statusText: "Update available: VoicePi \(release.version)"
+            )
+        }
     }
 
     static func statusText(for result: AppUpdateCheckResult) -> String {
@@ -203,7 +238,9 @@ final class GitHubReleaseUpdateChecker {
             throw AppUpdateError.missingReleasePageURL
         }
 
-        guard let asset = release.assets.first(where: { $0.name == "VoicePi-macOS.zip" }) ??
+        let expectedAssetName = ReleaseAssetNaming.zipAssetName(version: normalizedReleaseVersion)
+        guard let asset = release.assets.first(where: { $0.name == expectedAssetName }) ??
+            release.assets.first(where: { $0.name == "VoicePi-macOS.zip" }) ??
             release.assets.first(where: { $0.name.hasSuffix(".zip") }),
             let assetURL = URL(string: asset.browserDownloadURL) else {
             throw AppUpdateError.missingZipAsset

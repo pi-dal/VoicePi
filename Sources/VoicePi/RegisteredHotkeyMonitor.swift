@@ -28,6 +28,10 @@ final class RegisteredHotkeyMonitor {
     private static let signature: OSType = 0x5650484B // "VPHK"
     private static var nextIdentifier: UInt32 = 1
 
+    static func eventDispatchStatus(shouldHandleEvent: Bool) -> OSStatus {
+        shouldHandleEvent ? OSStatus(noErr) : OSStatus(eventNotHandledErr)
+    }
+
     init(
         hotKeyIdentifier: UInt32 = RegisteredHotkeyMonitor.allocateHotKeyIdentifier(),
         hotKeyBootstrapper: ((RegisteredHotkeyMonitor) -> Bool)? = nil,
@@ -85,7 +89,7 @@ final class RegisteredHotkeyMonitor {
             GetApplicationEventTarget(),
             { _, event, userInfo in
                 guard let event, let userInfo else {
-                    return noErr
+                    return RegisteredHotkeyMonitor.eventDispatchStatus(shouldHandleEvent: false)
                 }
 
                 let monitor = Unmanaged<RegisteredHotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
@@ -147,12 +151,16 @@ final class RegisteredHotkeyMonitor {
             &hotKeyID
         )
 
-        guard
-            status == noErr,
-            hotKeyID.signature == Self.signature,
-            hotKeyID.id == hotKeyIdentifier
-        else {
-            return noErr
+        guard status == noErr else {
+            return Self.eventDispatchStatus(shouldHandleEvent: false)
+        }
+
+        guard hotKeyID.signature == Self.signature else {
+            return Self.eventDispatchStatus(shouldHandleEvent: false)
+        }
+
+        guard hotKeyID.id == hotKeyIdentifier else {
+            return Self.eventDispatchStatus(shouldHandleEvent: false)
         }
 
         switch GetEventKind(event) {
@@ -163,10 +171,10 @@ final class RegisteredHotkeyMonitor {
             delegate?.shortcutMonitorDidRelease()
             onRelease?()
         default:
-            break
+            return Self.eventDispatchStatus(shouldHandleEvent: false)
         }
 
-        return noErr
+        return Self.eventDispatchStatus(shouldHandleEvent: true)
     }
 
     private static func allocateHotKeyIdentifier() -> UInt32 {

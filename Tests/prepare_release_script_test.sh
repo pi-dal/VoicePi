@@ -23,7 +23,7 @@ cat > "$TMP_DIR/Scripts/package_zip.sh" <<'EOF'
 #!/bin/sh
 set -eu
 mkdir -p dist/release
-printf 'zip-contents' > dist/release/VoicePi-macOS.zip
+printf 'zip-contents' > dist/release/VoicePi-1.2.3.zip
 EOF
 chmod +x "$TMP_DIR/Scripts/package_zip.sh"
 
@@ -53,15 +53,15 @@ EXPECTED_SHA=$(printf 'zip-contents' | shasum -a 256 | awk '{print $1}')
 
 grep -q '^tag_name=v1.2.3$' "$OUTPUT_FILE"
 grep -q '^version=1.2.3$' "$OUTPUT_FILE"
-grep -q '^asset_path=dist/release/VoicePi-macOS.zip$' "$OUTPUT_FILE"
-grep -q '^asset_name=VoicePi-macOS.zip$' "$OUTPUT_FILE"
+grep -q '^asset_path=dist/release/VoicePi-1.2.3.zip$' "$OUTPUT_FILE"
+grep -q '^asset_name=VoicePi-1.2.3.zip$' "$OUTPUT_FILE"
 grep -q "^sha256=$EXPECTED_SHA\$" "$OUTPUT_FILE"
-grep -q '^release_url=https://github.com/pi-dal/VoicePi/releases/download/v1.2.3/VoicePi-macOS.zip$' "$OUTPUT_FILE"
+grep -q '^release_url=https://github.com/pi-dal/VoicePi/releases/download/v1.2.3/VoicePi-1.2.3.zip$' "$OUTPUT_FILE"
 grep -q '^package_build_version=42$' "$OUTPUT_FILE"
 grep -q '^cask_path=Casks/voicepi.rb$' "$OUTPUT_FILE"
 
 [ "$(cat "$TMP_DIR/.observed-version")" = "1.2.3" ]
 [ "$(cat "$TMP_DIR/.observed-sha")" = "$EXPECTED_SHA" ]
-[ "$(cat "$TMP_DIR/.observed-url")" = "https://github.com/pi-dal/VoicePi/releases/download/v1.2.3/VoicePi-macOS.zip" ]
+[ "$(cat "$TMP_DIR/.observed-url")" = "https://github.com/pi-dal/VoicePi/releases/download/v1.2.3/VoicePi-1.2.3.zip" ]
 [ "$(cat "$TMP_DIR/.observed-output-path")" = "Casks/voicepi.rb" ]
 [ -f "$TMP_DIR/Casks/voicepi.rb" ]

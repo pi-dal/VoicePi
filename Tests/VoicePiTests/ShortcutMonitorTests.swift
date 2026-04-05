@@ -6,6 +6,26 @@ import Carbon.HIToolbox
 
 struct ShortcutMonitorTests {
     @Test
+    @MainActor
+    func shortcutActionControllerInvokesOnPressWithoutDelegate() {
+        let controller = ShortcutActionController()
+        var didPress = false
+        controller.shortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags.command.intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        controller.onPress = {
+            didPress = true
+        }
+
+        let monitor = RegisteredHotkeyMonitor()
+        monitor.onPress = controller.onPress
+        monitor.onPress?()
+
+        #expect(didPress)
+    }
+
+    @Test
     func standardShortcutIsRegisteredHotkeyCompatible() {
         let shortcut = ActivationShortcut(
             keyCodes: [49],
@@ -134,6 +154,16 @@ struct ShortcutMonitorTests {
         let second = RegisteredHotkeyMonitor()
 
         #expect(first.hotKeyIdentifier != second.hotKeyIdentifier)
+    }
+
+    @Test
+    func registeredHotkeyMonitorOnlyConsumesMatchingEvents() {
+        #expect(
+            RegisteredHotkeyMonitor.eventDispatchStatus(shouldHandleEvent: true) == noErr
+        )
+        #expect(
+            RegisteredHotkeyMonitor.eventDispatchStatus(shouldHandleEvent: false) == eventNotHandledErr
+        )
     }
 
     @Test

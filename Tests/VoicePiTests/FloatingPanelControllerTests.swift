@@ -5,7 +5,7 @@ import Testing
 struct FloatingPanelControllerTests {
     @Test
     @MainActor
-    func floatingPanelUsesSettingsAlignedSurfaceInLightAppearance() {
+    func floatingPanelUsesMainSurfaceInLightAppearance() {
         let controller = FloatingPanelController()
         controller.window?.appearance = NSAppearance(named: .aqua)
 
@@ -25,12 +25,13 @@ struct FloatingPanelControllerTests {
 
         #expect(blurView?.material == .underWindowBackground)
         #expect(color(from: blurView?.layer?.backgroundColor)?.isApproximatelyEqual(to: expectedBackground) == true)
+        #expect(blurView?.layer?.borderWidth == 1)
         #expect(label?.textColor?.isApproximatelyEqual(to: expectedTextColor) == true)
     }
 
     @Test
     @MainActor
-    func floatingPanelUsesSettingsAlignedSurfaceInDarkAppearance() {
+    func floatingPanelUsesMainSurfaceInDarkAppearance() {
         let controller = FloatingPanelController()
         controller.window?.appearance = NSAppearance(named: .darkAqua)
 
@@ -45,6 +46,27 @@ struct FloatingPanelControllerTests {
 
         #expect(blurView?.material == .underWindowBackground)
         #expect(color(from: blurView?.layer?.backgroundColor)?.isApproximatelyEqual(to: expectedBackground) == true)
+        #expect(blurView?.layer?.borderWidth == 1)
+        #expect(label?.textColor?.isApproximatelyEqual(to: expectedTextColor) == true)
+    }
+
+    @Test
+    @MainActor
+    func floatingPanelTransitionsFromListeningPlaceholderToReadableTranscriptInLightAppearance() {
+        let controller = FloatingPanelController()
+        controller.window?.appearance = NSAppearance(named: .aqua)
+        controller.showRecording(transcript: "")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        controller.updateLive(transcript: "Hello from VoicePi", level: 0.25)
+
+        let label = findLabel(in: window?.contentView)
+        let expectedTextColor = NSColor(calibratedWhite: 0.16, alpha: 1)
+
+        #expect(label?.stringValue == "Hello from VoicePi")
         #expect(label?.textColor?.isApproximatelyEqual(to: expectedTextColor) == true)
     }
 
@@ -136,6 +158,130 @@ struct FloatingPanelControllerTests {
 
     @Test
     @MainActor
+    func recordingBannerRestoresBannerPaletteAfterModeSwitchHud() {
+        let controller = FloatingPanelController()
+        controller.window?.appearance = NSAppearance(named: .darkAqua)
+
+        controller.showModeSwitch(modeTitle: "Refinement", refinementPromptTitle: "Meeting Notes")
+        controller.showRecording(transcript: "")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let blurView = findSubview(in: window?.contentView, ofType: NSVisualEffectView.self)
+        let expectedBackground = NSColor(calibratedWhite: 0.16, alpha: 0.96)
+
+        #expect(blurView?.material == .underWindowBackground)
+        #expect(color(from: blurView?.layer?.backgroundColor)?.isApproximatelyEqual(to: expectedBackground) == true)
+        #expect(window?.frame.height == 56)
+    }
+
+    @Test
+    @MainActor
+    func listeningPlaceholderKeepsCompactBannerWidth() {
+        let controller = FloatingPanelController()
+
+        // First call makes window visible with entrance animation
+        controller.showRecording(transcript: "Test")
+        // Second call sets frame directly since window is already visible
+        controller.showRecording(transcript: "")
+
+        let width = controller.window?.frame.width ?? 0
+
+        #expect(width == 260)
+    }
+
+    @Test
+    @MainActor
+    func refiningBannerReturnsToCompactBaselineWidthAfterLongTranscript() {
+        let controller = FloatingPanelController()
+
+        controller.showRecording(transcript: String(repeating: "Long transcript ", count: 18))
+        let widthBeforeRefining = controller.window?.frame.width ?? 0
+
+        controller.showRefining(transcript: "Long transcript")
+        let widthDuringRefiningTransition = controller.window?.frame.width ?? 0
+
+        #expect(widthBeforeRefining > 320)
+        #expect(widthDuringRefiningTransition == 260)
+    }
+
+    @Test
+    @MainActor
+    func bannerAndRefiningWidthsStayCompactAfterModeSwitchHudWasShown() {
+        let controller = FloatingPanelController()
+
+        controller.showModeSwitch(
+            modeTitle: "Refinement",
+            refinementPromptTitle: String(repeating: "Long Prompt ", count: 8),
+            autoHideDelayNanoseconds: nil
+        )
+        controller.showRecording(transcript: "")
+        let recordingWidth = controller.window?.frame.width ?? 0
+
+        controller.showRefining(transcript: "Long transcript")
+        let refiningWidth = controller.window?.frame.width ?? 0
+
+        #expect(recordingWidth == 260)
+        #expect(refiningWidth == 260)
+    }
+
+    @Test
+    @MainActor
+    func refiningBannerUsesCircularActivityDotsInsteadOfRecordingWaveform() {
+        let controller = FloatingPanelController()
+
+        controller.showRefining(transcript: "Long transcript")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let refiningIndicator = findViews(
+            in: window?.contentView,
+            matchingIdentifier: "voicepi-refining-indicator"
+        ).first
+        let recordingWaveform = findViews(
+            in: window?.contentView,
+            matchingIdentifier: "voicepi-recording-waveform"
+        ).first
+        let indicatorDots = refiningIndicator?.layer?.sublayers ?? []
+
+        #expect(refiningIndicator?.isHidden == false)
+        #expect(recordingWaveform?.isHidden == true)
+        #expect(indicatorDots.count == 5)
+        #expect(indicatorDots.allSatisfy { abs($0.cornerRadius - ($0.bounds.height / 2)) < 0.5 })
+    }
+
+    @Test
+    @MainActor
+    func refiningBannerKeepsComfortableGapBetweenIndicatorAndText() {
+        let controller = FloatingPanelController()
+        controller.showRefining(transcript: "Long transcript")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let contentView = window?.contentView
+        let refiningIndicator = findViews(
+            in: contentView,
+            matchingIdentifier: "voicepi-refining-indicator"
+        ).first
+        let label = findLabel(in: contentView)
+
+        if let contentView, let refiningIndicator, let label {
+            let indicatorFrame = refiningIndicator.convert(refiningIndicator.bounds, to: contentView)
+            let labelFrame = label.convert(label.bounds, to: contentView)
+            #expect(labelFrame.minX - indicatorFrame.maxX >= 18)
+        } else {
+            #expect(Bool(false))
+        }
+    }
+
+    @Test
+    @MainActor
     func floatingPanelShowsModeSwitchHudCenteredOnScreen() {
         let controller = FloatingPanelController()
         controller.showModeSwitch(modeTitle: "Translate")
@@ -150,7 +296,7 @@ struct FloatingPanelControllerTests {
         )
         let visibleFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
 
-        #expect(modeLabels.count == 3)
+        #expect(modeLabels.count >= 1)
         #expect(window?.isVisible == true)
 
         if let window, let visibleFrame {
@@ -172,8 +318,12 @@ struct FloatingPanelControllerTests {
             in: window?.contentView,
             matching: ["Disabled", "Refinement", "Translate"]
         )
+        let capsuleViews = findViews(in: window?.contentView, matchingIdentifier: "voicepi-mode-capsule")
+            + findViews(in: window?.contentView, matchingIdentifier: "voicepi-mode-capsule-selected")
 
         #expect(modeLabels.count == 3)
+        #expect(capsuleViews.count == 3)
+        #expect(window?.frame.height == 136)
     }
 
     @Test
@@ -193,6 +343,63 @@ struct FloatingPanelControllerTests {
 
         #expect(selectedCapsules.count == 1)
         #expect(selectedCapsules.first?.toolTip == "Refinement")
+    }
+
+    @Test
+    @MainActor
+    func refinementModeSwitchShowsPromptNameInRefinementSubtitle() {
+        let controller = FloatingPanelController()
+        controller.showModeSwitch(modeTitle: "Refinement", refinementPromptTitle: "Meeting Notes")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let promptLabels = findLabels(in: window?.contentView, matching: ["Meeting Notes"])
+        let selectedCapsules = findViews(
+            in: window?.contentView,
+            matchingIdentifier: "voicepi-mode-capsule-selected"
+        )
+
+        #expect(promptLabels.count == 1)
+        #expect(selectedCapsules.count == 1)
+        #expect(selectedCapsules.first?.toolTip == "Refinement")
+    }
+
+    @Test
+    @MainActor
+    func modeSwitchHudUsesWideCapsuleGridLayout() {
+        let controller = FloatingPanelController()
+        controller.showModeSwitch(modeTitle: "Translate")
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        #expect((window?.frame.width ?? 0) >= 440)
+        #expect(window?.frame.height == 136)
+    }
+
+    @Test
+    @MainActor
+    func refinementModeSwitchAcceptsLongPromptNamesInSubtitle() {
+        let controller = FloatingPanelController()
+        controller.showModeSwitch(
+            modeTitle: "Refinement",
+            refinementPromptTitle: "Detailed Meeting Notes For Product Planning"
+        )
+
+        let window = controller.window
+        _ = window?.contentViewController?.view
+        window?.contentView?.layoutSubtreeIfNeeded()
+
+        let promptLabel = findLabels(
+            in: window?.contentView,
+            matching: ["Detailed Meeting Notes For Product Planning"]
+        )
+
+        #expect(promptLabel.count == 1)
+        #expect((window?.frame.width ?? 0) >= 440)
     }
 
     @Test

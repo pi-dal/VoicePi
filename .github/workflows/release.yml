@@ -53,11 +53,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ steps.prepare.outputs.tag_name }}
           ASSET_PATH: ${{ steps.prepare.outputs.asset_path }}
+          RELEASE_NOTES_PATH: docs/changelogs/${{ steps.prepare.outputs.tag_name }}.md
         run: |
+          if [ ! -f "$RELEASE_NOTES_PATH" ]; then
+            echo "error: missing release changelog at $RELEASE_NOTES_PATH" >&2
+            echo "hint: add docs/changelogs/${TAG_NAME}.md before tagging" >&2
+            exit 1
+          fi
+
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" --notes-file "$RELEASE_NOTES_PATH"
             gh release upload "$TAG_NAME" "$ASSET_PATH" --clobber
           else
-            gh release create "$TAG_NAME" "$ASSET_PATH" --title "$TAG_NAME" --generate-notes
+            gh release create "$TAG_NAME" "$ASSET_PATH" --title "$TAG_NAME" --notes-file "$RELEASE_NOTES_PATH"
           fi
 
       - name: Check out default branch for Homebrew cask update

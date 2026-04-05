@@ -11,6 +11,7 @@ struct StatusBarLanguageMenuTests {
             StatusBarController.primaryMenuActionTitles == [
                 "Language",
                 "Text Processing",
+                "Refinement Prompt",
                 "Check for Updates…",
                 "Settings…",
                 "Quit VoicePi"
@@ -88,5 +89,30 @@ struct StatusBarLanguageMenuTests {
         #expect(presentation.effectiveOutputLanguage == .english)
         #expect(presentation.outputSummary == "Output unavailable while text processing is disabled")
         #expect(presentation.outputItems.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func disabledRefinementPromptTitleUsesDisabledForegroundColor() {
+        let attributed = StatusBarController.disabledRefinementPromptTitle("Meeting Notes")
+        let color = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        #expect(color == NSColor.disabledControlTextColor)
+    }
+
+    @Test
+    @MainActor
+    func selectingRefinementModeFromMenuUpdatesModelMode() {
+        _ = NSApplication.shared
+        let defaults = UserDefaults(suiteName: "VoicePiTests.selectingRefinementModeFromMenuUpdatesModelMode.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setPostProcessingMode(.disabled)
+
+        let controller = StatusBarController(model: model)
+        let item = NSMenuItem()
+        item.representedObject = PostProcessingMode.refinement.rawValue
+
+        _ = controller.perform(NSSelectorFromString("selectPostProcessingModeFromMenu:"), with: item)
+
+        #expect(model.postProcessingMode == .refinement)
     }
 }
