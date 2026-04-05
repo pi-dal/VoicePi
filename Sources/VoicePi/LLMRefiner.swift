@@ -1,71 +1,6 @@
 import Foundation
 
-struct LLMRefinerConfiguration: Codable, Equatable {
-    var baseURL: String
-    var apiKey: String
-    var model: String
-    var refinementPrompt: String
-
-    init(
-        baseURL: String = "",
-        apiKey: String = "",
-        model: String = "",
-        refinementPrompt: String = ""
-    ) {
-        self.baseURL = baseURL
-        self.apiKey = apiKey
-        self.model = model
-        self.refinementPrompt = refinementPrompt
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case baseURL
-        case apiKey
-        case model
-        case refinementPrompt
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
-        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
-        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
-        refinementPrompt = try container.decodeIfPresent(String.self, forKey: .refinementPrompt) ?? ""
-    }
-
-    var trimmedBaseURL: String {
-        baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var trimmedAPIKey: String {
-        apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var trimmedModel: String {
-        model.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var trimmedRefinementPrompt: String {
-        refinementPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var isConfigured: Bool {
-        !trimmedBaseURL.isEmpty &&
-        !trimmedAPIKey.isEmpty &&
-        !trimmedModel.isEmpty
-    }
-
-    var normalizedBaseURL: URL? {
-        let value = trimmedBaseURL
-        guard !value.isEmpty else { return nil }
-
-        if let direct = URL(string: value), direct.scheme != nil {
-            return direct
-        }
-
-        return URL(string: "https://\(value)")
-    }
-}
+typealias LLMRefinerConfiguration = LLMConfiguration
 
 enum LLMRefinerError: LocalizedError, Equatable {
     case notConfigured
@@ -149,7 +84,7 @@ final class LLMRefiner {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return text }
         guard configuration.isConfigured else { throw LLMRefinerError.notConfigured }
-        guard let baseURL = configuration.normalizedBaseURL else {
+        guard let baseURL = configuration.normalizedEndpoint else {
             throw LLMRefinerError.invalidBaseURL
         }
 

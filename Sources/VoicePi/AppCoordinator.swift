@@ -153,6 +153,8 @@ final class AppController: NSObject {
     static let startupHotkeyBootstrapMaxAttempts = 6
     static let modeCycleRepeatDelayNanoseconds: UInt64 = 350_000_000
     static let modeCycleRepeatIntervalNanoseconds: UInt64 = 170_000_000
+    static let directUpdateDownloadPollMaxAttempts = 20
+    static let directUpdateDownloadPollIntervalNanoseconds: UInt64 = 100_000_000
 
     private static let lastPromptedUpdateVersionKey = "VoicePi.lastPromptedUpdateVersion"
 
@@ -1435,13 +1437,13 @@ final class AppController: NSObject {
     }
 
     private func downloadedBundle(from updater: AppUpdater) async throws -> Bundle {
-        for _ in 0..<20 {
+        for _ in 0..<Self.directUpdateDownloadPollMaxAttempts {
             let currentState = await MainActor.run(body: { updater.state })
             if case .downloaded(_, _, let bundle) = currentState {
                 return bundle
             }
 
-            try await Task.sleep(nanoseconds: 100_000_000)
+            try await Task.sleep(nanoseconds: Self.directUpdateDownloadPollIntervalNanoseconds)
         }
 
         throw AppUpdateInstallError.downloadedBundleMissing
@@ -1506,10 +1508,11 @@ final class AppController: NSObject {
                     self.statusBarController?.setTransientStatus("Opened Homebrew install guide")
                 }
             case .retry:
-                switch phase {
-                case .failed(_, let delivery, _, let release) where delivery == .inAppInstaller && release != nil:
-                    self.installDirectUpdate(for: release!)
-                default:
+                if case let .failed(_, delivery, _, release) = phase,
+                   delivery == .inAppInstaller,
+                   let release {
+                    self.installDirectUpdate(for: release)
+                } else {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         _ = await self.checkForUpdates(trigger: .manual)
