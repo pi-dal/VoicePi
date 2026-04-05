@@ -13,9 +13,15 @@ let package = Package(
             targets: ["VoicePi"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/s1ntoneli/AppUpdater.git", from: "0.2.0")
+    ],
     targets: [
         .executableTarget(
             name: "VoicePi",
+            dependencies: [
+                .product(name: "AppUpdater", package: "AppUpdater")
+            ],
             path: "Sources/VoicePi",
             exclude: [
                 "AppIcon.appiconset",
