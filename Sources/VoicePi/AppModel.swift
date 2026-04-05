@@ -1431,7 +1431,6 @@ final class AppModel: ObservableObject {
 
         return .init()
     }
-
     private static func defaultActivationShortcut(defaults: UserDefaults) -> ActivationShortcut {
         if hasExistingInstallationState(defaults: defaults) {
             return .legacyDefault

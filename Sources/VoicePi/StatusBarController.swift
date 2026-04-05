@@ -983,6 +983,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         target: self,
         action: #selector(createPromptPreset)
     )
+    private lazy var duplicatePromptButton = StyledSettingsButton(
+        title: "Duplicate",
+        role: .secondary,
+        target: self,
+        action: #selector(duplicatePromptPreset)
+    )
     private lazy var promptBindingsButton = StyledSettingsButton(
         title: Self.promptBindingsButtonTitle,
         role: .secondary,
@@ -1456,6 +1462,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let promptActionsRow = makeButtonGroup([
             editPromptButton,
             newPromptButton,
+            duplicatePromptButton,
             promptBindingsButton,
             deletePromptButton,
             resolvedPromptPreviewButton
@@ -1971,6 +1978,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         presentPromptEditorSheet(for: draft)
     }
 
+    @objc
+    private func duplicatePromptPreset() {
+        guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
+        let draft = Self.makeNewUserPromptDraft(template: selectedPreset)
+        presentPromptEditorSheet(for: draft)
+    }
+
     static func bindingEntryAction(for source: PromptPresetSource) -> PromptBindingEntryAction {
         switch source {
         case .builtInDefault:
@@ -2002,7 +2016,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             websiteHosts: template.websiteHosts
         )
     }
-
     @objc
     private func openPromptBindingsEditor() {
         guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
@@ -2500,6 +2513,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         activePromptPopup.isEnabled = enabled
         editPromptButton.isEnabled = enabled && (selectedPromptPresetFromDraft()?.source == .user)
         newPromptButton.isEnabled = enabled
+        duplicatePromptButton.isEnabled = enabled
         promptBindingsButton.isEnabled = enabled
         deletePromptButton.isEnabled = enabled && (selectedPromptPresetFromDraft()?.source == .user)
         resolvedPromptPreviewButton.isEnabled = enabled
