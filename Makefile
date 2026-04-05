@@ -56,6 +56,11 @@ bundle:
 	mkdir -p "$(APP_DIR)/Contents/Resources"
 	cp "$(EXEC)" "$(APP_DIR)/Contents/MacOS/$(APP_NAME)"
 	cp "$(INFO_PLIST)" "$(APP_DIR)/Contents/Info.plist"
+	EXEC_DIR=$$(dirname "$(EXEC)"); \
+	for resource_bundle in "$$EXEC_DIR"/*.bundle; do \
+		[ -d "$$resource_bundle" ] || continue; \
+		cp -R "$$resource_bundle" "$(APP_DIR)/Contents/Resources/"; \
+	done
 	if [ -d "$(APP_ICONSET)" ]; then \
 		TMP_ICONSET_DIR=$$(mktemp -d "$${TMPDIR:-/tmp}/voicepi-iconset.XXXXXX.iconset"); \
 		trap 'rm -rf "$$TMP_ICONSET_DIR"' EXIT INT TERM; \

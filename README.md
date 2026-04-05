@@ -204,11 +204,25 @@ make zip
 `make zip` creates `dist/release/VoicePi-macOS.zip` for quick internal sharing.  
 For GitHub Releases, prefer the versioned archive (`VoicePi-<version>.zip`) because that is the primary AppUpdater asset naming format.
 
-Share the archive with testers. The default release bundle is ad-hoc signed, so macOS Gatekeeper may block it on other machines. Testers can usually open it by right-clicking the app and choosing **Open**, or by removing the quarantine attribute after download:
+Share the archive with testers. The default release bundle is ad-hoc signed, so macOS Gatekeeper may block it on other machines. These archives are for internal testing only, not for normal end-user distribution.
+
+Testers can usually open the app by moving it into `/Applications`, removing the quarantine attribute, and launching it from Terminal:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/VoicePi.app
+open /Applications/VoicePi.app
 ```
+
+If Finder still blocks the app on that machine, launch the executable directly:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/VoicePi.app
+/Applications/VoicePi.app/Contents/MacOS/VoicePi
+```
+
+VoicePi is a menu-bar app (`LSUIElement`), so a successful launch does not create a Dock icon or a normal app window. Look for the icon in the macOS menu bar.
+
+Removing the quarantine attribute is not a substitute for proper distribution signing. Unsigned GitHub Release assets and local ad-hoc builds can still be rejected by Gatekeeper on some machines. If that happens, testers can also try the system override flow in **System Settings > Privacy & Security** after the first blocked launch. For a normal download-and-open experience, ship a Developer ID-signed and notarized build.
 
 ### Formal external distribution
 
