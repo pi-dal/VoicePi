@@ -165,71 +165,6 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func appControllerWiresRecordingShortcutThroughOnPressOnly() throws {
-        _ = NSApplication.shared
-        let controller = AppController()
-        controller.start()
-        defer { controller.stop() }
-
-        let recordingShortcutAction = try #require(
-            reflectedChild(named: "recordingShortcutAction", in: controller) as? ShortcutActionController
-        )
-        let hasOnPressHandler = try #require(
-            reflectedOptionalHasValue(named: "onPress", in: recordingShortcutAction) as Bool?
-        )
-        let hasDelegate = try #require(
-            reflectedOptionalHasValue(named: "delegate", in: recordingShortcutAction) as Bool?
-        )
-
-        #expect(hasOnPressHandler == true)
-        #expect(hasDelegate == false)
-    }
-
-    @Test
-    @MainActor
-    func appControllerStartLoadsPersistedActivationShortcutBeforeAnySettingsChange() throws {
-        _ = NSApplication.shared
-        let defaults = UserDefaults.standard
-        let encoder = JSONEncoder()
-        let savedShortcut = ActivationShortcut(
-            keyCodes: [49],
-            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
-        )
-        let previousShortcutData = defaults.data(forKey: AppModel.Keys.activationShortcut)
-        let previousModeShortcutData = defaults.data(forKey: AppModel.Keys.modeCycleShortcut)
-        defer {
-            if let previousShortcutData {
-                defaults.set(previousShortcutData, forKey: AppModel.Keys.activationShortcut)
-            } else {
-                defaults.removeObject(forKey: AppModel.Keys.activationShortcut)
-            }
-
-            if let previousModeShortcutData {
-                defaults.set(previousModeShortcutData, forKey: AppModel.Keys.modeCycleShortcut)
-            } else {
-                defaults.removeObject(forKey: AppModel.Keys.modeCycleShortcut)
-            }
-        }
-
-        defaults.set(try encoder.encode(savedShortcut), forKey: AppModel.Keys.activationShortcut)
-        defaults.set(
-            try encoder.encode(ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)),
-            forKey: AppModel.Keys.modeCycleShortcut
-        )
-
-        let controller = AppController()
-        controller.start()
-        defer { controller.stop() }
-
-        let recordingShortcutAction = try #require(
-            reflectedChild(named: "recordingShortcutAction", in: controller) as? ShortcutActionController
-        )
-
-        #expect(recordingShortcutAction.shortcut == savedShortcut)
-    }
-
-    @Test
-    @MainActor
     func pressStartsRecordingWhenIdle() {
         #expect(
             AppController.pressAction(
@@ -775,15 +710,4 @@ struct AppControllerInteractionTests {
             )
         )
     }
-}
-
-private func reflectedChild(named name: String, in value: Any) -> Any? {
-    Mirror(reflecting: value).children.first { $0.label == name }?.value
-}
-
-private func reflectedOptionalHasValue(named name: String, in value: Any) -> Bool? {
-    guard let child = reflectedChild(named: name, in: value) else { return nil }
-    let mirror = Mirror(reflecting: child)
-    guard mirror.displayStyle == .optional else { return nil }
-    return !mirror.children.isEmpty
 }

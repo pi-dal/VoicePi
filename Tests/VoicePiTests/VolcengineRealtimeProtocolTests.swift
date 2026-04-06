@@ -78,6 +78,15 @@ struct VolcengineRealtimeProtocolTests {
         #expect(startFrame[0] == 0x11)
         #expect(startFrame[1] == 0x10)
         #expect(startFrame[2] == 0x10)
+        let payloadLength = Int(try #require(uint32(at: 4, in: startFrame)))
+        let payload = Data(startFrame[8..<(8 + payloadLength)])
+        let payloadObject = try #require(
+            try JSONSerialization.jsonObject(with: payload, options: []) as? [String: Any]
+        )
+        let request = try #require(payloadObject["request"] as? [String: Any])
+        let context = try #require(request["context"] as? String)
+        #expect(context.contains("Built-in ASR bias rules:"))
+        #expect(context.contains("prefer technical terms"))
 
         let audioFrame = VolcengineRealtimeProtocol.makeAudioFrame(
             sequence: 3,

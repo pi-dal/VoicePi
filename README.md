@@ -409,7 +409,7 @@ Configure the backend in **Settings → ASR**:
 - **Backend** chooses between Apple Speech and the remote large-model providers
 - **API Base URL**, **API Key**, and **Model** are required for every remote ASR backend
 - **Volcengine AppID** is additionally required when backend = Volcengine ASR
-- **Prompt** is optional and can be used to bias technical terms, product names, or mixed-language dictation
+- **Prompt** is optional add-on text. VoicePi always applies built-in ASR bias rules first, then appends your custom hints so you can extend the defaults instead of replacing them
 - **Test Connection** sends a lightweight endpoint probe before you save
 
 When **Remote ASR** is selected, VoicePi captures audio locally while you hold the shortcut. OpenAI-compatible backend uploads the recorded file after release, while Aliyun and Volcengine stream 16 kHz PCM over WebSocket during recording and resolve the final transcript on release.
@@ -469,7 +469,7 @@ It supports OpenAI-compatible transcription APIs and provider-specific Aliyun/Vo
 1. Hold the configured shortcut
 2. VoicePi records audio locally
 3. OpenAI-compatible sends the recorded file on release; Aliyun/Volcengine stream realtime audio frames during recording
-4. VoicePi receives transcript updates (Aliyun/Volcengine partials can be shown live)
+4. VoicePi receives transcript updates (Aliyun/Volcengine partials are merged into a running transcript so the overlay behaves closer to continuous streaming)
 5. On release, VoicePi resolves and injects only the final transcript
 6. If LLM refinement is enabled, the final transcript can be conservatively cleaned up before paste
 

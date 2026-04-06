@@ -912,7 +912,7 @@ final class AppController: NSObject {
                 self?.updateRealtimeOverlayTranscript(text)
             },
             onFinal: { [weak self] text in
-                self?.latestTranscript = text
+                self?.updateRealtimeOverlayTranscript(text)
             },
             onTerminalError: { [weak self] message in
                 self?.handleRealtimeTerminalError(message)

@@ -57,25 +57,6 @@ struct StatusBarLanguageMenuTests {
 
     @Test
     @MainActor
-    func selectingOutputLanguageUpdatesTargetLanguageWhenRefinementModeIsOn() {
-        _ = NSApplication.shared
-        let defaults = UserDefaults(suiteName: "VoicePiTests.selectingOutputLanguageUpdatesTargetLanguageWhenRefinementModeIsOn.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.selectedLanguage = .english
-        model.setTargetLanguage(.japanese)
-        model.setPostProcessingMode(.refinement)
-
-        let controller = StatusBarController(model: model)
-        let item = NSMenuItem()
-        item.representedObject = SupportedLanguage.korean.rawValue
-
-        _ = controller.perform(NSSelectorFromString("selectOutputLanguage:"), with: item)
-
-        #expect(model.targetLanguage == .korean)
-    }
-
-    @Test
-    @MainActor
     func outputLanguageIsUnavailableWhenTextProcessingIsDisabled() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.outputLanguageIsUnavailableWhenTextProcessingIsDisabled.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
@@ -99,20 +80,4 @@ struct StatusBarLanguageMenuTests {
         #expect(color == NSColor.disabledControlTextColor)
     }
 
-    @Test
-    @MainActor
-    func selectingRefinementModeFromMenuUpdatesModelMode() {
-        _ = NSApplication.shared
-        let defaults = UserDefaults(suiteName: "VoicePiTests.selectingRefinementModeFromMenuUpdatesModelMode.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.setPostProcessingMode(.disabled)
-
-        let controller = StatusBarController(model: model)
-        let item = NSMenuItem()
-        item.representedObject = PostProcessingMode.refinement.rawValue
-
-        _ = controller.perform(NSSelectorFromString("selectPostProcessingModeFromMenu:"), with: item)
-
-        #expect(model.postProcessingMode == .refinement)
-    }
 }

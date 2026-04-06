@@ -1393,7 +1393,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrBackendPopup.action = #selector(asrBackendChanged(_:))
 
         asrAPIKeyField.placeholderString = "sk-..."
-        asrPromptField.placeholderString = "Optional hint for terminology or context"
+        asrPromptField.placeholderString = "Optional add-on hints (appended after VoicePi default ASR bias prompt)"
         applyASRPlaceholders(for: model.asrBackend)
 
         asrTestButton.target = self

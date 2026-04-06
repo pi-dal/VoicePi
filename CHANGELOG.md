@@ -8,6 +8,7 @@ All notable changes to VoicePi are tracked in versioned release notes under `doc
 
 ## Versions
 
+- [v1.4.0](docs/changelogs/v1.4.0.md) — Realtime Aliyun/Volcengine ASR and smoother live transcript streaming
 - [v1.3.2](docs/changelogs/v1.3.2.md) — Packaged app startup crash fix
 - [v1.3.1](docs/changelogs/v1.3.1.md) — Packaging and distribution note update
 - [v1.3.0](docs/changelogs/v1.3.0.md) — In-app update support and prompt workspace system

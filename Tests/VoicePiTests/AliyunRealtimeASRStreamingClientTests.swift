@@ -78,6 +78,42 @@ struct AliyunRealtimeASRStreamingClientTests {
     }
 
     @Test
+    func partialEventsEmitCumulativeTranscriptAcrossSentenceChunks() async throws {
+        let transport = MockWebSocketTransport(
+            incoming: [
+                .success(.string(#"{"header":{"event":"task-started","task_id":"t1"}}"#)),
+                .success(.string(#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"text":"你好","end_time":100}}}}"#)),
+                .success(.string(#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"text":"世界","end_time":220}}}}"#))
+            ]
+        )
+        let client = AliyunRealtimeASRStreamingClient(transportFactory: { _ in transport })
+        let collector = EventCollector()
+        let consumeTask = Task {
+            for await event in client.events {
+                collector.append(event)
+            }
+        }
+
+        try await client.connect(
+            configuration: .fixtureAliyun(),
+            backend: .remoteAliyunASR,
+            language: .english
+        )
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        await client.close()
+        consumeTask.cancel()
+
+        let partials = collector.values.compactMap { event -> String? in
+            guard case .partial(let text) = event else { return nil }
+            return text
+        }
+
+        #expect(partials.contains("你好"))
+        #expect(partials.contains("你好 世界"))
+    }
+
+    @Test
     func finalFallsBackToLatestPartialWhenNoSentenceEnd() async throws {
         let transport = MockWebSocketTransport(
             incoming: [

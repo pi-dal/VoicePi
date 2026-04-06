@@ -26,8 +26,8 @@ actor AliyunRealtimeASRStreamingClient: RemoteASRStreamingClient {
     private var taskID: String = UUID().uuidString.replacingOccurrences(of: "-", with: "")
     private var pendingPCMBuffer = Data()
     private var latestPartialText = ""
-    private var sentenceEndResults: [(endTime: Int, text: String)] = []
-    private var seenSentenceEndTimes: Set<Int> = []
+    private var pendingSentenceText = ""
+    private var sentenceEndResultsByTime: [Int: String] = [:]
     private var finalText: String?
     private var terminalError: RemoteASRStreamingError?
     private var finishSent = false
@@ -268,8 +268,8 @@ actor AliyunRealtimeASRStreamingClient: RemoteASRStreamingClient {
         taskID = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         pendingPCMBuffer.removeAll(keepingCapacity: true)
         latestPartialText = ""
-        sentenceEndResults.removeAll(keepingCapacity: false)
-        seenSentenceEndTimes.removeAll(keepingCapacity: false)
+        pendingSentenceText = ""
+        sentenceEndResultsByTime.removeAll(keepingCapacity: false)
         finalText = nil
         terminalError = nil
         finishSent = false
@@ -362,15 +362,14 @@ actor AliyunRealtimeASRStreamingClient: RemoteASRStreamingClient {
             case .resultGenerated(let text, let endTime, let isHeartbeat):
                 guard !isHeartbeat else { return }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    latestPartialText = trimmed
-                    emit(event: .partial(text: trimmed))
-                }
-                if let endTime, !trimmed.isEmpty, !seenSentenceEndTimes.contains(endTime) {
-                    seenSentenceEndTimes.insert(endTime)
-                    sentenceEndResults.append((endTime: endTime, text: trimmed))
-                    sentenceEndResults.sort { $0.endTime < $1.endTime }
-                }
+                guard !trimmed.isEmpty else { return }
+
+                let composed = composeLiveTranscript(latestChunk: trimmed, endTime: endTime)
+                guard !composed.isEmpty else { return }
+                guard composed != latestPartialText else { return }
+
+                latestPartialText = composed
+                emit(event: .partial(text: composed))
             case .taskFinished:
                 let resolved = try resolveFinalText()
                 finalText = resolved
@@ -388,15 +387,40 @@ actor AliyunRealtimeASRStreamingClient: RemoteASRStreamingClient {
         }
     }
 
+    private func composeLiveTranscript(latestChunk: String, endTime: Int?) -> String {
+        if let endTime {
+            sentenceEndResultsByTime[endTime] = latestChunk
+            pendingSentenceText = ""
+            return finalizedTranscript()
+        }
+
+        pendingSentenceText = RealtimeTranscriptComposer.merge(
+            cumulative: pendingSentenceText,
+            incoming: latestChunk
+        )
+
+        let finalized = finalizedTranscript()
+        guard !finalized.isEmpty else {
+            return pendingSentenceText
+        }
+
+        return RealtimeTranscriptComposer.merge(
+            cumulative: finalized,
+            incoming: pendingSentenceText
+        )
+    }
+
+    private func finalizedTranscript() -> String {
+        let orderedFinalSegments = sentenceEndResultsByTime.keys
+            .sorted()
+            .compactMap { sentenceEndResultsByTime[$0] }
+        return RealtimeTranscriptComposer.joinWithSpace(orderedFinalSegments)
+    }
+
     private func resolveFinalText() throws -> String {
-        if !sentenceEndResults.isEmpty {
-            let final = sentenceEndResults
-                .map(\.text)
-                .joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !final.isEmpty {
-                return final
-            }
+        let finalized = finalizedTranscript().trimmingCharacters(in: .whitespacesAndNewlines)
+        if !finalized.isEmpty {
+            return finalized
         }
 
         let fallback = latestPartialText.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -82,7 +82,7 @@ final class RemoteASRClient {
                 fileURL: audioFileURL,
                 model: configuration.trimmedModel,
                 languageCode: language.remoteASRLanguageCode,
-                prompt: configuration.trimmedPrompt
+                prompt: configuration.effectivePrompt(for: backend)
             )
 
             let (data, response) = try await session.data(for: request)

@@ -315,14 +315,23 @@ actor VolcengineRealtimeASRStreamingClient: RemoteASRStreamingClient {
                 case .partial(let text):
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
-                        latestPartialText = trimmed
-                        emit(event: .partial(text: trimmed))
+                        let merged = RealtimeTranscriptComposer.merge(
+                            cumulative: latestPartialText,
+                            incoming: trimmed
+                        )
+                        if merged != latestPartialText {
+                            latestPartialText = merged
+                            emit(event: .partial(text: merged))
+                        }
                     }
                     return
                 case .final(let text):
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
-                        latestPartialText = trimmed
+                        latestPartialText = RealtimeTranscriptComposer.merge(
+                            cumulative: latestPartialText,
+                            incoming: trimmed
+                        )
                     }
                     return
                 case .failed(let code, let message):
@@ -410,12 +419,20 @@ actor VolcengineRealtimeASRStreamingClient: RemoteASRStreamingClient {
         case .partial(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
-            latestPartialText = trimmed
-            emit(event: .partial(text: trimmed))
+            let merged = RealtimeTranscriptComposer.merge(
+                cumulative: latestPartialText,
+                incoming: trimmed
+            )
+            guard merged != latestPartialText else { return }
+            latestPartialText = merged
+            emit(event: .partial(text: merged))
         case .final(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                latestPartialText = trimmed
+                latestPartialText = RealtimeTranscriptComposer.merge(
+                    cumulative: latestPartialText,
+                    incoming: trimmed
+                )
             }
             let resolved = try resolveFinalText()
             finalText = resolved

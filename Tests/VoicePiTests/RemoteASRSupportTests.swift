@@ -50,4 +50,23 @@ struct RemoteASRSupportTests {
             try withAppID.validate(for: .remoteVolcengineASR)
         }
     }
+
+    @Test
+    func effectivePromptFallsBackToBuiltInBiasRulesWhenCustomPromptIsEmpty() {
+        let configuration = RemoteASRConfiguration(prompt: "")
+        let effective = configuration.effectivePrompt(for: .remoteVolcengineASR)
+
+        #expect(effective.contains("Built-in ASR bias rules:"))
+        #expect(effective.contains("Additional user hints:") == false)
+    }
+
+    @Test
+    func effectivePromptAppendsUserHintsAfterBuiltInRules() {
+        let configuration = RemoteASRConfiguration(prompt: "Prefer VoicePi product terms.")
+        let effective = configuration.effectivePrompt(for: .remoteAliyunASR)
+
+        #expect(effective.contains("Built-in ASR bias rules:"))
+        #expect(effective.contains("Additional user hints:"))
+        #expect(effective.contains("Prefer VoicePi product terms."))
+    }
 }

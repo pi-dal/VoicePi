@@ -149,8 +149,9 @@ enum VolcengineRealtimeProtocol {
             "enable_itn": true,
             "enable_punc": true
         ]
-        if !configuration.trimmedPrompt.isEmpty {
-            requestPayload["context"] = configuration.trimmedPrompt
+        let effectivePrompt = configuration.effectivePrompt(for: .remoteVolcengineASR)
+        if !effectivePrompt.isEmpty {
+            requestPayload["context"] = effectivePrompt
         }
 
         let payload: [String: Any] = [

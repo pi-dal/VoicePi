@@ -75,6 +75,49 @@ struct VolcengineRealtimeASRStreamingClientTests {
     }
 
     @Test
+    func partialEventsEmitCumulativeTranscriptAcrossChunks() async throws {
+        let firstPartialPayload = try JSONSerialization.data(
+            withJSONObject: ["result": ["text": "你好"]],
+            options: []
+        )
+        let secondPartialPayload = try JSONSerialization.data(
+            withJSONObject: ["result": ["text": "世界"]],
+            options: []
+        )
+        let transport = VolcMockWebSocketTransport(
+            incoming: [
+                .success(.data(makeACKFrame(sequence: 1))),
+                .success(.data(makeServerResponseFrame(sequence: 2, flags: 0x1, payload: firstPartialPayload))),
+                .success(.data(makeServerResponseFrame(sequence: 3, flags: 0x1, payload: secondPartialPayload)))
+            ]
+        )
+        let client = VolcengineRealtimeASRStreamingClient(transportFactory: { _ in transport })
+        let collector = VolcEventCollector()
+        let consumeTask = Task {
+            for await event in client.events {
+                collector.append(event)
+            }
+        }
+
+        try await client.connect(
+            configuration: .fixtureVolcengine(),
+            backend: .remoteVolcengineASR,
+            language: .english
+        )
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        await client.close()
+        consumeTask.cancel()
+
+        let partials = collector.values.compactMap { event -> String? in
+            guard case .partial(let text) = event else { return nil }
+            return text
+        }
+        #expect(partials.contains("你好"))
+        #expect(partials.contains("你好世界"))
+    }
+
+    @Test
     func sendAfterFinishThrowsInvalidState() async throws {
         let transport = VolcMockWebSocketTransport(
             incoming: [.success(.data(makeACKFrame(sequence: 1)))]

@@ -822,6 +822,35 @@ struct RemoteASRConfiguration: Codable, Equatable {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    func effectivePrompt(for backend: ASRBackend) -> String {
+        let builtIn = Self.builtInPrompt(for: backend)
+        let custom = trimmedPrompt
+
+        if builtIn.isEmpty { return custom }
+        if custom.isEmpty { return builtIn }
+
+        return """
+        \(builtIn)
+
+        Additional user hints:
+        \(custom)
+        """
+    }
+
+    private static func builtInPrompt(for backend: ASRBackend) -> String {
+        switch backend {
+        case .remoteOpenAICompatible, .remoteAliyunASR, .remoteVolcengineASR:
+            return """
+            Built-in ASR bias rules:
+            1. Keep transcription faithful, and only correct obvious recognition errors.
+            2. Preserve mixed Chinese-English text, punctuation intent, and technical wording.
+            3. When pronunciation is ambiguous, prefer common software terms and product names (for example: Python, JSON, JavaScript, TypeScript, OpenAI, GitHub, macOS, iOS, Aliyun, Volcengine).
+            """
+        case .appleSpeech:
+            return ""
+        }
+    }
+
     var trimmedVolcengineAppID: String {
         volcengineAppID.trimmingCharacters(in: .whitespacesAndNewlines)
     }
