@@ -3,7 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="canonical" href="https://voicepi.pi-dal.com/" />
     <title>VoicePi What's New</title>
+    <script>
+      const customDomain = "voicepi.pi-dal.com";
+      if (window.location.hostname.endsWith("github.io") && window.location.hostname !== customDomain) {
+        const nextUrl = `https://${customDomain}${window.location.pathname}${window.location.search}${window.location.hash}`;
+        window.location.replace(nextUrl);
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>
