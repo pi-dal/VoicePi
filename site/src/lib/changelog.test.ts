@@ -43,9 +43,10 @@ describe("compareVersionsDescending", () => {
 describe("loadChangelogEntries", () => {
   test("loads repository changelogs newest first and skips the template", async () => {
     const entries = await loadChangelogEntries("../docs/changelogs");
+    const sortedVersions = entries.map((entry) => entry.version).sort(compareVersionsDescending);
 
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries[0]?.version).toBe("1.3.2");
+    expect(entries[0]?.version).toBe(sortedVersions[0]);
     expect(entries.some((entry) => entry.slug === "TEMPLATE")).toBe(false);
     expect(entries[0]?.sections[0]?.title).toBe("Highlights");
   });
