@@ -21,6 +21,8 @@ xcuserdata/
 # Distribution
 dist/
 *.ipa
+site/dist/
+site/node_modules/
 
 # Debug
 *.hmap
@@ -30,5 +32,6 @@ dist/
 .zed/
 .claude/
 .codex/
+node_modules/
 !.vscode/extensions.json
 !.vscode/settings.json

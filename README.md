@@ -220,6 +220,23 @@ xattr -dr com.apple.quarantine /Applications/VoicePi.app
 /Applications/VoicePi.app/Contents/MacOS/VoicePi
 ```
 
+## Website
+
+This repository now includes a Vite-based GitHub Pages site workspace in `site/`.
+
+Local commands:
+
+```sh
+cd site
+pnpm install
+pnpm dev
+pnpm test -- --run
+pnpm typecheck
+pnpm build
+```
+
+The website consumes release content from `docs/changelogs/` at build time, so the release notes remain the single source of truth for both GitHub Releases and the Pages timeline.
+
 VoicePi is a menu-bar app (`LSUIElement`), so a successful launch does not create a Dock icon or a normal app window. Look for the icon in the macOS menu bar.
 
 Removing the quarantine attribute is not a substitute for proper distribution signing. Unsigned GitHub Release assets and local ad-hoc builds can still be rejected by Gatekeeper on some machines. If that happens, testers can also try the system override flow in **System Settings > Privacy & Security** after the first blocked launch. For a normal download-and-open experience, ship a Developer ID-signed and notarized build.
