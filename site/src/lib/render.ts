@@ -1,61 +1,86 @@
 import type { ChangelogEntry, InstallTab, SiteState, SiteTheme } from "../types";
 
-const installContent: Record<InstallTab, { title: string; detail: string; command: string; cta: string; href: string }> = {
+const installContent: Record<InstallTab, { title: string; detail: string; command: string; cta: string; href: string; renderCommand: () => string }> = {
   homebrew: {
     title: "Install with Homebrew",
     detail: "Recommended if you want the shortest install path and a package-managed update flow.",
     command: `brew tap pi-dal/voicepi https://github.com/pi-dal/VoicePi\nbrew install --cask pi-dal/voicepi/voicepi`,
     cta: "Open Homebrew Guide",
-    href: "https://github.com/pi-dal/VoicePi#install-with-homebrew"
+    href: "https://github.com/pi-dal/VoicePi#install-with-homebrew",
+    renderCommand: () => `
+      <span class="command-line">
+        <span class="token-prompt">$</span>
+        <span class="token-command">brew</span>
+        <span class="token-subcommand">tap</span>
+        <span class="token-value">pi-dal/voicepi</span>
+        <span class="token-url">https://github.com/pi-dal/VoicePi</span>
+      </span>
+      <span class="command-line">
+        <span class="token-prompt">$</span>
+        <span class="token-command">brew</span>
+        <span class="token-subcommand">install</span>
+        <span class="token-flag">--cask</span>
+        <span class="token-value">pi-dal/voicepi/voicepi</span>
+      </span>
+    `
   },
   download: {
     title: "Install from GitHub Releases",
     detail: "Use the versioned zip archive when you want the direct-download build and in-app update support.",
     command: `1. Open the latest GitHub Release\n2. Download VoicePi-<version>.zip\n3. Move VoicePi.app into /Applications`,
     cta: "Open Releases",
-    href: "https://github.com/pi-dal/VoicePi/releases"
+    href: "https://github.com/pi-dal/VoicePi/releases",
+    renderCommand: () => `
+      <span class="command-line">
+        <span class="token-step">1.</span>
+        <span class="token-subcommand">Open</span>
+        <span class="token-value">the latest GitHub Release</span>
+      </span>
+      <span class="command-line">
+        <span class="token-step">2.</span>
+        <span class="token-subcommand">Download</span>
+        <span class="token-value">VoicePi-&lt;version&gt;.zip</span>
+      </span>
+      <span class="command-line">
+        <span class="token-step">3.</span>
+        <span class="token-subcommand">Move</span>
+        <span class="token-value">VoicePi.app</span>
+        <span class="token-subcommand">into</span>
+        <span class="token-value">/Applications</span>
+      </span>
+    `
   }
 };
 
-const featureRows = [
+const highlightItems = [
   {
-    label: "Floating Overlay",
-    body: "The recorder stays close to the cursor path instead of opening a full transcript workspace."
-  },
-  {
-    label: "Clipboard Safety",
-    body: "Clipboard restoration keeps the final paste reliable instead of clobbering what was already in memory."
-  },
-  {
-    label: "Mode Cycle",
-    body: "Raw, Refinement, and Translate stay in the same shortcut loop, so mode switching does not disappear into settings."
-  },
-  {
-    label: "Backend Choice",
-    body: "Use Apple Speech locally or switch to a remote OpenAI-compatible ASR path when recognition quality matters more."
-  }
-];
-
-const galleryFrames = [
-  {
-    title: "Mode Cycle",
-    body: "The shortcut surface for Disabled, Refinement, and Translate.",
+    id: "mode-cycle",
+    navTitle: "Mode Cycle",
+    navBody: "Switch between Disabled, Refinement, and Translate from the same shortcut path.",
+    frameTitle: "Mode Cycle",
+    frameBody: "The shortcut surface for Disabled, Refinement, and Translate.",
     sunnyAlt: "VoicePi mode switch panel in Sunny Mode",
     moonAlt: "VoicePi mode switch panel in Moon Mode",
     sunnyImage: "/media/screenshots/mode-switch-sunny.png",
     moonImage: "/media/screenshots/mode-switch-moon.png"
   },
   {
-    title: "Recording Overlay",
-    body: "A focused capture window with transcript feedback while you speak.",
+    id: "recording-overlay",
+    navTitle: "Recording Overlay",
+    navBody: "A compact floating capture surface stays close to the active app while transcript feedback updates live.",
+    frameTitle: "Recording Overlay",
+    frameBody: "A focused capture window with transcript feedback while you speak.",
     sunnyAlt: "VoicePi recording overlay in Sunny Mode",
     moonAlt: "VoicePi recording overlay in Moon Mode",
     sunnyImage: "/media/screenshots/recording-sunny.png",
     moonImage: "/media/screenshots/recording-moon.png"
   },
   {
-    title: "Settings Home",
-    body: "The main configuration surface for shortcuts, permissions, ASR, and text processing.",
+    id: "settings-home",
+    navTitle: "Settings Home",
+    navBody: "Shortcuts, permissions, ASR, and text processing stay in one place without collapsing into a wall of subpanels.",
+    frameTitle: "Settings Home",
+    frameBody: "The main configuration surface for shortcuts, permissions, ASR, and text processing.",
     sunnyAlt: "VoicePi settings home in Sunny Mode",
     moonAlt: "VoicePi settings home in Moon Mode",
     sunnyImage: "/media/screenshots/settings-home-sunny.png",
@@ -132,15 +157,28 @@ function resolveThemeLabel(theme: SiteTheme): string {
   return theme === "sunny" ? "Sunny Mode" : "Moon Mode";
 }
 
+function renderHighlightNav(): string {
+  return highlightItems.map((item, index) => `
+    <a
+      class="highlight-nav-button${index === 0 ? " is-active" : ""}"
+      href="#highlight-frame-${item.id}"
+      data-highlight-link="${item.id}"
+    >
+      <span class="highlight-nav-title">${item.navTitle}</span>
+      <span class="highlight-nav-body">${item.navBody}</span>
+    </a>
+  `).join("");
+}
+
 function renderGalleryFrames(): string {
-  return galleryFrames.map((frame) => `
-    <article class="gallery-frame">
+  return highlightItems.map((frame, index) => `
+    <article class="gallery-frame${index === 0 ? " is-active" : ""}" id="highlight-frame-${frame.id}" data-highlight-frame="${frame.id}">
       <header class="gallery-frame-head">
         <div>
           <p class="gallery-kicker">Capture</p>
-          <h3>${frame.title}</h3>
+          <h3>${frame.frameTitle}</h3>
         </div>
-        <p>${frame.body}</p>
+        <p>${frame.frameBody}</p>
       </header>
       <div class="gallery-pair">
         <figure class="gallery-shot">
@@ -219,7 +257,7 @@ export function renderApp(state: SiteState): string {
               <p>${install.detail}</p>
             </div>
 
-            <pre class="install-command"><code>${escapeHtml(install.command)}</code></pre>
+            <pre class="install-command"><code>${install.renderCommand()}</code></pre>
 
             <div class="install-actions">
               <button class="copy-button" data-copy="${escapeHtml(install.command)}">Copy Command</button>
@@ -234,25 +272,26 @@ export function renderApp(state: SiteState): string {
           <p class="eyebrow">Highlights</p>
           <h2 id="highlights-title">A simpler page, with the product details doing the real work.</h2>
           <p>
-            Instead of stacking cards, the site keeps one continuous explanation surface:
-            what VoicePi does, why the interaction stays compact, and how the interface looks in both supported themes.
+            Instead of stacking cards, the site now uses a left-side jump list and a single explanation window:
+            click a section, then read its paired Sunny / Moon view on the right.
           </p>
         </div>
 
         <div class="highlight-surface">
           <div class="feature-list">
-            ${featureRows.map((feature) => `
-              <article class="feature-row">
-                <h3>${feature.label}</h3>
-                <p>${feature.body}</p>
-              </article>
-            `).join("")}
+            <div class="feature-list-head">
+              <p class="gallery-window-kicker">Jump Between Views</p>
+              <p>Each section on the left maps to one explanation surface on the right.</p>
+            </div>
+            <nav class="highlight-nav" aria-label="Highlight sections">
+              ${renderHighlightNav()}
+            </nav>
           </div>
 
           <div class="gallery-window">
             <div class="gallery-window-head">
               <p class="gallery-window-kicker">Windowed Gallery</p>
-              <p>Scrollable capture sets for Sunny Mode and Moon Mode.</p>
+              <p>Click any section on the left to scroll this window to its paired explanation.</p>
             </div>
             <div class="gallery-track">
               ${renderGalleryFrames()}

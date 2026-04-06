@@ -158,6 +158,38 @@ function render(): void {
       }, 1400);
     });
   });
+
+  const highlightLinks = [...root.querySelectorAll<HTMLAnchorElement>("[data-highlight-link]")];
+  const highlightFrames = [...root.querySelectorAll<HTMLElement>("[data-highlight-frame]")];
+
+  const setActiveHighlight = (targetId: string) => {
+    highlightLinks.forEach((link) => {
+      link.classList.toggle("is-active", link.dataset.highlightLink === targetId);
+    });
+
+    highlightFrames.forEach((frame) => {
+      frame.classList.toggle("is-active", frame.dataset.highlightFrame === targetId);
+    });
+  };
+
+  highlightLinks.forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const targetId = link.dataset.highlightLink ?? "";
+      const frame = root.querySelector<HTMLElement>(`[data-highlight-frame="${targetId}"]`);
+
+      if (!frame) {
+        return;
+      }
+
+      setActiveHighlight(targetId);
+      frame.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest"
+      });
+    });
+  });
 }
 
 render();
