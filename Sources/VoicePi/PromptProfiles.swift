@@ -525,7 +525,7 @@ struct PromptLibrary: Equatable {
             }
         }
 
-        if let resourceDirectory = findBundledResourceDirectory(near: [Bundle.main] + Bundle.allBundles + Bundle.allFrameworks) {
+        if let resourceDirectory = findBundledResourceDirectory(near: [Bundle.main]) {
             return .directory(resourceDirectory)
         }
 

@@ -190,6 +190,16 @@ struct PromptWorkspaceTests {
 
         #expect(library.profile(id: "fixture.profile")?.title == "Fixture Profile")
     }
+
+    @Test
+    func bundledLibraryDefaultLookupIgnoresTemporaryHostBundleFixtures() throws {
+        _ = try PromptLibraryHostBundleFixture(resourceBundleLocation: .contentsResources)
+
+        let library = try PromptLibrary.loadBundled()
+
+        #expect(library.profile(id: "meeting_notes")?.title == "Meeting Notes")
+        #expect(library.profile(id: "fixture.profile") == nil)
+    }
 }
 
 private struct PromptLibraryHostBundleFixture {
