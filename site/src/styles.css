@@ -31,10 +31,10 @@ body[data-theme="sunny"] {
   --hero-shadow: 0 46px 120px rgba(143, 96, 25, 0.14);
   --panel-shadow: 0 26px 58px rgba(143, 96, 25, 0.1);
   --beam: rgba(255, 243, 188, 0.82);
-  --theme-orb-a: rgba(255, 210, 103, 0.82);
-  --theme-orb-b: rgba(255, 237, 178, 0.62);
-  --theme-orb-c: rgba(226, 142, 33, 0.18);
-  --particle: rgba(210, 126, 36, 0.72);
+  --theme-sun-core: #ffc44d;
+  --theme-sun-halo: rgba(255, 215, 120, 0.72);
+  --theme-sun-glint: rgba(255, 245, 206, 0.82);
+  --particle: rgba(210, 126, 36, 0.82);
 }
 
 body[data-theme="moon"] {
@@ -55,9 +55,9 @@ body[data-theme="moon"] {
   --hero-shadow: 0 48px 140px rgba(1, 5, 14, 0.55);
   --panel-shadow: 0 28px 72px rgba(0, 0, 0, 0.34);
   --beam: rgba(18, 32, 56, 0.82);
-  --theme-orb-a: rgba(196, 214, 255, 0.32);
-  --theme-orb-b: rgba(110, 145, 255, 0.22);
-  --theme-orb-c: rgba(10, 23, 43, 0.42);
+  --theme-moon-core: #dbe7ff;
+  --theme-moon-halo: rgba(150, 180, 255, 0.26);
+  --theme-moon-shadow: rgba(6, 15, 29, 0.88);
   --particle: rgba(214, 228, 255, 0.9);
 }
 
@@ -136,63 +136,143 @@ button {
   overflow: hidden;
 }
 
-.theme-orb,
+.theme-celestial,
 .theme-particle {
   position: absolute;
 }
 
-.theme-orb {
+.theme-celestial {
+  top: 58px;
+  right: min(6vw, 88px);
+}
+
+.theme-celestial-halo {
+  width: 320px;
+  height: 320px;
   border-radius: 999px;
-  filter: blur(2px);
+  filter: blur(4px);
   animation: orb-float 18s ease-in-out infinite;
 }
 
-.theme-orb-a {
-  top: 72px;
-  right: min(6vw, 88px);
-  width: 180px;
-  height: 180px;
-  background: radial-gradient(circle, var(--theme-orb-a), transparent 68%);
+.theme-celestial-core {
+  width: 132px;
+  height: 132px;
+  border-radius: 999px;
+  animation: orb-float 18s ease-in-out infinite;
 }
 
-.theme-orb-b {
-  top: 118px;
-  right: min(10vw, 160px);
-  width: 360px;
-  height: 360px;
-  background: radial-gradient(circle, var(--theme-orb-b), transparent 72%);
-  animation-delay: -6s;
-}
-
-.theme-orb-c {
-  bottom: 14%;
-  left: 8%;
-  width: 280px;
-  height: 280px;
-  background: radial-gradient(circle, var(--theme-orb-c), transparent 70%);
-  animation-delay: -11s;
+.theme-celestial-mask,
+.theme-celestial-glint {
+  pointer-events: none;
 }
 
 .theme-particle {
   background: var(--particle);
 }
 
+body[data-theme="sunny"] .theme-celestial-halo {
+  background: radial-gradient(circle, var(--theme-sun-halo), transparent 68%);
+}
+
+body[data-theme="sunny"] .theme-celestial-core {
+  background:
+    radial-gradient(circle at 32% 28%, #fff6d4 0, rgba(255, 246, 212, 0.9) 18%, transparent 19%),
+    radial-gradient(circle at 50% 50%, var(--theme-sun-core) 0, #ffb229 64%, #eb8616 100%);
+  box-shadow:
+    0 0 0 12px rgba(255, 222, 155, 0.18),
+    0 0 120px rgba(255, 197, 72, 0.48);
+}
+
+body[data-theme="sunny"] .theme-celestial-mask {
+  display: none;
+}
+
+body[data-theme="sunny"] .theme-celestial-glint {
+  top: 102px;
+  right: min(10vw, 136px);
+  width: 220px;
+  height: 220px;
+  background:
+    radial-gradient(circle, transparent 52%, rgba(255, 238, 182, 0.68) 53%, transparent 58%),
+    radial-gradient(circle, transparent 64%, rgba(255, 248, 220, 0.44) 65%, transparent 69%);
+  border-radius: 999px;
+  animation: glint-spin 20s linear infinite;
+}
+
 body[data-theme="sunny"] .theme-particle {
-  width: 18px;
-  height: 10px;
-  border-radius: 80% 20% 75% 25%;
-  box-shadow: 0 0 18px rgba(255, 201, 121, 0.22);
-  animation: sunny-drift 16s linear infinite;
+  width: 26px;
+  height: 14px;
+  clip-path: path("M13 0 C21 1 26 6 26 14 C19 13 11 12 0 6 C3 2 8 0 13 0 Z");
+  background:
+    linear-gradient(135deg, rgba(255, 224, 156, 0.95), rgba(221, 120, 28, 0.92));
+  border: 1px solid rgba(169, 92, 21, 0.22);
+  box-shadow:
+    0 8px 22px rgba(220, 143, 40, 0.22),
+    inset -2px -2px 4px rgba(166, 88, 15, 0.16);
+  animation: sunny-leaf-drift 18s linear infinite;
+}
+
+body[data-theme="moon"] .theme-celestial-halo {
+  background: radial-gradient(circle, var(--theme-moon-halo), transparent 70%);
+}
+
+body[data-theme="moon"] .theme-celestial-core {
+  background:
+    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0) 16%),
+    radial-gradient(circle at 50% 50%, var(--theme-moon-core) 0, #c9d9ff 62%, #94b0ff 100%);
+  box-shadow:
+    0 0 0 10px rgba(193, 213, 255, 0.08),
+    0 0 120px rgba(136, 165, 255, 0.24);
+}
+
+body[data-theme="moon"] .theme-celestial-mask {
+  top: 72px;
+  right: min(6vw, 52px);
+  width: 120px;
+  height: 120px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 42% 38%, rgba(19, 33, 56, 0.92), var(--theme-moon-shadow));
+  opacity: 0.92;
+}
+
+body[data-theme="moon"] .theme-celestial-glint {
+  top: 84px;
+  right: min(9vw, 120px);
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  border: 1px solid rgba(197, 216, 255, 0.14);
+  box-shadow: 0 0 48px rgba(121, 154, 255, 0.16);
 }
 
 body[data-theme="moon"] .theme-particle {
-  width: 3px;
-  height: 3px;
+  width: 5px;
+  height: 5px;
   border-radius: 999px;
+  background: rgba(236, 243, 255, 0.96);
   box-shadow:
-    0 0 0 2px rgba(214, 228, 255, 0.08),
-    0 0 18px rgba(214, 228, 255, 0.42);
+    0 0 0 3px rgba(214, 228, 255, 0.06),
+    0 0 28px rgba(214, 228, 255, 0.52);
   animation: moon-twinkle 4.6s ease-in-out infinite;
+}
+
+body[data-theme="moon"] .theme-particle::before,
+body[data-theme="moon"] .theme-particle::after {
+  content: "";
+  position: absolute;
+  inset: 50%;
+  background: rgba(236, 243, 255, 0.78);
+  transform: translate(-50%, -50%);
+}
+
+body[data-theme="moon"] .theme-particle::before {
+  width: 16px;
+  height: 1px;
+}
+
+body[data-theme="moon"] .theme-particle::after {
+  width: 1px;
+  height: 16px;
 }
 
 .theme-particle-1 {
@@ -229,6 +309,18 @@ body[data-theme="moon"] .theme-particle {
   bottom: 18%;
   right: 24%;
   animation-delay: -8.1s;
+}
+
+.theme-particle-7 {
+  top: 24%;
+  right: 30%;
+  animation-delay: -3.3s;
+}
+
+.theme-particle-8 {
+  bottom: 32%;
+  right: 14%;
+  animation-delay: -6.6s;
 }
 
 .page-shell {
@@ -930,6 +1022,23 @@ body[data-theme="moon"] .footprint {
   }
 }
 
+@keyframes sunny-leaf-drift {
+  0% {
+    transform: translate3d(0, -8px, 0) rotate(0deg) scale(0.92);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.9;
+  }
+  45% {
+    transform: translate3d(36px, 22px, 0) rotate(78deg) scale(1);
+  }
+  100% {
+    transform: translate3d(92px, 144px, 0) rotate(238deg) scale(0.84);
+    opacity: 0;
+  }
+}
+
 @keyframes moon-twinkle {
   0%,
   100% {
@@ -939,6 +1048,15 @@ body[data-theme="moon"] .footprint {
   50% {
     transform: scale(1.55);
     opacity: 1;
+  }
+}
+
+@keyframes glint-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 
