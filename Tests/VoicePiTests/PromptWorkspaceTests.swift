@@ -172,4 +172,133 @@ struct PromptWorkspaceTests {
         #expect(workspace.activeSelection == .builtInDefault)
         #expect(workspace.userPresets.isEmpty)
     }
+
+    @Test
+    func bundledLibraryLoadsWhenPassedPackagedAppBundle() throws {
+        let fixture = try PromptLibraryHostBundleFixture(resourceBundleLocation: .contentsResources)
+
+        let library = try PromptLibrary.loadBundled(bundle: fixture.hostBundle)
+
+        #expect(library.profile(id: "fixture.profile")?.title == "Fixture Profile")
+    }
+
+    @Test
+    func bundledLibraryLoadsWhenPassedHostBundleWithExecutableSiblingResources() throws {
+        let fixture = try PromptLibraryHostBundleFixture(resourceBundleLocation: .executableSibling)
+
+        let library = try PromptLibrary.loadBundled(bundle: fixture.hostBundle)
+
+        #expect(library.profile(id: "fixture.profile")?.title == "Fixture Profile")
+    }
+}
+
+private struct PromptLibraryHostBundleFixture {
+    enum ResourceBundleLocation {
+        case contentsResources
+        case executableSibling
+    }
+
+    let rootURL: URL
+    let hostBundle: Bundle
+
+    init(resourceBundleLocation: ResourceBundleLocation) throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        self.rootURL = rootURL
+
+        let appURL = rootURL.appendingPathComponent("VoicePi.app", isDirectory: true)
+        let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
+        let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+        let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>VoicePi</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.voicepi.fixture</string>
+            <key>CFBundleName</key>
+            <string>VoicePi</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+        </dict>
+        </plist>
+        """
+        try plist.write(
+            to: contentsURL.appendingPathComponent("Info.plist"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Data().write(to: macOSURL.appendingPathComponent("VoicePi"))
+
+        let resourceBundleBaseURL: URL
+        switch resourceBundleLocation {
+        case .contentsResources:
+            resourceBundleBaseURL = resourcesURL
+        case .executableSibling:
+            resourceBundleBaseURL = macOSURL
+        }
+
+        let promptBundleURL = resourceBundleBaseURL
+            .appendingPathComponent("VoicePi_VoicePi.bundle", isDirectory: true)
+        try FileManager.default.createDirectory(at: promptBundleURL, withIntermediateDirectories: true)
+
+        let registry = """
+        {
+          "profileIDs": ["fixture.profile"],
+          "fragmentIDs": [],
+          "optionGroups": []
+        }
+        """
+        try registry.write(
+            to: promptBundleURL.appendingPathComponent("registry.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let profile = """
+        {
+          "id": "fixture.profile",
+          "title": "Fixture Profile",
+          "description": "Fixture description",
+          "body": "Fixture body",
+          "optionGroupIDs": []
+        }
+        """
+        try profile.write(
+            to: promptBundleURL.appendingPathComponent("fixture.profile.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let policy = """
+        {
+          "appID": "com.pi-dal.voicepi",
+          "title": "VoicePi",
+          "allowedProfileIDs": ["fixture.profile"],
+          "defaultProfileID": "fixture.profile",
+          "visibleOptionGroupIDs": []
+        }
+        """
+        try policy.write(
+            to: promptBundleURL.appendingPathComponent("voicepi.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        guard let hostBundle = Bundle(url: appURL) else {
+            throw FixtureError.failedToOpenHostBundle(appURL.path)
+        }
+        self.hostBundle = hostBundle
+    }
+
+    private enum FixtureError: Error {
+        case failedToOpenHostBundle(String)
+    }
 }

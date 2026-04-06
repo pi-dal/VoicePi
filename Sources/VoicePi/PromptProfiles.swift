@@ -440,6 +440,8 @@ struct PromptTemplateFormState: Equatable {
 }
 
 struct PromptLibrary: Equatable {
+    static let bundledResourceBundleName = "VoicePi_VoicePi"
+
     let optionGroups: [String: PromptOptionGroup]
     let profiles: [String: PromptProfile]
     let fragments: [String: PromptFragment]
@@ -472,7 +474,8 @@ struct PromptLibrary: Equatable {
             }
     }
 
-    static func loadBundled(bundle: Bundle = .module) throws -> PromptLibrary {
+    static func loadBundled(bundle: Bundle? = nil) throws -> PromptLibrary {
+        let resourceContainer = try resolveBundledResourceContainer(from: bundle)
         let decoder = JSONDecoder()
 
         let registry = try decoder.decode(
@@ -480,26 +483,26 @@ struct PromptLibrary: Equatable {
             from: loadResource(
                 named: "registry",
                 extension: "json",
-                bundle: bundle
+                container: resourceContainer
             )
         )
 
         let profiles = try registry.profileIDs.map {
             try decoder.decode(
                 PromptProfile.self,
-                from: loadResource(named: $0, extension: "json", bundle: bundle)
+                from: loadResource(named: $0, extension: "json", container: resourceContainer)
             )
         }
         let fragments = try registry.fragmentIDs.map {
             try decoder.decode(
                 PromptFragment.self,
-                from: loadResource(named: $0, extension: "json", bundle: bundle)
+                from: loadResource(named: $0, extension: "json", container: resourceContainer)
             )
         }
         let appPolicies = try PromptAppID.allCases.map {
             try decoder.decode(
                 PromptAppPolicy.self,
-                from: loadResource(named: $0.resourceName, extension: "json", bundle: bundle)
+                from: loadResource(named: $0.resourceName, extension: "json", container: resourceContainer)
             )
         }
 
@@ -511,16 +514,118 @@ struct PromptLibrary: Equatable {
         )
     }
 
+    private static func resolveBundledResourceContainer(from bundle: Bundle?) throws -> PromptResourceContainer {
+        if let bundle {
+            if bundle.url(forResource: "registry", withExtension: "json") != nil {
+                return .bundle(bundle)
+            }
+
+            if let resourceDirectory = findBundledResourceDirectory(near: [bundle]) {
+                return .directory(resourceDirectory)
+            }
+        }
+
+        if let resourceDirectory = findBundledResourceDirectory(near: [Bundle.main] + Bundle.allBundles + Bundle.allFrameworks) {
+            return .directory(resourceDirectory)
+        }
+
+        throw PromptLibraryError.missingResourceBundle("\(bundledResourceBundleName).bundle")
+    }
+
+    private static func findBundledResourceDirectory(near hostBundles: [Bundle]) -> URL? {
+        var seenPaths: Set<String> = []
+
+        for hostBundle in hostBundles {
+            for candidateURL in bundledResourceBundleCandidateURLs(near: hostBundle) {
+                let candidatePath = candidateURL.standardizedFileURL.path
+                guard seenPaths.insert(candidatePath).inserted else { continue }
+                let registryURL = candidateURL.appendingPathComponent("registry.json")
+                guard FileManager.default.fileExists(atPath: registryURL.path) else { continue }
+                return candidateURL
+            }
+        }
+
+        if let buildDirectoryResource = findBundledResourceDirectoryInBuildProducts() {
+            return buildDirectoryResource
+        }
+
+        return nil
+    }
+
+    private static func bundledResourceBundleCandidateURLs(near hostBundle: Bundle) -> [URL] {
+        let bundleDirectoryName = "\(bundledResourceBundleName).bundle"
+        var urls: [URL] = []
+        var seenPaths: Set<String> = []
+
+        func append(_ url: URL?) {
+            guard let url else { return }
+            let path = url.standardizedFileURL.path
+            guard seenPaths.insert(path).inserted else { return }
+            urls.append(url)
+        }
+
+        append(hostBundle.resourceURL?.appendingPathComponent(bundleDirectoryName, isDirectory: true))
+        append(hostBundle.bundleURL.appendingPathComponent(bundleDirectoryName, isDirectory: true))
+        append(hostBundle.bundleURL.deletingLastPathComponent().appendingPathComponent(bundleDirectoryName, isDirectory: true))
+        append(hostBundle.executableURL?.deletingLastPathComponent().appendingPathComponent(bundleDirectoryName, isDirectory: true))
+
+        return urls
+    }
+
+    private static func findBundledResourceDirectoryInBuildProducts() -> URL? {
+        let fileManager = FileManager.default
+        let currentDirectoryURL = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+
+        guard fileManager.fileExists(atPath: currentDirectoryURL.appendingPathComponent("Package.swift").path) else {
+            return nil
+        }
+
+        let buildDirectoryURL = currentDirectoryURL.appendingPathComponent(".build", isDirectory: true)
+        guard let enumerator = fileManager.enumerator(
+            at: buildDirectoryURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let bundleDirectoryName = "\(bundledResourceBundleName).bundle"
+        for case let candidateURL as URL in enumerator {
+            guard candidateURL.lastPathComponent == bundleDirectoryName else { continue }
+            let registryURL = candidateURL.appendingPathComponent("registry.json")
+            guard fileManager.fileExists(atPath: registryURL.path) else { continue }
+            return candidateURL
+        }
+
+        return nil
+    }
+
     private static func loadResource(
         named name: String,
         extension ext: String,
-        bundle: Bundle
+        container: PromptResourceContainer
     ) throws -> Data {
-        guard let url = bundle.url(forResource: name, withExtension: ext) else {
+        guard let url = container.url(forResource: name, withExtension: ext) else {
             throw PromptLibraryError.missingResource("\(name).\(ext)")
         }
 
         return try Data(contentsOf: url)
+    }
+}
+
+private enum PromptResourceContainer {
+    case bundle(Bundle)
+    case directory(URL)
+
+    func url(forResource name: String, withExtension ext: String) -> URL? {
+        switch self {
+        case .bundle(let bundle):
+            return bundle.url(forResource: name, withExtension: ext)
+        case .directory(let directoryURL):
+            let resourceURL = directoryURL.appendingPathComponent("\(name).\(ext)")
+            guard FileManager.default.fileExists(atPath: resourceURL.path) else { return nil }
+            return resourceURL
+        }
     }
 }
 
@@ -556,6 +661,7 @@ struct PromptResolutionDiagnostics: Equatable {
 }
 
 enum PromptLibraryError: Error, Equatable {
+    case missingResourceBundle(String)
     case missingResource(String)
     case missingPolicy(PromptAppID)
     case disallowedProfile(String, PromptAppID)
@@ -566,6 +672,8 @@ enum PromptLibraryError: Error, Equatable {
 
     var diagnosticDescription: String {
         switch self {
+        case .missingResourceBundle(let bundleName):
+            return "Prompt library bundle '\(bundleName)' is missing."
         case .missingResource(let resourceName):
             return "Prompt library resource '\(resourceName)' is missing."
         case .missingPolicy(let appID):
