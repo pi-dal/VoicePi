@@ -126,6 +126,10 @@ function render(): void {
       <span class="theme-particle theme-particle-6"></span>
       <span class="theme-particle theme-particle-7"></span>
       <span class="theme-particle theme-particle-8"></span>
+      <span class="theme-particle theme-particle-9"></span>
+      <span class="theme-particle theme-particle-10"></span>
+      <span class="theme-particle theme-particle-11"></span>
+      <span class="theme-particle theme-particle-12"></span>
     </div>
     ${renderApp(state)}
   `;
