@@ -60,7 +60,7 @@ const highlightItems = [
     frameTitle: "Mode Cycle",
     frameBody: "The shortcut surface for Disabled, Refinement, and Translate.",
     sunnyAlt: "VoicePi mode switch panel in Sunny Mode",
-    moonAlt: "VoicePi mode switch panel in Moon Mode",
+    moonAlt: "VoicePi mode switch panel in Moonlight Mode",
     sunnyImage: "/media/screenshots/mode-switch-sunny.png",
     moonImage: "/media/screenshots/mode-switch-moon.png"
   },
@@ -71,7 +71,7 @@ const highlightItems = [
     frameTitle: "Recording Overlay",
     frameBody: "A focused capture window with transcript feedback while you speak.",
     sunnyAlt: "VoicePi recording overlay in Sunny Mode",
-    moonAlt: "VoicePi recording overlay in Moon Mode",
+    moonAlt: "VoicePi recording overlay in Moonlight Mode",
     sunnyImage: "/media/screenshots/recording-sunny.png",
     moonImage: "/media/screenshots/recording-moon.png"
   },
@@ -82,7 +82,7 @@ const highlightItems = [
     frameTitle: "Settings Home",
     frameBody: "The main configuration surface for shortcuts, permissions, ASR, and text processing.",
     sunnyAlt: "VoicePi settings home in Sunny Mode",
-    moonAlt: "VoicePi settings home in Moon Mode",
+    moonAlt: "VoicePi settings home in Moonlight Mode",
     sunnyImage: "/media/screenshots/settings-home-sunny.png",
     moonImage: "/media/screenshots/settings-home-moon.png"
   }
@@ -154,7 +154,7 @@ function renderReleaseSection(section: ChangelogEntry["sections"][number]): stri
 }
 
 function resolveThemeLabel(theme: SiteTheme): string {
-  return theme === "sunny" ? "Sunny Mode" : "Moon Mode";
+  return theme === "sunny" ? "Sunny Mode" : "Moonlight Mode";
 }
 
 function renderHighlightNav(activeHighlight: SiteState["activeHighlight"]): string {
@@ -186,7 +186,7 @@ function renderGalleryFrames(activeHighlight: SiteState["activeHighlight"]): str
           <img src="${frame.sunnyImage}" alt="${frame.sunnyAlt}" />
         </figure>
         <figure class="gallery-shot">
-          <figcaption>Moon Mode</figcaption>
+          <figcaption>Moonlight Mode</figcaption>
           <img src="${frame.moonImage}" alt="${frame.moonAlt}" />
         </figure>
       </div>
@@ -209,10 +209,10 @@ export function renderApp(state: SiteState): string {
     <main class="page-shell">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-topline">
-          <p class="eyebrow">Voice Input for macOS</p>
-          <div class="theme-switcher" role="tablist" aria-label="Theme modes">
-            <button class="theme-chip${state.theme === "sunny" ? " is-active" : ""}" data-theme="sunny" role="tab" aria-selected="${state.theme === "sunny"}">Sunny</button>
-            <button class="theme-chip${state.theme === "moon" ? " is-active" : ""}" data-theme="moon" role="tab" aria-selected="${state.theme === "moon"}">Moon</button>
+            <p class="eyebrow">Voice Input for macOS</p>
+            <div class="theme-switcher" role="tablist" aria-label="Theme modes">
+              <button class="theme-chip${state.theme === "sunny" ? " is-active" : ""}" data-theme="sunny" role="tab" aria-selected="${state.theme === "sunny"}">Sunny</button>
+            <button class="theme-chip${state.theme === "moon" ? " is-active" : ""}" data-theme="moon" role="tab" aria-selected="${state.theme === "moon"}">Moonlight</button>
           </div>
         </div>
 
@@ -282,7 +282,7 @@ export function renderApp(state: SiteState): string {
           <h2 id="highlights-title">A simpler page, with the product details doing the real work.</h2>
           <p>
             Instead of stacking cards, the site now uses a left-side jump list and a single explanation window:
-            click a section, then read its paired Sunny / Moon view on the right.
+            click a section, then read its paired Sunny / Moonlight view on the right.
           </p>
         </div>
 

@@ -15,42 +15,50 @@
 
 :root,
 body[data-theme="sunny"] {
-  --bg: #f5ecd9;
-  --panel: rgba(255, 248, 238, 0.74);
-  --panel-strong: rgba(255, 249, 239, 0.92);
-  --panel-soft: rgba(255, 251, 245, 0.62);
-  --line: rgba(133, 94, 31, 0.14);
-  --line-strong: rgba(133, 94, 31, 0.28);
-  --text: #25170a;
-  --text-soft: rgba(37, 23, 10, 0.74);
-  --text-faint: rgba(37, 23, 10, 0.5);
-  --accent: #ac6b18;
-  --accent-soft: rgba(172, 107, 24, 0.12);
-  --accent-strong: #7f4f12;
-  --hero-glow: rgba(247, 201, 110, 0.44);
-  --hero-shadow: 0 40px 110px rgba(102, 67, 24, 0.12);
-  --panel-shadow: 0 26px 58px rgba(102, 67, 24, 0.08);
-  --beam: rgba(255, 245, 218, 0.76);
+  --bg: #f8edcf;
+  --panel: rgba(255, 250, 239, 0.76);
+  --panel-strong: rgba(255, 248, 231, 0.94);
+  --panel-soft: rgba(255, 252, 244, 0.64);
+  --line: rgba(146, 104, 28, 0.15);
+  --line-strong: rgba(146, 104, 28, 0.28);
+  --text: #2d1d09;
+  --text-soft: rgba(45, 29, 9, 0.75);
+  --text-faint: rgba(45, 29, 9, 0.48);
+  --accent: #d97b1f;
+  --accent-soft: rgba(217, 123, 31, 0.13);
+  --accent-strong: #995312;
+  --hero-glow: rgba(255, 207, 99, 0.52);
+  --hero-shadow: 0 46px 120px rgba(143, 96, 25, 0.14);
+  --panel-shadow: 0 26px 58px rgba(143, 96, 25, 0.1);
+  --beam: rgba(255, 243, 188, 0.82);
+  --theme-orb-a: rgba(255, 210, 103, 0.82);
+  --theme-orb-b: rgba(255, 237, 178, 0.62);
+  --theme-orb-c: rgba(226, 142, 33, 0.18);
+  --particle: rgba(210, 126, 36, 0.72);
 }
 
 body[data-theme="moon"] {
   color-scheme: dark;
-  --bg: #07111c;
-  --panel: rgba(9, 18, 31, 0.76);
-  --panel-strong: rgba(11, 22, 37, 0.94);
-  --panel-soft: rgba(16, 29, 47, 0.66);
-  --line: rgba(173, 205, 255, 0.12);
-  --line-strong: rgba(173, 205, 255, 0.24);
-  --text: #eff4ff;
-  --text-soft: rgba(239, 244, 255, 0.76);
-  --text-faint: rgba(239, 244, 255, 0.5);
-  --accent: #8faeff;
-  --accent-soft: rgba(143, 174, 255, 0.14);
-  --accent-strong: #cedcff;
-  --hero-glow: rgba(85, 116, 221, 0.24);
-  --hero-shadow: 0 42px 130px rgba(0, 0, 0, 0.48);
-  --panel-shadow: 0 28px 70px rgba(0, 0, 0, 0.32);
-  --beam: rgba(16, 27, 43, 0.78);
+  --bg: #08111d;
+  --panel: rgba(8, 17, 30, 0.8);
+  --panel-strong: rgba(10, 20, 36, 0.95);
+  --panel-soft: rgba(14, 27, 47, 0.72);
+  --line: rgba(168, 200, 255, 0.14);
+  --line-strong: rgba(168, 200, 255, 0.26);
+  --text: #eef3ff;
+  --text-soft: rgba(238, 243, 255, 0.76);
+  --text-faint: rgba(238, 243, 255, 0.48);
+  --accent: #9db9ff;
+  --accent-soft: rgba(157, 185, 255, 0.16);
+  --accent-strong: #d8e3ff;
+  --hero-glow: rgba(124, 154, 255, 0.28);
+  --hero-shadow: 0 48px 140px rgba(1, 5, 14, 0.55);
+  --panel-shadow: 0 28px 72px rgba(0, 0, 0, 0.34);
+  --beam: rgba(18, 32, 56, 0.82);
+  --theme-orb-a: rgba(196, 214, 255, 0.32);
+  --theme-orb-b: rgba(110, 145, 255, 0.22);
+  --theme-orb-c: rgba(10, 23, 43, 0.42);
+  --particle: rgba(214, 228, 255, 0.9);
 }
 
 * {
@@ -94,7 +102,8 @@ button {
 
 .atmosphere-canvas,
 .noise-layer,
-.beam-layer {
+.beam-layer,
+.theme-atmosphere {
   position: fixed;
   inset: 0;
   pointer-events: none;
@@ -120,6 +129,106 @@ button {
     radial-gradient(circle at 9% 7%, var(--hero-glow), transparent 32%),
     linear-gradient(135deg, var(--beam), transparent 54%);
   opacity: 0.86;
+}
+
+.theme-atmosphere {
+  z-index: 1;
+  overflow: hidden;
+}
+
+.theme-orb,
+.theme-particle {
+  position: absolute;
+}
+
+.theme-orb {
+  border-radius: 999px;
+  filter: blur(2px);
+  animation: orb-float 18s ease-in-out infinite;
+}
+
+.theme-orb-a {
+  top: 72px;
+  right: min(6vw, 88px);
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, var(--theme-orb-a), transparent 68%);
+}
+
+.theme-orb-b {
+  top: 118px;
+  right: min(10vw, 160px);
+  width: 360px;
+  height: 360px;
+  background: radial-gradient(circle, var(--theme-orb-b), transparent 72%);
+  animation-delay: -6s;
+}
+
+.theme-orb-c {
+  bottom: 14%;
+  left: 8%;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, var(--theme-orb-c), transparent 70%);
+  animation-delay: -11s;
+}
+
+.theme-particle {
+  background: var(--particle);
+}
+
+body[data-theme="sunny"] .theme-particle {
+  width: 18px;
+  height: 10px;
+  border-radius: 80% 20% 75% 25%;
+  box-shadow: 0 0 18px rgba(255, 201, 121, 0.22);
+  animation: sunny-drift 16s linear infinite;
+}
+
+body[data-theme="moon"] .theme-particle {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 2px rgba(214, 228, 255, 0.08),
+    0 0 18px rgba(214, 228, 255, 0.42);
+  animation: moon-twinkle 4.6s ease-in-out infinite;
+}
+
+.theme-particle-1 {
+  top: 18%;
+  left: 8%;
+  animation-delay: -1s;
+}
+
+.theme-particle-2 {
+  top: 32%;
+  left: 22%;
+  animation-delay: -4s;
+}
+
+.theme-particle-3 {
+  top: 16%;
+  right: 18%;
+  animation-delay: -7s;
+}
+
+.theme-particle-4 {
+  top: 42%;
+  right: 10%;
+  animation-delay: -2.5s;
+}
+
+.theme-particle-5 {
+  bottom: 26%;
+  left: 14%;
+  animation-delay: -5.2s;
+}
+
+.theme-particle-6 {
+  bottom: 18%;
+  right: 24%;
+  animation-delay: -8.1s;
 }
 
 .page-shell {
@@ -353,6 +462,7 @@ h3 {
 
 .theme-chip.is-active,
 .install-tab.is-active,
+.highlight-nav-button.is-active,
 .copy-button:hover,
 .link-button:hover,
 .release-pill.is-active .release-select {
@@ -548,6 +658,24 @@ h3 {
   box-shadow:
     inset 3px 0 0 var(--accent),
     var(--panel-shadow);
+}
+
+body[data-theme="sunny"] .hero,
+body[data-theme="sunny"] .highlight-surface,
+body[data-theme="sunny"] .release-window,
+body[data-theme="sunny"] .footprint {
+  background:
+    linear-gradient(180deg, rgba(255, 253, 244, 0.84), rgba(255, 246, 226, 0.72)),
+    var(--panel);
+}
+
+body[data-theme="moon"] .hero,
+body[data-theme="moon"] .highlight-surface,
+body[data-theme="moon"] .release-window,
+body[data-theme="moon"] .footprint {
+  background:
+    linear-gradient(180deg, rgba(17, 29, 50, 0.86), rgba(8, 18, 31, 0.76)),
+    var(--panel);
 }
 
 .gallery-frame-head {
@@ -775,6 +903,42 @@ h3 {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes orb-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -14px, 0) scale(1.04);
+  }
+}
+
+@keyframes sunny-drift {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.78;
+  }
+  100% {
+    transform: translate3d(68px, 132px, 0) rotate(220deg);
+    opacity: 0;
+  }
+}
+
+@keyframes moon-twinkle {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.42;
+  }
+  50% {
+    transform: scale(1.55);
+    opacity: 1;
   }
 }
 

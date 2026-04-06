@@ -41,6 +41,8 @@ describe("renderApp", () => {
     expect(html).toContain('class="hero"');
     expect(html).toContain("Install with Homebrew");
     expect(html).toContain("Download Latest Release");
+    expect(html).toContain(">Sunny<");
+    expect(html).toContain(">Moonlight<");
     expect(html).toContain('class="token-command"');
     expect(html).toContain('class="token-subcommand"');
     expect(html).toContain('class="token-flag"');

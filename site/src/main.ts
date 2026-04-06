@@ -113,6 +113,17 @@ function render(): void {
     <canvas class="atmosphere-canvas" data-atmosphere aria-hidden="true"></canvas>
     <div class="noise-layer" aria-hidden="true"></div>
     <div class="beam-layer" aria-hidden="true"></div>
+    <div class="theme-atmosphere" aria-hidden="true">
+      <span class="theme-orb theme-orb-a"></span>
+      <span class="theme-orb theme-orb-b"></span>
+      <span class="theme-orb theme-orb-c"></span>
+      <span class="theme-particle theme-particle-1"></span>
+      <span class="theme-particle theme-particle-2"></span>
+      <span class="theme-particle theme-particle-3"></span>
+      <span class="theme-particle theme-particle-4"></span>
+      <span class="theme-particle theme-particle-5"></span>
+      <span class="theme-particle theme-particle-6"></span>
+    </div>
     ${renderApp(state)}
   `;
 
