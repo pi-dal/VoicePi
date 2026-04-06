@@ -5,6 +5,7 @@ import {
   createSiteState,
   toggleExpandedVersion,
   selectInstallTab,
+  selectHighlight,
   selectTheme,
   selectVersion
 } from "./site-state";
@@ -30,6 +31,7 @@ describe("createSiteState", () => {
 
     expect(state.installTab).toBe("homebrew");
     expect(state.theme).toBe("sunny");
+    expect(state.activeHighlight).toBe("mode-cycle");
     expect(state.activeVersion).toBe("1.3.2");
     expect([...state.expandedVersions]).toEqual(["1.3.2"]);
   });
@@ -41,6 +43,12 @@ describe("site state transitions", () => {
 
     expect(selectInstallTab(state, "download").installTab).toBe("download");
     expect(selectTheme(state, "sunny").theme).toBe("sunny");
+  });
+
+  test("switches the active highlight panel", () => {
+    const state = createSiteState(entries, "moon");
+
+    expect(selectHighlight(state, "recording-overlay").activeHighlight).toBe("recording-overlay");
   });
 
   test("selecting a version activates and expands it", () => {

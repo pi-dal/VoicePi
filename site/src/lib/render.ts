@@ -157,10 +157,10 @@ function resolveThemeLabel(theme: SiteTheme): string {
   return theme === "sunny" ? "Sunny Mode" : "Moon Mode";
 }
 
-function renderHighlightNav(): string {
-  return highlightItems.map((item, index) => `
+function renderHighlightNav(activeHighlight: SiteState["activeHighlight"]): string {
+  return highlightItems.map((item) => `
     <a
-      class="highlight-nav-button${index === 0 ? " is-active" : ""}"
+      class="highlight-nav-button${resolveHighlightClass(activeHighlight, item.id)}"
       href="#highlight-frame-${item.id}"
       data-highlight-link="${item.id}"
     >
@@ -170,9 +170,9 @@ function renderHighlightNav(): string {
   `).join("");
 }
 
-function renderGalleryFrames(): string {
-  return highlightItems.map((frame, index) => `
-    <article class="gallery-frame${index === 0 ? " is-active" : ""}" id="highlight-frame-${frame.id}" data-highlight-frame="${frame.id}">
+function renderGalleryFrames(activeHighlight: SiteState["activeHighlight"]): string {
+  return highlightItems.map((frame) => `
+    <article class="gallery-frame${resolveHighlightClass(activeHighlight, frame.id)}" id="highlight-frame-${frame.id}" data-highlight-frame="${frame.id}">
       <header class="gallery-frame-head">
         <div>
           <p class="gallery-kicker">Capture</p>
@@ -192,6 +192,13 @@ function renderGalleryFrames(): string {
       </div>
     </article>
   `).join("");
+}
+
+function resolveHighlightClass(
+  activeHighlight: SiteState["activeHighlight"],
+  id: typeof highlightItems[number]["id"]
+): string {
+  return activeHighlight === id ? " is-active" : "";
 }
 
 export function renderApp(state: SiteState): string {
@@ -216,15 +223,17 @@ export function renderApp(state: SiteState): string {
               <div>
                 <h1 id="hero-title">VoicePi</h1>
                 <p class="hero-intro">
-                  A menu bar dictation app for macOS that captures speech from a shortcut,
-                  optionally refines or translates it, and pastes the result back into the app you were already using.
+                  Menu bar voice input for macOS, designed to stay close to the app you are already using.
+                </p>
+                <p class="hero-intro hero-intro-secondary">
+                  Capture from a shortcut, optionally refine or translate it, then paste the result back with a safer final handoff.
                 </p>
               </div>
             </div>
 
             <p class="hero-summary">
-              ${resolveThemeLabel(state.theme)} keeps the same product structure while changing the page atmosphere,
-              screenshot pairing, shadow weight, and light direction.
+              ${resolveThemeLabel(state.theme)} keeps the same structure, but shifts the page atmosphere, screenshot pairing,
+              and shadow depth so the site feels like a real companion to the app.
             </p>
 
             <div class="hero-actions">
@@ -284,7 +293,7 @@ export function renderApp(state: SiteState): string {
               <p>Each section on the left maps to one explanation surface on the right.</p>
             </div>
             <nav class="highlight-nav" aria-label="Highlight sections">
-              ${renderHighlightNav()}
+              ${renderHighlightNav(state.activeHighlight)}
             </nav>
           </div>
 
@@ -294,7 +303,7 @@ export function renderApp(state: SiteState): string {
               <p>Click any section on the left to scroll this window to its paired explanation.</p>
             </div>
             <div class="gallery-track">
-              ${renderGalleryFrames()}
+              ${renderGalleryFrames(state.activeHighlight)}
             </div>
           </div>
         </div>

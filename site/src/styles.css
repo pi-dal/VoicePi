@@ -301,6 +301,10 @@ h3 {
   color: var(--text-soft);
 }
 
+.hero-intro-secondary {
+  margin-top: 10px;
+}
+
 .hero-actions,
 .theme-switcher,
 .install-tabs,
@@ -530,7 +534,7 @@ h3 {
 }
 
 .gallery-frame {
-  display: grid;
+  display: none;
   gap: 18px;
   min-width: 0;
   padding: 18px;
@@ -540,6 +544,7 @@ h3 {
 }
 
 .gallery-frame.is-active {
+  display: grid;
   box-shadow:
     inset 3px 0 0 var(--accent),
     var(--panel-shadow);

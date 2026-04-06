@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createSiteState } from "./site-state";
+import { createSiteState, selectHighlight } from "./site-state";
 import { renderApp } from "./render";
 import type { ChangelogEntry } from "../types";
 
@@ -79,5 +79,17 @@ describe("renderApp", () => {
 
     expect(html).toContain('highlight-nav-button is-active');
     expect(html).toContain('gallery-frame is-active');
+    expect(html.match(/gallery-frame is-active/g)?.length).toBe(1);
+  });
+
+  test("switching highlights only activates the selected gallery frame", () => {
+    const state = selectHighlight(createSiteState(entries, "sunny"), "recording-overlay");
+    const html = renderApp(state);
+
+    expect(html).toContain('data-highlight-link="recording-overlay"');
+    expect(html).toContain('data-highlight-frame="recording-overlay"');
+    expect(html).toContain('highlight-nav-button is-active"');
+    expect(html).toContain('gallery-frame is-active" id="highlight-frame-recording-overlay"');
+    expect(html.match(/gallery-frame is-active/g)?.length).toBe(1);
   });
 });

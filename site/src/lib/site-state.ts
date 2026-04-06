@@ -1,4 +1,4 @@
-import type { ChangelogEntry, InstallTab, SiteState, SiteTheme } from "../types";
+import type { ChangelogEntry, HighlightId, InstallTab, SiteState, SiteTheme } from "../types";
 
 export function createSiteState(
   entries: ChangelogEntry[],
@@ -10,6 +10,7 @@ export function createSiteState(
     entries,
     theme: initialTheme,
     installTab: "homebrew",
+    activeHighlight: "mode-cycle",
     activeVersion: latestVersion,
     expandedVersions: new Set(latestVersion ? [latestVersion] : [])
   };
@@ -26,6 +27,13 @@ export function selectTheme(state: SiteState, theme: SiteTheme): SiteState {
   return {
     ...state,
     theme
+  };
+}
+
+export function selectHighlight(state: SiteState, highlight: HighlightId): SiteState {
+  return {
+    ...state,
+    activeHighlight: highlight
   };
 }
 

@@ -1,8 +1,8 @@
 import "./styles.css";
 
-import { selectInstallTab, selectTheme, selectVersion, toggleExpandedVersion, createSiteState } from "./lib/site-state";
+import { selectHighlight, selectInstallTab, selectTheme, selectVersion, toggleExpandedVersion, createSiteState } from "./lib/site-state";
 import { renderApp } from "./lib/render";
-import type { InstallTab, SiteTheme } from "./types";
+import type { HighlightId, InstallTab, SiteTheme } from "./types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -160,34 +160,16 @@ function render(): void {
   });
 
   const highlightLinks = [...root.querySelectorAll<HTMLAnchorElement>("[data-highlight-link]")];
-  const highlightFrames = [...root.querySelectorAll<HTMLElement>("[data-highlight-frame]")];
-
-  const setActiveHighlight = (targetId: string) => {
-    highlightLinks.forEach((link) => {
-      link.classList.toggle("is-active", link.dataset.highlightLink === targetId);
-    });
-
-    highlightFrames.forEach((frame) => {
-      frame.classList.toggle("is-active", frame.dataset.highlightFrame === targetId);
-    });
-  };
-
   highlightLinks.forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
-      const targetId = link.dataset.highlightLink ?? "";
-      const frame = root.querySelector<HTMLElement>(`[data-highlight-frame="${targetId}"]`);
-
-      if (!frame) {
+      const targetId = link.dataset.highlightLink as HighlightId | undefined;
+      if (!targetId) {
         return;
       }
 
-      setActiveHighlight(targetId);
-      frame.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "nearest"
-      });
+      state = selectHighlight(state, targetId);
+      render();
     });
   });
 }
