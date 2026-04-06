@@ -2,6 +2,6 @@
   "id": "json_output",
   "title": "JSON Output",
   "description": "Return the result in a small JSON shape.",
-  "body": "Format the result as structured JSON while preserving the transcript meaning.",
+  "body": "Return valid JSON only. Use exactly this schema: { \"text\": string }. The `text` value must contain only the final result text. If translation is active, `text` must contain only the final target-language result. Do not include extra keys such as `input`, `target`, `source`, or `language`.",
   "optionGroupIDs": ["strictness"]
 }

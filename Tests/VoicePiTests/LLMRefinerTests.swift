@@ -12,12 +12,17 @@ struct LLMRefinerTests {
     }
 
     @Test
-    func sanitizeStripsCodeFenceAndStructuredWrapper() {
-        #expect(LLMRefiner.sanitize(content: "```json\n{\"text\":\" refined \"}\n```", fallback: "fallback") == "refined")
+    func sanitizeStripsCodeFenceAndStructuredWrapper() throws {
+        let sanitized = try LLMRefiner.sanitize(
+            content: "```json\n{\"text\":\" refined \"}\n```",
+            fallback: "fallback"
+        )
+
+        #expect(sanitized == "refined")
     }
 
     @Test
-    func sanitizeStripsThinkBlocksFromModelOutput() {
+    func sanitizeStripsThinkBlocksFromModelOutput() throws {
         let content = """
         <think>
         The user said "你好" which means hello in Chinese.
@@ -26,12 +31,25 @@ struct LLMRefinerTests {
         Hello
         """
 
-        #expect(LLMRefiner.sanitize(content: content, fallback: "fallback") == "Hello")
+        let sanitized = try LLMRefiner.sanitize(content: content, fallback: "fallback")
+        #expect(sanitized == "Hello")
     }
 
     @Test
-    func sanitizeFallsBackWhenContentIsEmpty() {
-        #expect(LLMRefiner.sanitize(content: "   ", fallback: "fallback") == "fallback")
+    func sanitizeFallsBackWhenContentIsEmpty() throws {
+        let sanitized = try LLMRefiner.sanitize(content: "   ", fallback: "fallback")
+        #expect(sanitized == "fallback")
+    }
+
+    @Test
+    func sanitizeRejectsPlainTextWhenJSONOutputIsRequired() {
+        #expect(throws: LLMRefinerError.invalidStructuredResponse) {
+            _ = try LLMRefiner.sanitize(
+                content: "plain text output",
+                fallback: "fallback",
+                outputContract: .jsonText
+            )
+        }
     }
 
     @Test
@@ -118,6 +136,68 @@ struct LLMRefinerTests {
     }
 
     @Test
+    func refineAddsJSONResponseFormatWhenPromptRequiresJSONSchema() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configuration = LLMRefinerConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "gpt-test",
+            refinementPrompt: #"Return valid JSON only. Use exactly this schema: { "text": string }."#
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"{\"text\":\"refined output\"}"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        let result = try await refiner.refine(text: "raw input", configuration: configuration)
+
+        #expect(result == "refined output")
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
+        #expect(payload.responseFormat?.type == "json_object")
+    }
+
+    @Test
+    func refineRejectsPlainTextWhenJSONSchemaIsRequired() async {
+        let (session, _) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configuration = LLMRefinerConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "gpt-test",
+            refinementPrompt: #"Return valid JSON only. Use exactly this schema: { "text": string }."#
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"refined output"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        await #expect(throws: LLMRefinerError.invalidStructuredResponse) {
+            try await refiner.refine(text: "raw input", configuration: configuration)
+        }
+    }
+
+    @Test
     func translationPromptDoesNotContainConflictingRefinementOnlyRules() {
         let prompt = LLMRefiner.systemPrompt(
             mode: .refinement,
@@ -128,6 +208,20 @@ struct LLMRefinerTests {
         #expect(prompt.contains("Never rewrite, polish, summarize, rephrase, translate") == false)
         #expect(prompt.contains("If the input already looks correct, return it exactly as-is.") == false)
         #expect(prompt.contains("Output only the final translated text in Japanese.") == true)
+    }
+
+    @Test
+    func jsonPromptReplacesConflictingPlainTextOnlyRules() {
+        let prompt = LLMRefiner.systemPrompt(
+            mode: .refinement,
+            targetLanguage: .japanese,
+            refinementPrompt: #"Return valid JSON only. Use exactly this schema: { "text": string }."#
+        )
+
+        #expect(prompt.contains("Do not add explanations, markdown, JSON, quotes, or commentary.") == false)
+        #expect(prompt.contains(#"Use exactly this schema: { "text": string }."#) == true)
+        #expect(prompt.contains("The `text` value must contain only the final translated text in Japanese.") == true)
+        #expect(prompt.contains("Do not include source text, input text, target text") == true)
     }
 
     @Test
@@ -273,11 +367,22 @@ private final class LLMTestURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private struct LLMRefinerRequestPayload: Decodable {
+    struct ResponseFormat: Decodable {
+        let type: String
+    }
+
     struct Message: Decodable {
         let role: String
         let content: String
     }
 
     let model: String
+    let responseFormat: ResponseFormat?
     let messages: [Message]
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case responseFormat = "response_format"
+        case messages
+    }
 }

@@ -8,6 +8,7 @@ enum LLMRefinerError: LocalizedError, Equatable {
     case invalidHTTPResponse
     case badStatusCode(Int, String?)
     case emptyResponse
+    case invalidStructuredResponse
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum LLMRefinerError: LocalizedError, Equatable {
             return "The API request failed with status \(code)."
         case .emptyResponse:
             return "The API returned an empty completion."
+        case .invalidStructuredResponse:
+            return "The API returned an invalid structured completion."
         }
     }
 }
@@ -31,6 +34,11 @@ enum LLMRefinerError: LocalizedError, Equatable {
 enum LLMRefinerPromptMode: Equatable {
     case refinement
     case translation
+}
+
+enum LLMRefinerOutputContract: Equatable {
+    case plainText
+    case jsonText
 }
 
 final class LLMRefiner {
@@ -69,6 +77,17 @@ final class LLMRefiner {
     3. Do not add explanations, markdown, JSON, quotes, or commentary.
     """
 
+    static let structuredTranslationSystemPromptPrefix = """
+    You are translating automatic speech recognition output.
+
+    Your behavior must be extremely conservative.
+
+    Rules:
+    1. Only fix obvious speech recognition mistakes before translating.
+    2. Preserve the original meaning, tone, order, formatting intent, punctuation intent, and technical terms when they are already correct.
+    3. Do not add explanations, markdown, quotes, or commentary.
+    """
+
     private let session: URLSession
 
     init(session: URLSession = .shared) {
@@ -89,6 +108,11 @@ final class LLMRefiner {
         }
 
         let endpoint = Self.chatCompletionsEndpoint(from: baseURL)
+        let outputContract = Self.outputContract(
+            mode: mode,
+            targetLanguage: targetLanguage,
+            refinementPrompt: configuration.trimmedRefinementPrompt
+        )
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -102,6 +126,7 @@ final class LLMRefiner {
         let payload = ChatCompletionsRequest(
             model: configuration.trimmedModel,
             temperature: 0,
+            responseFormat: outputContract.responseFormat,
             messages: [
                 .init(
                     role: "system",
@@ -136,7 +161,11 @@ final class LLMRefiner {
             throw LLMRefinerError.emptyResponse
         }
 
-        let sanitized = Self.sanitize(content: content, fallback: text)
+        let sanitized = try Self.sanitize(
+            content: content,
+            fallback: text,
+            outputContract: outputContract
+        )
         return sanitized.isEmpty ? text : sanitized
     }
 
@@ -169,18 +198,30 @@ final class LLMRefiner {
         targetLanguage: SupportedLanguage?,
         refinementPrompt: String
     ) -> String {
+        let outputContract = outputContract(
+            mode: .refinement,
+            targetLanguage: targetLanguage,
+            refinementPrompt: refinementPrompt
+        )
+
         guard let targetLanguage else {
             return joinPromptSections(
                 conservativeSystemPromptPrefix,
                 customRefinementPromptSection(refinementPrompt),
-                conservativeSystemPromptSuffix
+                outputInstructions(
+                    for: outputContract,
+                    targetLanguage: nil
+                )
             )
         }
 
         return joinPromptSections(
-            translationSystemPromptPrefix,
+            outputContract == .jsonText ? structuredTranslationSystemPromptPrefix : translationSystemPromptPrefix,
             customRefinementPromptSection(refinementPrompt),
-            translationSystemPromptSuffix(targetLanguage: targetLanguage)
+            outputInstructions(
+                for: outputContract,
+                targetLanguage: targetLanguage
+            )
         )
     }
 
@@ -208,11 +249,69 @@ final class LLMRefiner {
         """
     }
 
+    private static func outputContract(
+        mode: LLMRefinerPromptMode,
+        targetLanguage: SupportedLanguage?,
+        refinementPrompt: String
+    ) -> LLMRefinerOutputContract {
+        guard mode == .refinement else {
+            return .plainText
+        }
+
+        let normalized = refinementPrompt.lowercased()
+        let requestsJSON = normalized.contains("json")
+        let specifiesTextSchema = normalized.contains("\"text\"") || normalized.contains("`text`")
+        let referencesSchema = normalized.contains("schema") || normalized.contains("valid json only")
+
+        guard requestsJSON, specifiesTextSchema, referencesSchema else {
+            return .plainText
+        }
+
+        _ = targetLanguage
+        return .jsonText
+    }
+
+    private static func outputInstructions(
+        for outputContract: LLMRefinerOutputContract,
+        targetLanguage: SupportedLanguage?
+    ) -> String {
+        switch outputContract {
+        case .plainText:
+            if let targetLanguage {
+                return translationSystemPromptSuffix(targetLanguage: targetLanguage)
+            }
+            return conservativeSystemPromptSuffix
+        case .jsonText:
+            if let targetLanguage {
+                return jsonTranslationSystemPromptSuffix(targetLanguage: targetLanguage)
+            }
+            return jsonRefinementSystemPromptSuffix
+        }
+    }
+
     private static func translationSystemPromptSuffix(targetLanguage: SupportedLanguage) -> String {
         """
         4. Translate the entire final output into \(targetLanguage.recognitionDisplayName).
         5. If some parts are already in \(targetLanguage.recognitionDisplayName), keep them natural and consistent with the final translated output.
         6. Output only the final translated text in \(targetLanguage.recognitionDisplayName).
+        """
+    }
+
+    private static let jsonRefinementSystemPromptSuffix = """
+    8. Return valid JSON only.
+    9. Use exactly this schema: { "text": string }.
+    10. The `text` value must contain only the minimally edited final output.
+    11. Do not include extra keys such as `input`, `target`, `source`, `language`, `summary`, or `notes`.
+    """
+
+    private static func jsonTranslationSystemPromptSuffix(targetLanguage: SupportedLanguage) -> String {
+        """
+        4. Translate the entire final output into \(targetLanguage.recognitionDisplayName).
+        5. If some parts are already in \(targetLanguage.recognitionDisplayName), keep them natural and consistent with the final translated output.
+        6. Return valid JSON only.
+        7. Use exactly this schema: { "text": string }.
+        8. The `text` value must contain only the final translated text in \(targetLanguage.recognitionDisplayName).
+        9. Do not include source text, input text, target text, language labels, or extra keys such as `input`, `target`, `source`, `summary`, or `notes`.
         """
     }
 
@@ -237,7 +336,11 @@ final class LLMRefiner {
         return URL(string: value + "/v1/chat/completions")!
     }
 
-    static func sanitize(content: String, fallback: String) -> String {
+    static func sanitize(
+        content: String,
+        fallback: String,
+        outputContract: LLMRefinerOutputContract = .plainText
+    ) throws -> String {
         var value = stripThinkBlocks(from: content)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -254,6 +357,10 @@ final class LLMRefiner {
         if let wrapped = try? JSONDecoder().decode(StructuredTextResponse.self, from: Data(value.utf8)) {
             let candidate = wrapped.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return candidate.isEmpty ? fallback : candidate
+        }
+
+        if outputContract == .jsonText {
+            throw LLMRefinerError.invalidStructuredResponse
         }
 
         return value
@@ -289,6 +396,12 @@ final class LLMRefiner {
 }
 
 private struct ChatCompletionsRequest: Encodable {
+    struct ResponseFormat: Encodable {
+        let type: String
+
+        static let jsonObject = ResponseFormat(type: "json_object")
+    }
+
     struct Message: Encodable {
         let role: String
         let content: String
@@ -296,7 +409,26 @@ private struct ChatCompletionsRequest: Encodable {
 
     let model: String
     let temperature: Double
+    let responseFormat: ResponseFormat?
     let messages: [Message]
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case temperature
+        case responseFormat = "response_format"
+        case messages
+    }
+}
+
+private extension LLMRefinerOutputContract {
+    var responseFormat: ChatCompletionsRequest.ResponseFormat? {
+        switch self {
+        case .plainText:
+            return nil
+        case .jsonText:
+            return .jsonObject
+        }
+    }
 }
 
 private struct ChatCompletionsResponse: Decodable {
