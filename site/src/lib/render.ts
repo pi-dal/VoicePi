@@ -290,7 +290,7 @@ export function renderApp(state: SiteState): string {
           <div class="feature-list">
             <div class="feature-list-head">
               <p class="gallery-window-kicker">Jump Between Views</p>
-              <p>Each section on the left maps to one explanation surface on the right.</p>
+              <p>Three product surfaces that define the VoicePi flow from shortcut to final paste.</p>
             </div>
             <nav class="highlight-nav" aria-label="Highlight sections">
               ${renderHighlightNav(state.activeHighlight)}
@@ -300,7 +300,7 @@ export function renderApp(state: SiteState): string {
           <div class="gallery-window">
             <div class="gallery-window-head">
               <p class="gallery-window-kicker">Windowed Gallery</p>
-              <p>Click any section on the left to scroll this window to its paired explanation.</p>
+              <p>The key VoicePi surfaces, shown in matched Sunny and Moonlight captures.</p>
             </div>
             <div class="gallery-track">
               ${renderGalleryFrames(state.activeHighlight)}

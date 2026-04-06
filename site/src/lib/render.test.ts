@@ -84,6 +84,16 @@ describe("renderApp", () => {
     expect(html.match(/gallery-frame is-active/g)?.length).toBe(1);
   });
 
+  test("uses product-facing copy in the highlights navigation and gallery header", () => {
+    const state = createSiteState(entries, "sunny");
+    const html = renderApp(state);
+
+    expect(html).toContain("Three product surfaces that define the VoicePi flow from shortcut to final paste.");
+    expect(html).toContain("The key VoicePi surfaces, shown in matched Sunny and Moonlight captures.");
+    expect(html).not.toContain("Each section on the left maps to one explanation surface on the right.");
+    expect(html).not.toContain("Click any section on the left to scroll this window to its paired explanation.");
+  });
+
   test("switching highlights only activates the selected gallery frame", () => {
     const state = selectHighlight(createSiteState(entries, "sunny"), "recording-overlay");
     const html = renderApp(state);
