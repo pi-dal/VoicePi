@@ -1,7 +1,7 @@
 import "./styles.css";
 
 import { createSiteState, selectInstallTab, selectTheme, selectVersion, toggleExpandedVersion } from "./lib/site-state";
-import type { ChangelogEntry, InstallTab, SiteState, SiteTheme } from "./types";
+import type { ChangelogEntry, InstallTab, SiteTheme } from "./types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -10,7 +10,6 @@ if (!app) {
 }
 
 const root = app;
-
 const changelogEntries = __VOICEPI_CHANGELOGS__;
 const initialTheme: SiteTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "moon" : "sunny";
 
@@ -20,9 +19,9 @@ let cleanupAtmosphere: (() => void) | undefined;
 const installContent: Record<InstallTab, { title: string; detail: string; command: string; cta: string; href: string }> = {
   homebrew: {
     title: "Install with Homebrew",
-    detail: "Recommended for macOS users who want an update path that stays close to the system package flow.",
+    detail: "Recommended if you want the shortest install path and a package-managed update flow.",
     command: `brew tap pi-dal/voicepi https://github.com/pi-dal/VoicePi\nbrew install --cask pi-dal/voicepi/voicepi`,
-    cta: "Open Homebrew",
+    cta: "Open Homebrew Guide",
     href: "https://github.com/pi-dal/VoicePi#install-with-homebrew"
   },
   download: {
@@ -36,27 +35,33 @@ const installContent: Record<InstallTab, { title: string; detail: string; comman
 
 const highlights = [
   {
-    kicker: "Menu bar first",
-    title: "Shortcut in, transcript out.",
-    body: "VoicePi stays out of the Dock, records from a keyboard trigger, and pastes into the active field without turning dictation into a separate workspace."
+    title: "Menu bar first",
+    body: "VoicePi stays close to the keyboard and does not force dictation into a separate editor or a floating transcript workspace."
   },
   {
-    kicker: "Dual ASR",
-    title: "Apple Speech or remote large-model ASR.",
-    body: "Stay local when that is enough, or route audio to a remote OpenAI-compatible transcription endpoint when you want stronger recognition."
+    title: "Two transcription paths",
+    body: "Choose Apple Speech for the local path or switch to a remote OpenAI-compatible ASR backend when stronger recognition matters."
   },
   {
-    kicker: "Mode cycle",
-    title: "Raw, Refinement, Translate.",
-    body: "Cycle text-processing modes from the keyboard and keep the output path visible instead of hidden behind a settings detour.",
-    image: "/media/screenshots/mode-switch.png"
+    title: "Mode cycle on the shortcut path",
+    body: "Raw, Refinement, and Translate stay visible and reachable from the same interaction loop instead of being buried in settings."
   },
   {
-    kicker: "Paste pipeline",
-    title: "Clipboard restore and input-method-safe injection.",
-    body: "VoicePi restores the clipboard and handles ASCII switching for CJK input methods so the final paste step feels deliberate rather than fragile."
+    title: "Safer final paste",
+    body: "Clipboard restoration and input-method-aware handling make the last step feel reliable instead of opportunistic."
   }
 ];
+
+const screenshotPairs = {
+  sunny: {
+    label: "Sunny Mode",
+    image: "/media/screenshots/mode-switch-sunny.png"
+  },
+  moon: {
+    label: "Moon Mode",
+    image: "/media/screenshots/mode-switch-moon.png"
+  }
+} as const;
 
 function escapeHtml(value: string): string {
   return value
@@ -139,20 +144,22 @@ function mountAtmosphere(theme: SiteTheme): () => void {
 
   const palette = theme === "sunny"
     ? {
-        background: "#fbf5ea",
-        orbs: ["rgba(235, 177, 84, 0.35)", "rgba(254, 213, 132, 0.22)", "rgba(182, 225, 201, 0.18)"]
+        background: "#f7efdf",
+        orbs: ["rgba(243, 174, 66, 0.42)", "rgba(255, 222, 161, 0.38)", "rgba(253, 244, 218, 0.95)"],
+        shadow: "rgba(174, 118, 29, 0.12)"
       }
     : {
         background: "#08111d",
-        orbs: ["rgba(121, 151, 255, 0.22)", "rgba(177, 210, 255, 0.18)", "rgba(93, 123, 158, 0.16)"]
+        orbs: ["rgba(95, 130, 245, 0.28)", "rgba(186, 219, 255, 0.18)", "rgba(12, 24, 42, 0.95)"],
+        shadow: "rgba(4, 8, 15, 0.42)"
       };
 
-  const particles = Array.from({ length: theme === "sunny" ? 5 : 6 }, (_, index) => ({
-    x: (index + 1) * 0.14,
-    y: 0.2 + (index % 3) * 0.18,
-    radius: 140 + index * 36,
-    drift: 0.0004 + index * 0.00012,
-    speed: 0.00018 + index * 0.00005,
+  const particles = Array.from({ length: theme === "sunny" ? 4 : 5 }, (_, index) => ({
+    x: theme === "sunny" ? 0.18 + index * 0.19 : 0.14 + index * 0.18,
+    y: 0.18 + (index % 2) * 0.32,
+    radius: theme === "sunny" ? 180 + index * 42 : 160 + index * 34,
+    drift: 0.00022 + index * 0.00008,
+    speed: 0.00014 + index * 0.00003,
     color: palette.orbs[index % palette.orbs.length]
   }));
 
@@ -174,10 +181,17 @@ function mountAtmosphere(theme: SiteTheme): () => void {
     context.fillStyle = palette.background;
     context.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
+    const wash = context.createLinearGradient(0, 0, window.innerWidth, window.innerHeight);
+    wash.addColorStop(0, palette.shadow);
+    wash.addColorStop(0.42, "rgba(0,0,0,0)");
+    wash.addColorStop(1, palette.shadow);
+    context.fillStyle = wash;
+    context.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
     particles.forEach((particle, index) => {
-      const angle = frame * particle.speed + index * 1.4;
-      const x = window.innerWidth * particle.x + Math.cos(angle) * particle.radius * particle.drift * 1200;
-      const y = window.innerHeight * particle.y + Math.sin(angle * 1.2) * particle.radius * particle.drift * 800;
+      const angle = frame * particle.speed + index * 1.8;
+      const x = window.innerWidth * particle.x + Math.cos(angle) * particle.radius * particle.drift * 1300;
+      const y = window.innerHeight * particle.y + Math.sin(angle * 1.1) * particle.radius * particle.drift * 950;
       const gradient = context.createRadialGradient(x, y, 0, x, y, particle.radius);
       gradient.addColorStop(0, particle.color);
       gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
@@ -212,60 +226,83 @@ function render(): void {
   root.innerHTML = `
     <canvas class="atmosphere-canvas" data-atmosphere aria-hidden="true"></canvas>
     <div class="noise-layer" aria-hidden="true"></div>
+    <div class="beam-layer" aria-hidden="true"></div>
     <main class="page-shell">
-      <section class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">Voice Input for macOS</p>
-          <div class="hero-title-lockup">
-            <img class="hero-icon" src="/media/icons/voicepi-icon.png" alt="VoicePi icon" />
-            <div>
-              <h1>VoicePi</h1>
-              <p class="hero-intro">
-                Lightweight dictation that lives in the menu bar, captures speech from a shortcut,
-                optionally refines or translates it, and pastes the result back into the app you were already using.
-              </p>
+      <section class="hero-shell">
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Voice Input for macOS</p>
+            <div class="hero-title-lockup">
+              <img class="hero-icon" src="/media/icons/voicepi-icon.png" alt="VoicePi icon" />
+              <div>
+                <h1>VoicePi</h1>
+                <p class="hero-intro">
+                  Lightweight dictation that lives in the menu bar, captures speech from a shortcut,
+                  optionally refines or translates it, and pastes the result back into the app you were already using.
+                </p>
+              </div>
+            </div>
+            <div class="hero-meta">
+              <div class="theme-switcher" role="tablist" aria-label="Theme modes">
+                <button class="theme-chip${state.theme === "sunny" ? " is-active" : ""}" data-theme="sunny" role="tab" aria-selected="${state.theme === "sunny"}">Sunny</button>
+                <button class="theme-chip${state.theme === "moon" ? " is-active" : ""}" data-theme="moon" role="tab" aria-selected="${state.theme === "moon"}">Moon</button>
+              </div>
+              <p class="hero-theme-caption">${resolveThemeLabel(state.theme)} keeps the same information architecture, but the page changes light, density, shadow depth, and screenshot pairing.</p>
             </div>
           </div>
-          <div class="hero-meta">
-            <div class="theme-switcher" role="tablist" aria-label="Theme modes">
-              <button class="theme-chip${state.theme === "sunny" ? " is-active" : ""}" data-theme="sunny" role="tab" aria-selected="${state.theme === "sunny"}">Sunny</button>
-              <button class="theme-chip${state.theme === "moon" ? " is-active" : ""}" data-theme="moon" role="tab" aria-selected="${state.theme === "moon"}">Moon</button>
-            </div>
-            <p class="hero-theme-caption">${resolveThemeLabel(state.theme)} keeps the same content but shifts the page into a warmer day-state or a cooler night-state.</p>
-          </div>
-        </div>
 
-        <aside class="install-panel">
+          <aside class="hero-stage">
+            <div class="stage-head">
+              <p class="eyebrow">Mode Surface</p>
+              <p class="stage-caption">The same mode-switch panel, exported in both themes so the website can pair interface tone and page tone one to one.</p>
+            </div>
+            <div class="screenshot-pair">
+              <figure class="stage-shot">
+                <figcaption>${screenshotPairs.sunny.label}</figcaption>
+                <img src="${screenshotPairs.sunny.image}" alt="VoicePi mode switch panel in a light appearance" />
+              </figure>
+              <figure class="stage-shot">
+                <figcaption>${screenshotPairs.moon.label}</figcaption>
+                <img src="${screenshotPairs.moon.image}" alt="VoicePi mode switch panel in a dark appearance" />
+              </figure>
+            </div>
+          </aside>
+        </section>
+
+        <section class="install-strip">
+          <div class="install-strip-head">
+            <p class="eyebrow">Install</p>
+            <h2>Pick the path you actually want.</h2>
+          </div>
           <div class="install-tabs" role="tablist" aria-label="Install options">
             <button class="install-tab${state.installTab === "homebrew" ? " is-active" : ""}" data-install-tab="homebrew" role="tab" aria-selected="${state.installTab === "homebrew"}">Homebrew</button>
             <button class="install-tab${state.installTab === "download" ? " is-active" : ""}" data-install-tab="download" role="tab" aria-selected="${state.installTab === "download"}">Direct Download</button>
           </div>
-          <div class="install-card">
-            <p class="install-kicker">Install</p>
-            <h2>${install.title}</h2>
-            <p class="install-detail">${install.detail}</p>
+          <div class="install-line">
+            <div class="install-copy">
+              <h3>${install.title}</h3>
+              <p>${install.detail}</p>
+            </div>
             <pre class="install-command"><code>${escapeHtml(install.command)}</code></pre>
             <div class="install-actions">
               <button class="copy-button" data-copy="${escapeHtml(install.command)}">Copy</button>
               <a class="link-button" href="${install.href}" target="_blank" rel="noreferrer">${install.cta}</a>
             </div>
           </div>
-        </aside>
+        </section>
       </section>
 
       <section class="highlights" aria-labelledby="highlights-title">
         <div class="section-heading">
           <p class="eyebrow">Highlights</p>
-          <h2 id="highlights-title">The fast path from speech to final text.</h2>
-          <p>VoicePi is deliberately compact, but the core path is opinionated: keep dictation close to the keyboard, keep correction conservative, and keep the last paste step trustworthy.</p>
+          <h2 id="highlights-title">Keep the page simple. Keep the product sharp.</h2>
+          <p>VoicePi does not need a wall of feature cards. The useful part is the interaction model and the trustworthiness of the final paste path.</p>
         </div>
-        <div class="highlight-grid">
+        <div class="highlights-list">
           ${highlights.map((highlight) => `
-            <article class="highlight-card${highlight.image ? " has-image" : ""}">
-              <p class="highlight-kicker">${highlight.kicker}</p>
+            <article class="highlight-row">
               <h3>${highlight.title}</h3>
               <p>${highlight.body}</p>
-              ${highlight.image ? `<img class="highlight-image" src="${highlight.image}" alt="${highlight.title}" />` : ""}
             </article>
           `).join("")}
         </div>
@@ -275,7 +312,7 @@ function render(): void {
         <div class="section-heading">
           <p class="eyebrow">Release Timeline</p>
           <h2 id="changelog-title">Every published change, kept inside one window.</h2>
-          <p>The latest release opens first. Older releases stay in the rail until you switch or expand them, so the page does not turn into one endless patch note scroll.</p>
+          <p>The latest release opens first. Older releases stay in the rail until you switch or expand them, so the page stays compact instead of becoming a long stack of notes.</p>
         </div>
 
         <div class="release-window">
@@ -322,16 +359,25 @@ function render(): void {
       </section>
 
       <footer class="footprint">
-        <div>
+        <div class="footprint-copy">
           <p class="eyebrow">Footprint</p>
           <h2>Built with love by pi-dal.</h2>
-          <p>Repository: VoicePi. GitHub Pages for release notes, install paths, and the product surface that sits beside the app instead of competing with it.</p>
+          <p>VoicePi on GitHub Pages should read like a compact extension of the app: clear install paths, readable release notes, and obvious ownership.</p>
         </div>
-        <div class="footprint-links">
-          <a href="https://pi-dal.com" target="_blank" rel="noreferrer">pi-dal</a>
-          <a href="https://github.com/pi-dal" target="_blank" rel="noreferrer">@pi-dal</a>
-          <a href="https://github.com/pi-dal/VoicePi" target="_blank" rel="noreferrer">VoicePi repository</a>
-        </div>
+        <dl class="footprint-list">
+          <div class="footprint-item">
+            <dt>Website</dt>
+            <dd><a href="https://pi-dal.com" target="_blank" rel="noreferrer">pi-dal.com</a></dd>
+          </div>
+          <div class="footprint-item">
+            <dt>GitHub</dt>
+            <dd><a href="https://github.com/pi-dal" target="_blank" rel="noreferrer">@pi-dal</a></dd>
+          </div>
+          <div class="footprint-item">
+            <dt>Repository</dt>
+            <dd><a href="https://github.com/pi-dal/VoicePi" target="_blank" rel="noreferrer">VoicePi</a></dd>
+          </div>
+        </dl>
       </footer>
     </main>
   `;

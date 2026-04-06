@@ -11,12 +11,16 @@ Static screenshots for the GitHub Pages site live under `site/public/media/scree
 3. `mode-switch.png`
    - The mode-switch floating panel.
    - This is currently generated through `FloatingPanelSnapshotTests` by setting `VOICEPI_MODE_SWITCH_SNAPSHOT_PATH`.
+   - The website now uses a paired export:
+     - `mode-switch-sunny.png`
+     - `mode-switch-moon.png`
 4. `settings-overview.png`
    - A settings screenshot that captures the prompt workspace and remote ASR / LLM configuration area in one frame.
 
 ## Current Status
 
 - `mode-switch.png` is available and exported into the site media directory.
+- `mode-switch-sunny.png` and `mode-switch-moon.png` are available and exported into the site media directory.
 - The other screenshots still need to be captured or replaced with final selections.
 
 ## Mode-Switch Export
@@ -24,11 +28,12 @@ Static screenshots for the GitHub Pages site live under `site/public/media/scree
 Generate the current mode-switch snapshot with:
 
 ```sh
-VOICEPI_MODE_SWITCH_SNAPSHOT_PATH=/tmp/voicepi-mode-switch.png swift test --filter FloatingPanelSnapshotTests
+VOICEPI_MODE_SWITCH_SNAPSHOT_PATH=/tmp/voicepi-mode-switch-sunny.png VOICEPI_MODE_SWITCH_SNAPSHOT_THEME=light swift test --filter FloatingPanelSnapshotTests
+VOICEPI_MODE_SWITCH_SNAPSHOT_PATH=/tmp/voicepi-mode-switch-moon.png VOICEPI_MODE_SWITCH_SNAPSHOT_THEME=dark swift test --filter FloatingPanelSnapshotTests
 ```
 
 Then copy the exported file into:
 
 ```text
-site/public/media/screenshots/mode-switch.png
+site/public/media/screenshots/
 ```

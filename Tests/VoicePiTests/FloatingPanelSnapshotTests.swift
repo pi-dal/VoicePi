@@ -7,12 +7,17 @@ struct FloatingPanelSnapshotTests {
     @Test
     @MainActor
     func exportsModeSwitchSnapshotWhenPathIsProvided() throws {
-        guard let outputPath = ProcessInfo.processInfo.environment["VOICEPI_MODE_SWITCH_SNAPSHOT_PATH"] else {
+        let processInfo = ProcessInfo.processInfo
+        guard let outputPath = processInfo.environment["VOICEPI_MODE_SWITCH_SNAPSHOT_PATH"] else {
             return
         }
 
+        let theme = processInfo.environment["VOICEPI_MODE_SWITCH_SNAPSHOT_THEME"] == "light"
+            ? InterfaceTheme.light
+            : InterfaceTheme.dark
+
         let controller = FloatingPanelController()
-        controller.applyInterfaceTheme(.dark)
+        controller.applyInterfaceTheme(theme)
         controller.showModeSwitch(
             modeTitle: PostProcessingMode.translation.title,
             refinementPromptTitle: "Meeting Notes",
