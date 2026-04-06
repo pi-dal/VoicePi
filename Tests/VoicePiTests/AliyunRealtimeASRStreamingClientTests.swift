@@ -161,6 +161,7 @@ struct AliyunRealtimeASRStreamingClientTests {
             _ = try await client.awaitFinalResult(timeoutSeconds: 0.05)
         }
 
+        try? await Task.sleep(nanoseconds: 30_000_000)
         let events = collector.values
         #expect(events.contains(.timeout(kind: "final")))
         consumeTask.cancel()

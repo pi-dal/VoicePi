@@ -160,6 +160,7 @@ struct VolcengineRealtimeASRStreamingClientTests {
             _ = try await client.awaitFinalResult(timeoutSeconds: 0.05)
         }
 
+        try? await Task.sleep(nanoseconds: 30_000_000)
         #expect(collector.values.contains(.timeout(kind: "final")))
         consumeTask.cancel()
     }
