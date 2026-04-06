@@ -2,6 +2,18 @@ import AppKit
 import AVFoundation
 
 enum SpeechRecorderMath {
+    static let realtimeSampleRate: Double = 16_000
+    static let realtimeChannelCount: AVAudioChannelCount = 1
+
+    static var realtimePCMFormat: AVAudioFormat {
+        AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: realtimeSampleRate,
+            channels: realtimeChannelCount,
+            interleaved: true
+        )!
+    }
+
     static func normalizedLevel(from buffer: AVAudioPCMBuffer) -> CGFloat {
         let channelCount = Int(buffer.format.channelCount)
         let frameLength = Int(buffer.frameLength)
@@ -79,6 +91,65 @@ enum SpeechRecorderMath {
         }
 
         return min(max(envelope, 0), 1)
+    }
+
+    static func convertToRealtimePCMData(
+        from buffer: AVAudioPCMBuffer,
+        converter: AVAudioConverter?,
+        outputFormat: AVAudioFormat
+    ) -> Data? {
+        if
+            buffer.format.sampleRate == outputFormat.sampleRate,
+            buffer.format.channelCount == outputFormat.channelCount,
+            buffer.format.commonFormat == .pcmFormatInt16,
+            let channelData = buffer.int16ChannelData
+        {
+            let bytesPerFrame = Int(outputFormat.streamDescription.pointee.mBytesPerFrame)
+            let byteCount = Int(buffer.frameLength) * bytesPerFrame
+            return Data(bytes: channelData[0], count: byteCount)
+        }
+
+        guard let converter else {
+            return nil
+        }
+
+        let ratio = outputFormat.sampleRate / max(buffer.format.sampleRate, 1)
+        let estimatedFrames = max(1, Int(ceil(Double(buffer.frameLength) * ratio)))
+        guard let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: AVAudioFrameCount(estimatedFrames)
+        ) else {
+            return nil
+        }
+
+        var sourceConsumed = false
+        var conversionError: NSError?
+        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+            if sourceConsumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+
+            sourceConsumed = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard conversionError == nil else {
+            return nil
+        }
+
+        guard status == .haveData || status == .inputRanDry else {
+            return nil
+        }
+
+        guard outputBuffer.frameLength > 0, let channelData = outputBuffer.int16ChannelData else {
+            return nil
+        }
+
+        let bytesPerFrame = Int(outputFormat.streamDescription.pointee.mBytesPerFrame)
+        let byteCount = Int(outputBuffer.frameLength) * bytesPerFrame
+        return Data(bytes: channelData[0], count: byteCount)
     }
 
     private static func normalizedLevel<Sample>(

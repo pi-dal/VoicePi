@@ -94,6 +94,33 @@ struct AppModelPersistenceTests {
 
     @Test
     @MainActor
+    func volcengineRemoteASRReadinessRequiresAppID() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.volcengineRemoteASRReadinessRequiresAppID.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        model.setASRBackend(.remoteVolcengineASR)
+        model.saveRemoteASRConfiguration(
+            baseURL: "https://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+            apiKey: "ak-test",
+            model: "bigmodel",
+            prompt: "",
+            volcengineAppID: ""
+        )
+        #expect(model.isRemoteASRReady == false)
+
+        model.saveRemoteASRConfiguration(
+            baseURL: "https://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+            apiKey: "ak-test",
+            model: "bigmodel",
+            prompt: "",
+            volcengineAppID: "app-test"
+        )
+        #expect(model.isRemoteASRReady)
+        #expect(model.remoteASRConfiguration.volcengineAppID == "app-test")
+    }
+
+    @Test
+    @MainActor
     func legacyRefinementPromptMigratesToImportedUserPreset() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.legacyRefinementPromptMigratesToImportedUserPreset.\(UUID().uuidString)")!
         let legacyConfiguration = LLMConfiguration(

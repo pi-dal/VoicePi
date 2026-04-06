@@ -999,7 +999,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let asrBaseURLField = NSTextField(string: "")
     private let asrAPIKeyField = NSSecureTextField(string: "")
     private let asrModelField = NSTextField(string: "")
+    private let asrVolcengineAppIDField = NSTextField(string: "")
     private let asrPromptField = NSTextField(string: "")
+    private lazy var asrVolcengineAppIDRow = makePreferenceRow(
+        title: "Volcengine AppID",
+        control: asrVolcengineAppIDField
+    )
     private let postProcessingModePopup = ThemedPopUpButton()
     private let translationProviderPopup = ThemedPopUpButton()
     private let targetLanguagePopup = ThemedPopUpButton()
@@ -1387,10 +1392,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrBackendPopup.target = self
         asrBackendPopup.action = #selector(asrBackendChanged(_:))
 
-        asrBaseURLField.placeholderString = "https://api.example.com/v1"
         asrAPIKeyField.placeholderString = "sk-..."
-        asrModelField.placeholderString = "gpt-4o-mini-transcribe"
         asrPromptField.placeholderString = "Optional hint for terminology or context"
+        applyASRPlaceholders(for: model.asrBackend)
 
         asrTestButton.target = self
         asrTestButton.action = #selector(testRemoteASRConfiguration)
@@ -1404,6 +1408,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "API Base URL", control: asrBaseURLField),
             makePreferenceRow(title: "API Key", control: asrAPIKeyField),
             makePreferenceRow(title: "Model", control: asrModelField),
+            asrVolcengineAppIDRow,
             makePreferenceRow(title: "Prompt", control: asrPromptField)
         ])
 
@@ -1412,8 +1417,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePrimaryActionButton(title: "Save", action: #selector(saveRemoteASRConfiguration))
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "ASR", subtitle: "Choose between built-in Apple Speech and a remote OpenAI-compatible transcription model."))
-        contentStack.addArrangedSubview(makeBodyLabel("Use the remote backend when you want stronger large-model transcription quality. VoicePi will record locally, upload the captured audio after release, then inject the returned transcript."))
+        contentStack.addArrangedSubview(makeSectionHeader(title: "ASR", subtitle: "Choose Apple Speech, OpenAI-compatible ASR, Aliyun ASR, or Volcengine ASR."))
+        contentStack.addArrangedSubview(makeBodyLabel("Use a remote backend when you want stronger large-model transcription quality. OpenAI-compatible ASR uploads captured audio after release, while Aliyun and Volcengine stream realtime audio over WebSocket and inject final text on release."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
         contentStack.addArrangedSubview(asrStatusView)
@@ -1428,6 +1433,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             asrBaseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrAPIKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrModelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            asrVolcengineAppIDField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrPromptField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
         ])
     }
@@ -1617,6 +1623,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrBaseURLField.stringValue = model.remoteASRConfiguration.baseURL
         asrAPIKeyField.stringValue = model.remoteASRConfiguration.apiKey
         asrModelField.stringValue = model.remoteASRConfiguration.model
+        asrVolcengineAppIDField.stringValue = model.remoteASRConfiguration.volcengineAppID
         asrPromptField.stringValue = model.remoteASRConfiguration.prompt
         baseURLField.stringValue = model.llmConfiguration.baseURL
         apiKeyField.stringValue = model.llmConfiguration.apiKey
@@ -1668,21 +1675,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func refreshASRSection() {
+        let selectedBackend = currentSelectedASRBackend()
         let configuration = currentRemoteASRConfigurationFromFields()
-        let isRemoteBackend = currentSelectedASRBackend() == .remoteOpenAICompatible
+        let isRemoteBackend = selectedBackend.isRemoteBackend
+        let requiresVolcengineAppID = selectedBackend == .remoteVolcengineASR
+
+        applyASRPlaceholders(for: selectedBackend)
 
         asrBaseURLField.isEnabled = isRemoteBackend
         asrAPIKeyField.isEnabled = isRemoteBackend
         asrModelField.isEnabled = isRemoteBackend
+        asrVolcengineAppIDField.isEnabled = isRemoteBackend && requiresVolcengineAppID
         asrPromptField.isEnabled = isRemoteBackend
         asrTestButton.isEnabled = isRemoteBackend
+        asrVolcengineAppIDRow.isHidden = !requiresVolcengineAppID
 
         if !isRemoteBackend {
             setASRFeedback(.neutral("Apple Speech is active. VoicePi will use the built-in streaming recognizer."))
-        } else if configuration.isConfigured {
-            setASRFeedback(.neutral("Remote large-model ASR is selected and configured."))
+        } else if configuration.isConfigured(for: selectedBackend) {
+            setASRFeedback(.neutral("\(selectedBackend.title) is selected and configured."))
         } else {
-            setASRFeedback(.neutral("Remote large-model ASR is selected, but API Base URL, API Key, and Model are still required."))
+            setASRFeedback(.neutral("\(selectedBackend.title) is selected, but \(remoteASRRequiredFieldsText(for: selectedBackend)) are still required."))
         }
     }
 
@@ -1756,13 +1769,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return ASRBackend.allCases[index]
     }
 
+    private func applyASRPlaceholders(for backend: ASRBackend) {
+        asrBaseURLField.placeholderString = backend.remoteBaseURLPlaceholder
+        asrModelField.placeholderString = backend.remoteModelPlaceholder
+        asrVolcengineAppIDField.placeholderString = backend.remoteAppIDPlaceholder
+    }
+
     private func currentRemoteASRConfigurationFromFields() -> RemoteASRConfiguration {
         RemoteASRConfiguration(
             baseURL: asrBaseURLField.stringValue,
             apiKey: asrAPIKeyField.stringValue,
             model: asrModelField.stringValue,
-            prompt: asrPromptField.stringValue
+            prompt: asrPromptField.stringValue,
+            volcengineAppID: asrVolcengineAppIDField.stringValue
         )
+    }
+
+    private func remoteASRRequiredFieldsText(for backend: ASRBackend) -> String {
+        switch backend {
+        case .remoteVolcengineASR:
+            return "API Base URL, API Key, Model, and Volcengine AppID"
+        case .remoteOpenAICompatible, .remoteAliyunASR:
+            return "API Base URL, API Key, and Model"
+        case .appleSpeech:
+            return "configuration fields"
+        }
     }
 
     private func permissionStatusText(for state: AuthorizationState) -> String {
@@ -2077,7 +2108,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
             model: configuration.model,
-            prompt: configuration.prompt
+            prompt: configuration.prompt,
+            volcengineAppID: configuration.volcengineAppID
         )
 
         setASRFeedback(.neutral("Saved."))
@@ -2090,14 +2122,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func testRemoteASRConfiguration() {
         let configuration = currentRemoteASRConfigurationFromFields()
+        let selectedBackend = currentSelectedASRBackend()
 
-        guard currentSelectedASRBackend() == .remoteOpenAICompatible else {
+        guard selectedBackend.isRemoteBackend else {
             setASRFeedback(.error("Switch to the remote backend before testing the remote ASR connection."))
             return
         }
 
-        guard configuration.isConfigured else {
-            setASRFeedback(.error("Please complete API Base URL, API Key, and Model before testing."))
+        guard configuration.isConfigured(for: selectedBackend) else {
+            setASRFeedback(.error("Please complete \(remoteASRRequiredFieldsText(for: selectedBackend)) before testing."))
             return
         }
 
@@ -2186,7 +2219,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func setASRButtonsEnabled(_ enabled: Bool) {
-        asrTestButton.isEnabled = enabled && currentSelectedASRBackend() == .remoteOpenAICompatible
+        asrTestButton.isEnabled = enabled && currentSelectedASRBackend().isRemoteBackend
         asrSaveButton.isEnabled = enabled
     }
 
@@ -3680,7 +3713,16 @@ private final class AppUpdatePanelController: NSWindowController, NSWindowDelega
     private let progressLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
     private let releaseNotesTitleLabel = NSTextField(labelWithString: "Release Notes")
-    private let releaseNotesTextView = NSTextView()
+    private let releaseNotesTextView = NSTextView(
+        frame: NSRect(
+            x: 0,
+            y: 0,
+            width: SettingsLayoutMetrics.updatePanelWidth
+                - (SettingsLayoutMetrics.updatePanelOuterInset * 2)
+                - (SettingsLayoutMetrics.cardPaddingHorizontal * 2),
+            height: SettingsLayoutMetrics.updatePanelNotesHeight
+        )
+    )
     private let releaseNotesScrollView = NSScrollView()
     private lazy var primaryButton = StyledSettingsButton(
         title: "",
@@ -3791,12 +3833,34 @@ private final class AppUpdatePanelController: NSWindowController, NSWindowDelega
         releaseNotesTitleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         releaseNotesTextView.isEditable = false
         releaseNotesTextView.isSelectable = true
+        releaseNotesTextView.isAutomaticLinkDetectionEnabled = true
+        releaseNotesTextView.isHorizontallyResizable = false
+        releaseNotesTextView.isVerticallyResizable = true
+        releaseNotesTextView.autoresizingMask = [.width]
         releaseNotesTextView.drawsBackground = false
+        releaseNotesTextView.linkTextAttributes = [
+            .foregroundColor: NSColor.linkColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue
+        ]
         releaseNotesTextView.textContainerInset = NSSize(width: 0, height: 4)
         releaseNotesTextView.textColor = .secondaryLabelColor
         releaseNotesTextView.font = .systemFont(ofSize: 12)
+        releaseNotesTextView.minSize = NSSize(
+            width: releaseNotesTextView.frame.width,
+            height: SettingsLayoutMetrics.updatePanelNotesHeight
+        )
+        releaseNotesTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        releaseNotesTextView.textContainer?.containerSize = NSSize(
+            width: releaseNotesTextView.frame.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        releaseNotesTextView.textContainer?.widthTracksTextView = true
         releaseNotesScrollView.drawsBackground = false
         releaseNotesScrollView.hasVerticalScroller = true
+        releaseNotesScrollView.hasHorizontalScroller = false
         releaseNotesScrollView.documentView = releaseNotesTextView
         releaseNotesScrollView.translatesAutoresizingMaskIntoConstraints = false
         releaseNotesScrollView.heightAnchor.constraint(
@@ -3934,7 +3998,10 @@ private final class AppUpdatePanelController: NSWindowController, NSWindowDelega
         if let notes = presentation.releaseNotes {
             releaseNotesTitleLabel.isHidden = false
             releaseNotesScrollView.isHidden = false
-            releaseNotesTextView.string = notes
+            releaseNotesTextView.textStorage?.setAttributedString(
+                AppUpdateReleaseNotesRenderer.attributedString(from: notes)
+            )
+            releaseNotesTextView.sizeToFit()
         } else {
             releaseNotesTitleLabel.isHidden = true
             releaseNotesScrollView.isHidden = true

@@ -106,6 +106,7 @@ final class AppController: NSObject {
     private let llmRefiner = LLMRefiner()
     private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
+    private let realtimeASRSessionCoordinator = RealtimeASRSessionCoordinator()
     private let textInjector = TextInjector.shared
     private let updateChecker = GitHubReleaseUpdateChecker()
     private let homebrewInstallationDetector = HomebrewInstallationDetector()
@@ -124,6 +125,7 @@ final class AppController: NSObject {
     private var modeCycleRepeatTask: Task<Void, Never>?
     private var startupHotkeyBootstrapTask: Task<Void, Never>?
     private var modeCycleSessionActive = false
+    private var isAwaitingRealtimeFinalization = false
     private var activeDirectUpdateInstaller: AppUpdater?
     private var installationSource: AppInstallationSource = .unknown
     private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
@@ -600,6 +602,10 @@ final class AppController: NSObject {
                 _ = await self.speechRecorder.stopRecording()
             }
         }
+
+        Task { @MainActor [weak self] in
+            await self?.realtimeASRSessionCoordinator.close()
+        }
     }
 
     private func handleLanguageChange(_ language: SupportedLanguage) {
@@ -718,6 +724,10 @@ final class AppController: NSObject {
     }
 
     private func beginRecording() {
+        if isAwaitingRealtimeFinalization {
+            return
+        }
+
         switch Self.pressAction(
             isRecording: speechRecorder.isRecording,
             isStartingRecording: isStartingRecording,
@@ -753,10 +763,20 @@ final class AppController: NSObject {
                 self.floatingPanelController.showRecording(transcript: "")
                 self.model.updateOverlayRecording(transcript: "", level: 0)
                 self.statusBarController?.setRecording(true)
-                try await self.speechRecorder.startRecording(mode: self.model.asrBackend.speechRecorderMode)
+
+                if self.model.asrBackend.usesRealtimeStreaming {
+                    try await self.startRealtimeRecordingSession()
+                } else {
+                    try await self.speechRecorder.startRecording(mode: self.model.asrBackend.speechRecorderMode)
+                }
             } catch {
                 self.statusBarController?.setRecording(false)
                 self.floatingPanelController.hide()
+                self.model.hideOverlay()
+                if case let asrError as RemoteASRStreamingError = error, asrError == .cancelled {
+                    self.isStartingRecording = false
+                    return
+                }
                 self.presentTransientError(error.localizedDescription)
             }
 
@@ -768,6 +788,18 @@ final class AppController: NSObject {
         guard !isProcessingRelease else { return }
 
         if isStartingRecording {
+            if model.asrBackend.usesRealtimeStreaming {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.realtimeASRSessionCoordinator.cancelConnecting()
+                    self.isStartingRecording = false
+                    self.statusBarController?.setRecording(false)
+                    self.floatingPanelController.hide()
+                    self.model.hideOverlay()
+                }
+                return
+            }
+
             Task { @MainActor [weak self] in
                 while let self, self.isStartingRecording {
                     try? await Task.sleep(nanoseconds: 30_000_000)
@@ -833,7 +865,22 @@ final class AppController: NSObject {
     }
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {
-        await AppWorkflowSupport.resolveTranscriptAfterRecording(
+        if model.asrBackend.usesRealtimeStreaming {
+            isAwaitingRealtimeFinalization = true
+            defer { isAwaitingRealtimeFinalization = false }
+
+            do {
+                let transcript = try await realtimeASRSessionCoordinator.stopAndResolveFinal()
+                return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch let error as RemoteASRStreamingError where error == .cancelled {
+                return ""
+            } catch {
+                presentTransientError("Realtime ASR failed: \(error.localizedDescription)")
+                return ""
+            }
+        }
+
+        return await AppWorkflowSupport.resolveTranscriptAfterRecording(
             backend: model.asrBackend,
             localFallback: localFallback,
             audioURL: speechRecorder.latestAudioFileURL,
@@ -857,6 +904,65 @@ final class AppController: NSObject {
                 self?.presentTransientError(message)
             }
         )
+    }
+
+    private func startRealtimeRecordingSession() async throws {
+        let callbacks = RealtimeASRSessionCoordinator.Callbacks(
+            onPartial: { [weak self] text in
+                self?.updateRealtimeOverlayTranscript(text)
+            },
+            onFinal: { [weak self] text in
+                self?.latestTranscript = text
+            },
+            onTerminalError: { [weak self] message in
+                self?.handleRealtimeTerminalError(message)
+            }
+        )
+
+        try await realtimeASRSessionCoordinator.start(
+            configuration: model.remoteASRConfiguration,
+            backend: model.asrBackend,
+            language: model.selectedLanguage,
+            callbacks: callbacks
+        )
+
+        do {
+            try await speechRecorder.startRecording(
+                mode: .captureOnly,
+                onCapturedAudioFrame: { [weak self] frame in
+                    guard let self else { return }
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await self.realtimeASRSessionCoordinator.handleCapturedFrame(frame)
+                    }
+                }
+            )
+        } catch {
+            await realtimeASRSessionCoordinator.close()
+            throw error
+        }
+    }
+
+    private func updateRealtimeOverlayTranscript(_ text: String) {
+        latestTranscript = text
+        let level = model.overlayState.level
+        model.updateOverlayRecording(transcript: text, level: level)
+        floatingPanelController.updateLive(transcript: text, level: level)
+    }
+
+    private func handleRealtimeTerminalError(_ message: String) {
+        guard !isAwaitingRealtimeFinalization else { return }
+        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        if speechRecorder.isRecording {
+            speechRecorder.cancelImmediately()
+        }
+
+        isStartingRecording = false
+        statusBarController?.setRecording(false)
+        floatingPanelController.hide()
+        model.hideOverlay()
+        presentTransientError(message)
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
@@ -1306,10 +1412,13 @@ final class AppController: NSObject {
         }
     }
 
-    private func testRemoteASRConfiguration(_ configuration: RemoteASRConfiguration) async -> Result<String, Error> {
+    private func testRemoteASRConfiguration(
+        _ configuration: RemoteASRConfiguration,
+        backend: ASRBackend
+    ) async -> Result<String, Error> {
         do {
-            try configuration.validate()
-            let response = try await remoteASRClient.testConnection(with: configuration)
+            try configuration.validate(for: backend)
+            let response = try await remoteASRClient.testConnection(backend: backend, with: configuration)
             return .success(response)
         } catch {
             return .failure(error)
@@ -1676,7 +1785,8 @@ extension AppController: StatusBarControllerDelegate {
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
             model: configuration.model,
-            prompt: configuration.prompt
+            prompt: configuration.prompt,
+            volcengineAppID: configuration.volcengineAppID
         )
         controller.refreshAll()
     }
@@ -1691,7 +1801,7 @@ extension AppController: StatusBarControllerDelegate {
     }
 
     func statusBarController(_ controller: StatusBarController, didRequestRemoteASRTest configuration: RemoteASRConfiguration) async -> Result<String, Error> {
-        await testRemoteASRConfiguration(configuration)
+        await testRemoteASRConfiguration(configuration, backend: model.asrBackend)
     }
 
     func statusBarControllerDidRequestOpenAccessibilitySettings(_ controller: StatusBarController) {

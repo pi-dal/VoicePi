@@ -46,6 +46,33 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
+    func remoteVolcengineTranscriptUsesProviderSpecificStatusText() async {
+        let remote = RemoteASRStub(result: .success("volc transcript"))
+        var presentations: [AppWorkflowPresentation] = []
+
+        let transcript = await AppWorkflowSupport.resolveTranscriptAfterRecording(
+            backend: .remoteVolcengineASR,
+            localFallback: "local",
+            audioURL: URL(fileURLWithPath: "/tmp/audio.m4a"),
+            language: .english,
+            configuration: .init(
+                baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+                apiKey: "ak",
+                model: "ep-test",
+                prompt: "",
+                volcengineAppID: "app-test"
+            ),
+            remoteASR: remote,
+            onPresentation: { presentations.append($0) },
+            onError: { _ in }
+        )
+
+        #expect(transcript == "volc transcript")
+        #expect(presentations == [.transcribing(overlayTranscript: "Transcribing...", statusText: "Volcengine ASR…")])
+        #expect(remote.calls == 1)
+    }
+
+    @Test
     func postProcessingReturnsOriginalTextWhenDisabled() async {
         let refiner = RefinerStub(result: .success("refined"))
         let translator = TranslatorStub(result: .success("translated"))
@@ -289,6 +316,7 @@ private final class RemoteASRStub: RemoteASRServing, @unchecked Sendable {
     func transcribe(
         audioFileURL: URL,
         language: SupportedLanguage,
+        backend: ASRBackend,
         configuration: RemoteASRConfiguration
     ) async throws -> String {
         calls += 1

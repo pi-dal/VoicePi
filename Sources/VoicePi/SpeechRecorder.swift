@@ -66,6 +66,9 @@ final class SpeechRecorder: NSObject {
 
     private var activeAudioFile: AVAudioFile?
     private var captureFormat: AVAudioFormat?
+    private var capturedAudioFrameHandler: ((Data) -> Void)?
+    private var captureFrameConverter: AVAudioConverter?
+    private var captureOutputPCMFormat: AVAudioFormat?
 
     init(localeIdentifier: String = "zh-CN") {
         self.localeIdentifier = localeIdentifier
@@ -102,7 +105,8 @@ final class SpeechRecorder: NSObject {
 
     func startRecording(
         mode: SpeechRecorderMode = .appleSpeechStreaming,
-        outputAudioFileURL: URL? = nil
+        outputAudioFileURL: URL? = nil,
+        onCapturedAudioFrame: ((Data) -> Void)? = nil
     ) async throws {
         guard !isRecording else {
             throw SpeechRecorderError.alreadyRecording
@@ -125,6 +129,23 @@ final class SpeechRecorder: NSObject {
 
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        capturedAudioFrameHandler = mode == .captureOnly ? onCapturedAudioFrame : nil
+
+        if capturedAudioFrameHandler != nil {
+            let outputFormat = SpeechRecorderMath.realtimePCMFormat
+            let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
+            let canDirectCopy =
+                inputFormat.sampleRate == outputFormat.sampleRate &&
+                inputFormat.channelCount == outputFormat.channelCount &&
+                inputFormat.commonFormat == .pcmFormatInt16
+
+            if converter == nil, !canDirectCopy {
+                throw SpeechRecorderError.engineStartFailed("Failed to initialize realtime audio converter.")
+            }
+
+            captureFrameConverter = converter
+            captureOutputPCMFormat = outputFormat
+        }
 
         let audioFileURL = outputAudioFileURL ?? makeTemporaryRecordingURL()
         do {
@@ -259,6 +280,9 @@ final class SpeechRecorder: NSObject {
         recognitionRequest = nil
         activeAudioFile = nil
         captureFormat = nil
+        capturedAudioFrameHandler = nil
+        captureFrameConverter = nil
+        captureOutputPCMFormat = nil
         isRecording = false
 
         let continuation = stopContinuation
@@ -276,6 +300,9 @@ final class SpeechRecorder: NSObject {
         latestAudioFileURL = nil
         activeAudioFile = nil
         captureFormat = nil
+        capturedAudioFrameHandler = nil
+        captureFrameConverter = nil
+        captureOutputPCMFormat = nil
         currentMode = .appleSpeechStreaming
 
         if audioEngine.isRunning {
@@ -321,6 +348,9 @@ final class SpeechRecorder: NSObject {
         recognitionRequest = nil
         activeAudioFile = nil
         captureFormat = nil
+        capturedAudioFrameHandler = nil
+        captureFrameConverter = nil
+        captureOutputPCMFormat = nil
         meterEnvelope = 0
     }
 
@@ -346,6 +376,19 @@ final class SpeechRecorder: NSObject {
                         self.delegate?.speechRecorder(self, didFail: error)
                     }
                 }
+            }
+
+            if
+                let capturedAudioFrameHandler = self.capturedAudioFrameHandler,
+                let outputFormat = self.captureOutputPCMFormat,
+                let frameData = SpeechRecorderMath.convertToRealtimePCMData(
+                    from: buffer,
+                    converter: self.captureFrameConverter,
+                    outputFormat: outputFormat
+                ),
+                !frameData.isEmpty
+            {
+                capturedAudioFrameHandler(frameData)
             }
 
             let normalizedLevel = SpeechRecorderMath.normalizedLevel(from: buffer)

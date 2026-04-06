@@ -23,4 +23,31 @@ struct RemoteASRSupportTests {
             try RemoteASRConfiguration().validate()
         }
     }
+
+    @Test
+    func volcengineConfigurationRequiresAppID() {
+        let withoutAppID = RemoteASRConfiguration(
+            baseURL: "https://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+            apiKey: "ak-test",
+            model: "bigmodel",
+            prompt: "",
+            volcengineAppID: ""
+        )
+        #expect(withoutAppID.isConfigured(for: .remoteVolcengineASR) == false)
+        #expect(throws: Error.self) {
+            try withoutAppID.validate(for: .remoteVolcengineASR)
+        }
+
+        let withAppID = RemoteASRConfiguration(
+            baseURL: "https://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+            apiKey: "ak-test",
+            model: "bigmodel",
+            prompt: "",
+            volcengineAppID: "app-test"
+        )
+        #expect(withAppID.isConfigured(for: .remoteVolcengineASR))
+        #expect(throws: Never.self) {
+            try withAppID.validate(for: .remoteVolcengineASR)
+        }
+    }
 }

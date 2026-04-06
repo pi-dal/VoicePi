@@ -7,7 +7,7 @@
 
 VoicePi is a macOS 14+ menu-bar voice input app built with Swift Package Manager.
 
-It lets you press a keyboard trigger to start recording speech, transcribe audio with either Apple Speech or a remote OpenAI-compatible ASR model, optionally refine the transcript with an OpenAI-compatible LLM, and then paste the final text into the currently focused input field when you press the trigger again.
+It lets you press a keyboard trigger to start recording speech, transcribe audio with either Apple Speech or a remote ASR provider (OpenAI-compatible, Aliyun ASR, or Volcengine ASR), optionally refine the transcript with an OpenAI-compatible LLM, and then paste the final text into the currently focused input field when you press the trigger again.
 
 ![VoicePi App Icon](docs/assets/voicepi-icon.png)
 
@@ -23,7 +23,7 @@ VoicePi is released under the [MIT License](LICENSE).
 
 - Menu-bar only app (`LSUIElement`)
 - Apple Speech local transcription support
-- Remote OpenAI-compatible large-model ASR support
+- Remote large-model ASR support (OpenAI-compatible, Aliyun ASR, and Volcengine ASR)
 - Real-time floating capsule overlay with live waveform
 - Clipboard-based paste injection with automatic clipboard restore
 - Temporary switch from CJK input methods to ASCII before paste, then restore
@@ -397,19 +397,22 @@ If you are modifying the app behavior, make sure the key monitor logic and the m
 
 ## ASR Backends
 
-VoicePi supports two ASR modes:
+VoicePi supports these ASR modes:
 
 - **Apple Speech** — local/system speech recognition
-- **Remote ASR** — an OpenAI-compatible remote transcription endpoint
+- **Remote OpenAI-Compatible ASR** — OpenAI-style `/v1/audio/transcriptions`
+- **Aliyun ASR** — Aliyun DashScope realtime WebSocket ASR (`/api-ws/v1/inference`), with `compatible-mode` base URL also accepted
+- **Volcengine ASR** — Volcengine realtime WebSocket ASR (`/api/v3/sauc/bigmodel`)
 
 Configure the backend in **Settings → ASR**:
 
-- **Backend** chooses between Apple Speech and the remote large-model path
-- **API Base URL**, **API Key**, and **Model** are required for Remote ASR
+- **Backend** chooses between Apple Speech and the remote large-model providers
+- **API Base URL**, **API Key**, and **Model** are required for every remote ASR backend
+- **Volcengine AppID** is additionally required when backend = Volcengine ASR
 - **Prompt** is optional and can be used to bias technical terms, product names, or mixed-language dictation
 - **Test Connection** sends a lightweight endpoint probe before you save
 
-When **Remote ASR** is selected, VoicePi captures audio locally while you hold the shortcut, uploads the recorded file after release, and injects the returned transcript.
+When **Remote ASR** is selected, VoicePi captures audio locally while you hold the shortcut. OpenAI-compatible backend uploads the recorded file after release, while Aliyun and Volcengine stream 16 kHz PCM over WebSocket during recording and resolve the final transcript on release.
 
 If you feel the built-in local recognizer is not accurate enough, switch to **Remote ASR** in the app settings.
 
@@ -431,11 +434,14 @@ There you can configure:
 
 - **ASR Backend**
   - `Apple Speech`
-  - `Remote ASR`
+  - `Remote OpenAI-Compatible ASR`
+  - `Aliyun ASR`
+  - `Volcengine ASR`
 - **Recognition Language**
 - **API Base URL** for remote ASR
 - **API Key** for remote ASR
 - **Model** for remote ASR
+- **Volcengine AppID** for Volcengine ASR
 - **Test** and **Save** actions for remote ASR configuration
 
 ## Language Selection
@@ -456,16 +462,16 @@ The selected language is stored in `UserDefaults`.
 
 Remote ASR is designed for cases where Apple Speech is not accurate enough.
 
-It uses an OpenAI-compatible transcription API and is intended to support stronger large-model speech recognition.
+It supports OpenAI-compatible transcription APIs and provider-specific Aliyun/Volcengine ASR endpoint routing for stronger large-model speech recognition.
 
 ### Typical remote ASR flow
 
 1. Hold the configured shortcut
 2. VoicePi records audio locally
-3. On release, the recorded audio is sent to the configured remote ASR endpoint
-4. VoicePi receives the transcript
-5. If LLM refinement is enabled, the transcript can be conservatively cleaned up
-6. The final text is pasted into the focused field
+3. OpenAI-compatible sends the recorded file on release; Aliyun/Volcengine stream realtime audio frames during recording
+4. VoicePi receives transcript updates (Aliyun/Volcengine partials can be shown live)
+5. On release, VoicePi resolves and injects only the final transcript
+6. If LLM refinement is enabled, the final transcript can be conservatively cleaned up before paste
 
 ### Remote ASR configuration
 
@@ -474,8 +480,23 @@ In **Settings → ASR**, provide:
 - **API Base URL**
 - **API Key**
 - **Model**
+- **Volcengine AppID** (required only when backend = Volcengine ASR)
 
-The API must support an OpenAI-compatible transcription-style workflow.
+Use the backend that matches your provider and set the matching Base URL:
+
+- OpenAI-compatible: `.../v1` or `.../v1/audio/transcriptions`
+- Aliyun ASR: `.../compatible-mode/v1` (recommended), `.../api/v1/services/audio/asr/transcription`, or `wss://.../api-ws/v1/inference`
+- VoicePi accepts Aliyun HTTP/WebSocket forms (including `wss://.../compatible-mode/v1`) and normalizes them to `wss://.../api-ws/v1/inference` for realtime streaming.
+- Aliyun model example: `fun-asr-realtime`
+- Volcengine ASR: `wss://.../api/v3/sauc/bigmodel` (recommended) or `https://.../api/v3/sauc/bigmodel`
+- VoicePi also accepts Volcengine legacy forms such as `.../api/v3` and `.../api/v3/audio/transcriptions`, then normalizes them to realtime `.../api/v3/sauc/bigmodel`.
+
+### Provider configuration examples
+
+| Provider | ASR Backend | API Base URL | API Key | Model | Volcengine AppID |
+| --- | --- | --- | --- | --- | --- |
+| Aliyun DashScope | `Aliyun ASR` | `https://dashscope.aliyuncs.com/compatible-mode/v1` (or `wss://dashscope.aliyuncs.com/api-ws/v1/inference`) | `sk-...` | `fun-asr-realtime` | Leave empty |
+| Volcengine SAUC | `Volcengine ASR` | `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel` (or `https://openspeech.bytedance.com/api/v3/sauc/bigmodel`) | `<Volcengine Access Key>` | `bigmodel` | `<Volcengine AppID>` |
 
 ### Notes
 

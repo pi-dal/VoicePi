@@ -4,6 +4,7 @@ protocol RemoteASRServing {
     func transcribe(
         audioFileURL: URL,
         language: SupportedLanguage,
+        backend: ASRBackend,
         configuration: RemoteASRConfiguration
     ) async throws -> String
 }
@@ -50,43 +51,43 @@ enum AppWorkflowSupport {
         onPresentation: (AppWorkflowPresentation) -> Void,
         onError: (String) -> Void
     ) async -> String {
-        switch backend {
-        case .appleSpeech:
+        guard backend.isRemoteBackend else {
             return localFallback
+        }
 
-        case .remoteOpenAICompatible:
-            guard configuration.isConfigured else {
-                await MainActor.run {
-                    onError("Remote ASR is selected, but API Base URL, API Key, and Model are not fully configured.")
-                }
-                return localFallback
-            }
-
-            guard let audioURL else {
-                await MainActor.run {
-                    onError("Remote ASR could not find the recorded audio file.")
-                }
-                return localFallback
-            }
-
+        guard configuration.isConfigured(for: backend) else {
+            let requiredFields = remoteConfigurationRequirements(for: backend)
             await MainActor.run {
-                onPresentation(.transcribing(overlayTranscript: "Transcribing...", statusText: "Remote ASR…"))
+                onError("Remote ASR is selected, but \(requiredFields) are not fully configured.")
             }
+            return localFallback
+        }
 
-            do {
-                let transcript = try await remoteASR.transcribe(
-                    audioFileURL: audioURL,
-                    language: language,
-                    configuration: configuration
-                )
-                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? localFallback : trimmed
-            } catch {
-                await MainActor.run {
-                    onError("Remote ASR failed: \(error.localizedDescription)")
-                }
-                return localFallback
+        guard let audioURL else {
+            await MainActor.run {
+                onError("Remote ASR could not find the recorded audio file.")
             }
+            return localFallback
+        }
+
+        await MainActor.run {
+            onPresentation(.transcribing(overlayTranscript: "Transcribing...", statusText: backend.remoteStatusText))
+        }
+
+        do {
+            let transcript = try await remoteASR.transcribe(
+                audioFileURL: audioURL,
+                language: language,
+                backend: backend,
+                configuration: configuration
+            )
+            let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? localFallback : trimmed
+        } catch {
+            await MainActor.run {
+                onError("Remote ASR failed: \(error.localizedDescription)")
+            }
+            return localFallback
         }
     }
 
@@ -210,10 +211,19 @@ enum AppWorkflowSupport {
             return "Speech Recognition permission was not granted."
         }
 
-        if backend == .remoteOpenAICompatible && !remoteConfigurationReady {
+        if backend.isRemoteBackend && !remoteConfigurationReady {
             return "Remote ASR is selected, but its configuration is incomplete."
         }
 
         return nil
+    }
+
+    private static func remoteConfigurationRequirements(for backend: ASRBackend) -> String {
+        switch backend {
+        case .remoteVolcengineASR:
+            return "API Base URL, API Key, Model, and Volcengine AppID"
+        case .remoteOpenAICompatible, .remoteAliyunASR, .appleSpeech:
+            return "API Base URL, API Key, and Model"
+        }
     }
 }

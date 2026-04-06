@@ -9,6 +9,59 @@ struct RemoteASRClientTests {
         #expect(RemoteASRClient.transcriptionsEndpoint(from: URL(string: "https://api.example.com")!).absoluteString == "https://api.example.com/v1/audio/transcriptions")
         #expect(RemoteASRClient.transcriptionsEndpoint(from: URL(string: "https://api.example.com/v1")!).absoluteString == "https://api.example.com/v1/audio/transcriptions")
         #expect(RemoteASRClient.transcriptionsEndpoint(from: URL(string: "https://api.example.com/audio/transcriptions")!).absoluteString == "https://api.example.com/audio/transcriptions")
+        #expect(
+            RemoteASRClient.transcriptionsEndpoint(
+                from: URL(string: "https://dashscope.aliyuncs.com")!,
+                backend: .remoteAliyunASR
+            ).absoluteString == "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions"
+        )
+        #expect(
+            RemoteASRClient.transcriptionsEndpoint(
+                from: URL(string: "https://dashscope.aliyuncs.com/api/v1")!,
+                backend: .remoteAliyunASR
+            ).absoluteString == "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription"
+        )
+        #expect(
+            RemoteASRClient.transcriptionsEndpoint(
+                from: URL(string: "https://dashscope.aliyuncs.com/compatible-mode/v1")!,
+                backend: .remoteAliyunASR
+            ).absoluteString == "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions"
+        )
+        #expect(
+            RemoteASRClient.transcriptionsEndpoint(
+                from: URL(string: "wss://dashscope.aliyuncs.com/api-ws/v1/inference")!,
+                backend: .remoteAliyunASR
+            ).absoluteString == "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions"
+        )
+        #expect(
+            RemoteASRClient.transcriptionsEndpoint(
+                from: URL(string: "https://ark.cn-beijing.volces.com/api/v3")!,
+                backend: .remoteVolcengineASR
+            ).absoluteString == "https://ark.cn-beijing.volces.com/api/v3/audio/transcriptions"
+        )
+    }
+
+    @Test
+    func aliyunEndpointsIncludeCompatibleAndServiceFallbacks() {
+        #expect(
+            RemoteASRClient.transcriptionsEndpoints(
+                from: URL(string: "https://dashscope.aliyuncs.com/compatible-mode/v1")!,
+                backend: .remoteAliyunASR
+            ).map(\.absoluteString) == [
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions",
+                "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription"
+            ]
+        )
+
+        #expect(
+            RemoteASRClient.transcriptionsEndpoints(
+                from: URL(string: "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription")!,
+                backend: .remoteAliyunASR
+            ).map(\.absoluteString) == [
+                "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions"
+            ]
+        )
     }
 
     @Test
@@ -54,6 +107,9 @@ struct RemoteASRClientTests {
         let json = #"{"text":" hello "}"#.data(using: .utf8)!
         #expect(try RemoteASRClient.parseTranscriptionResponse(json) == "hello")
 
+        let nested = #"{"output":{"transcription":" nested "}}"#.data(using: .utf8)!
+        #expect(try RemoteASRClient.parseTranscriptionResponse(nested) == "nested")
+
         let raw = Data("direct text".utf8)
         #expect(try RemoteASRClient.parseTranscriptionResponse(raw) == "direct text")
     }
@@ -93,6 +149,7 @@ struct RemoteASRClientTests {
         let result = try await client.transcribe(
             audioFileURL: audioURL,
             language: .english,
+            backend: .remoteOpenAICompatible,
             configuration: RemoteASRConfiguration(
                 baseURL: "api.example.com/v1",
                 apiKey: "sk-test",
@@ -107,6 +164,102 @@ struct RemoteASRClientTests {
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-test")
         #expect(request.value(forHTTPHeaderField: "Content-Type")?.contains("multipart/form-data; boundary=") == true)
+    }
+
+    @Test
+    func testConnectionNormalizesAliyunRealtimeWSSBaseURL() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RemoteASRTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let client = RemoteASRClient(session: session)
+
+        let capturedRequests = RequestCapture()
+        RemoteASRTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 405,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, Data())
+        }
+        defer { RemoteASRTestURLProtocol.shared.reset() }
+
+        let result = try await client.testConnection(
+            backend: .remoteAliyunASR,
+            with: .init(
+                baseURL: "wss://dashscope.aliyuncs.com/compatible-mode/v1",
+                apiKey: "sk-test",
+                model: "fun-asr-realtime",
+                prompt: ""
+            )
+        )
+
+        #expect(result == "Remote ASR endpoint responded with HTTP 405.")
+        let request = try #require(capturedRequests.snapshot.first)
+        #expect(request.httpMethod == "HEAD")
+        #expect(request.url?.absoluteString == "https://dashscope.aliyuncs.com/api-ws/v1/inference")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer sk-test")
+    }
+
+    @Test
+    func testConnectionNormalizesVolcengineRealtimeWSSBaseURL() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RemoteASRTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let client = RemoteASRClient(session: session)
+
+        let capturedRequests = RequestCapture()
+        RemoteASRTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 401,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, Data())
+        }
+        defer { RemoteASRTestURLProtocol.shared.reset() }
+
+        let result = try await client.testConnection(
+            backend: .remoteVolcengineASR,
+            with: .init(
+                baseURL: "wss://openspeech.bytedance.com/api/v3/audio/transcriptions",
+                apiKey: "ak-test",
+                model: "bigmodel",
+                prompt: "",
+                volcengineAppID: "app-test"
+            )
+        )
+
+        #expect(result == "Remote ASR endpoint responded with HTTP 401.")
+        let request = try #require(capturedRequests.snapshot.first)
+        #expect(request.httpMethod == "HEAD")
+        #expect(request.url?.absoluteString == "https://openspeech.bytedance.com/api/v3/sauc/bigmodel")
+        #expect(request.value(forHTTPHeaderField: "X-Api-App-Key") == "app-test")
+        #expect(request.value(forHTTPHeaderField: "X-Api-Access-Key") == "ak-test")
+        #expect(request.value(forHTTPHeaderField: "X-Api-Resource-Id") == "bigmodel")
+    }
+
+    @Test
+    func transcribeRejectsLocalAppleSpeechBackend() async {
+        let client = RemoteASRClient(session: .shared)
+        let configuration = RemoteASRConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "whisper"
+        )
+
+        await #expect(throws: RemoteASRClientError.unsupportedBackend) {
+            _ = try await client.transcribe(
+                audioFileURL: URL(fileURLWithPath: "/tmp/voicepi-audio.m4a"),
+                language: .english,
+                backend: .appleSpeech,
+                configuration: configuration
+            )
+        }
     }
 }
 

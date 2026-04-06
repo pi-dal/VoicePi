@@ -577,6 +577,8 @@ enum SupportedLanguage: String, CaseIterable, Identifiable, Codable {
 enum ASRBackend: String, CaseIterable, Identifiable, Codable {
     case appleSpeech
     case remoteOpenAICompatible
+    case remoteAliyunASR
+    case remoteVolcengineASR
 
     var id: String { rawValue }
 
@@ -586,6 +588,10 @@ enum ASRBackend: String, CaseIterable, Identifiable, Codable {
             return "Apple Speech"
         case .remoteOpenAICompatible:
             return "Remote OpenAI-Compatible ASR"
+        case .remoteAliyunASR:
+            return "Aliyun ASR"
+        case .remoteVolcengineASR:
+            return "Volcengine ASR"
         }
     }
 
@@ -594,17 +600,83 @@ enum ASRBackend: String, CaseIterable, Identifiable, Codable {
         case .appleSpeech:
             return "Uses the built-in Apple Speech recognizer."
         case .remoteOpenAICompatible:
-            return "Uploads recorded audio to a remote large-model transcription endpoint."
+            return "Uploads recorded audio to an OpenAI-compatible remote transcription endpoint."
+        case .remoteAliyunASR:
+            return "Streams realtime audio to an Aliyun ASR WebSocket endpoint."
+        case .remoteVolcengineASR:
+            return "Streams realtime audio to a Volcengine ASR WebSocket endpoint."
+        }
+    }
+
+    var isRemoteBackend: Bool {
+        switch self {
+        case .appleSpeech:
+            return false
+        case .remoteOpenAICompatible, .remoteAliyunASR, .remoteVolcengineASR:
+            return true
+        }
+    }
+
+    var remoteStatusText: String {
+        switch self {
+        case .appleSpeech:
+            return "Apple Speech…"
+        case .remoteOpenAICompatible:
+            return "Remote ASR…"
+        case .remoteAliyunASR:
+            return "Aliyun ASR…"
+        case .remoteVolcengineASR:
+            return "Volcengine ASR…"
+        }
+    }
+
+    var remoteBaseURLPlaceholder: String {
+        switch self {
+        case .appleSpeech, .remoteOpenAICompatible:
+            return "https://api.example.com/v1"
+        case .remoteAliyunASR:
+            return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        case .remoteVolcengineASR:
+            return "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
+        }
+    }
+
+    var remoteModelPlaceholder: String {
+        switch self {
+        case .appleSpeech, .remoteOpenAICompatible:
+            return "gpt-4o-mini-transcribe"
+        case .remoteAliyunASR:
+            return "fun-asr-realtime"
+        case .remoteVolcengineASR:
+            return "bigmodel"
+        }
+    }
+
+    var remoteAppIDPlaceholder: String {
+        switch self {
+        case .remoteVolcengineASR:
+            return "1234567890"
+        default:
+            return ""
         }
     }
 
     static let `default`: ASRBackend = .appleSpeech
 
+    var usesRealtimeStreaming: Bool {
+        switch self {
+        case .remoteAliyunASR, .remoteVolcengineASR:
+            return true
+        case .appleSpeech, .remoteOpenAICompatible:
+            return false
+        }
+    }
+
     var speechRecorderMode: SpeechRecorderMode {
         switch self {
         case .appleSpeech:
             return .appleSpeechStreaming
-        case .remoteOpenAICompatible:
+        case .remoteOpenAICompatible, .remoteAliyunASR, .remoteVolcengineASR:
             return .captureOnly
         }
     }
@@ -692,17 +764,46 @@ struct RemoteASRConfiguration: Codable, Equatable {
     var apiKey: String
     var model: String
     var prompt: String
+    var volcengineAppID: String
 
     init(
         baseURL: String = "",
         apiKey: String = "",
         model: String = "",
-        prompt: String = ""
+        prompt: String = "",
+        volcengineAppID: String = ""
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
         self.prompt = prompt
+        self.volcengineAppID = volcengineAppID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseURL
+        case apiKey
+        case model
+        case prompt
+        case volcengineAppID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        self.apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        self.prompt = try container.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+        self.volcengineAppID = try container.decodeIfPresent(String.self, forKey: .volcengineAppID) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(apiKey, forKey: .apiKey)
+        try container.encode(model, forKey: .model)
+        try container.encode(prompt, forKey: .prompt)
+        try container.encode(volcengineAppID, forKey: .volcengineAppID)
     }
 
     var trimmedBaseURL: String {
@@ -721,10 +822,25 @@ struct RemoteASRConfiguration: Codable, Equatable {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var trimmedVolcengineAppID: String {
+        volcengineAppID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var isConfigured: Bool {
         !trimmedBaseURL.isEmpty &&
         !trimmedAPIKey.isEmpty &&
         !trimmedModel.isEmpty
+    }
+
+    func isConfigured(for backend: ASRBackend) -> Bool {
+        switch backend {
+        case .remoteVolcengineASR:
+            return isConfigured && !trimmedVolcengineAppID.isEmpty
+        case .remoteOpenAICompatible, .remoteAliyunASR:
+            return isConfigured
+        case .appleSpeech:
+            return true
+        }
     }
 
     var normalizedEndpoint: URL? {
@@ -744,6 +860,16 @@ struct RemoteASRConfiguration: Codable, Equatable {
 
     func validate() throws {
         guard isConfigured else {
+            throw RemoteASRClientError.notConfigured
+        }
+
+        guard normalizedEndpoint != nil else {
+            throw RemoteASRClientError.invalidBaseURL
+        }
+    }
+
+    func validate(for backend: ASRBackend) throws {
+        guard isConfigured(for: backend) else {
             throw RemoteASRClientError.notConfigured
         }
 
@@ -1126,7 +1252,7 @@ final class AppModel: ObservableObject {
     }
 
     var isRemoteASRReady: Bool {
-        asrBackend == .remoteOpenAICompatible && remoteASRConfiguration.isConfigured
+        asrBackend.isRemoteBackend && remoteASRConfiguration.isConfigured(for: asrBackend)
     }
 
     var llmEnabled: Bool {
@@ -1341,13 +1467,15 @@ final class AppModel: ObservableObject {
         baseURL: String,
         apiKey: String,
         model: String,
-        prompt: String
+        prompt: String,
+        volcengineAppID: String = ""
     ) {
         remoteASRConfiguration = RemoteASRConfiguration(
             baseURL: baseURL,
             apiKey: apiKey,
             model: model,
-            prompt: prompt
+            prompt: prompt,
+            volcengineAppID: volcengineAppID
         )
     }
 
