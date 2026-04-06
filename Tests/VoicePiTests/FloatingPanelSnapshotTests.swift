@@ -6,45 +6,97 @@ import Testing
 struct FloatingPanelSnapshotTests {
     @Test
     @MainActor
-    func exportsModeSwitchSnapshotWhenPathIsProvided() throws {
+    func exportsConfiguredSnapshotWhenPathIsProvided() throws {
         let processInfo = ProcessInfo.processInfo
-        guard let outputPath = processInfo.environment["VOICEPI_MODE_SWITCH_SNAPSHOT_PATH"] else {
+        guard let outputPath = processInfo.environment["VOICEPI_SNAPSHOT_PATH"] else {
             return
         }
 
-        let theme = processInfo.environment["VOICEPI_MODE_SWITCH_SNAPSHOT_THEME"] == "light"
+        let theme = processInfo.environment["VOICEPI_SNAPSHOT_THEME"] == "light"
             ? InterfaceTheme.light
             : InterfaceTheme.dark
+        let snapshotKind = processInfo.environment["VOICEPI_SNAPSHOT_KIND"] ?? "mode-switch"
 
-        let controller = FloatingPanelController()
-        controller.applyInterfaceTheme(theme)
-        controller.showModeSwitch(
-            modeTitle: PostProcessingMode.translation.title,
-            refinementPromptTitle: "Meeting Notes",
-            autoHideDelayNanoseconds: nil
-        )
+        let contentView: NSView
 
-        guard
-            let window = controller.window,
-            let contentView = window.contentView
-        else {
-            Issue.record("Floating panel window was not created.")
-            return
+        switch snapshotKind {
+        case "recording":
+            let controller = FloatingPanelController()
+            controller.applyInterfaceTheme(theme)
+            controller.showRecording(transcript: "")
+            controller.updateLive(transcript: "VoicePi captures speech and pastes it back into the active app.", level: 0.52)
+
+            guard
+                let window = controller.window,
+                let view = window.contentView
+            else {
+                Issue.record("Recording floating panel window was not created.")
+                return
+            }
+
+            view.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            contentView = view
+            controller.hide()
+
+        case "settings-home", "settings-about":
+            let defaults = UserDefaults(suiteName: "VoicePiTests.snapshot.\(UUID().uuidString)")!
+            let model = AppModel(defaults: defaults)
+            model.interfaceTheme = theme
+            model.microphoneAuthorization = .granted
+            model.speechAuthorization = .granted
+            model.accessibilityAuthorization = .granted
+            model.inputMonitoringAuthorization = .unknown
+
+            let controller = SettingsWindowController(model: model, delegate: nil)
+            let section: SettingsSection = snapshotKind == "settings-about" ? .about : .home
+            controller.show(section: section)
+
+            guard
+                let window = controller.window,
+                let view = window.contentView
+            else {
+                Issue.record("Settings window was not created.")
+                return
+            }
+
+            view.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            contentView = view
+
+        default:
+            let controller = FloatingPanelController()
+            controller.applyInterfaceTheme(theme)
+            controller.showModeSwitch(
+                modeTitle: PostProcessingMode.translation.title,
+                refinementPromptTitle: "Meeting Notes",
+                autoHideDelayNanoseconds: nil
+            )
+
+            guard
+                let window = controller.window,
+                let view = window.contentView
+            else {
+                Issue.record("Mode-switch floating panel window was not created.")
+                return
+            }
+
+            view.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            contentView = view
+            controller.hide()
         }
-
-        contentView.layoutSubtreeIfNeeded()
-        window.displayIfNeeded()
 
         let bounds = contentView.bounds
         guard let rep = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
-            Issue.record("Failed to allocate bitmap representation for floating panel.")
+            Issue.record("Failed to allocate bitmap representation for snapshot export.")
             return
         }
 
         contentView.cacheDisplay(in: bounds, to: rep)
 
         guard let data = rep.representation(using: .png, properties: [:]) else {
-            Issue.record("Failed to encode floating panel snapshot as PNG.")
+            Issue.record("Failed to encode snapshot as PNG.")
             return
         }
 
@@ -56,7 +108,5 @@ struct FloatingPanelSnapshotTests {
         try data.write(to: outputURL)
 
         #expect(FileManager.default.fileExists(atPath: outputURL.path))
-
-        controller.hide()
     }
 }
