@@ -114,11 +114,19 @@ final class FloatingPanelController: NSWindowController {
         }
     }
 
-    func hide(completion: (() -> Void)? = nil) {
+    func hide(immediately: Bool = false, completion: (() -> Void)? = nil) {
         autoHideTask?.cancel()
         autoHideTask = nil
         isModeSwitchAutoHideScheduled = false
         guard let panel = window, panel.isVisible else {
+            completion?()
+            return
+        }
+
+        if immediately {
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            contentController.resetForNextSession()
             completion?()
             return
         }

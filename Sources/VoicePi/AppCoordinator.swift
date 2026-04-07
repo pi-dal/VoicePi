@@ -103,6 +103,7 @@ final class AppController: NSObject {
     private let modeCycleShortcutAction = ShortcutActionController()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
+    private let inputFallbackPanelController = InputFallbackPanelController()
     private let llmRefiner = LLMRefiner()
     private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
@@ -112,6 +113,7 @@ final class AppController: NSObject {
     private let homebrewInstallationDetector = HomebrewInstallationDetector()
     private let appDefaults = UserDefaults.standard
     private let promptDestinationInspector = PromptDestinationInspector()
+    private let editableTextTargetInspector: EditableTextTargetInspecting = EditableTextTargetInspector()
 
     private var statusBarController: StatusBarController?
     private var cancellables: Set<AnyCancellable> = []
@@ -245,6 +247,13 @@ final class AppController: NSObject {
         }
 
         return .holdRepeat
+    }
+
+    static func transcriptDeliveryRoute(
+        for text: String,
+        targetInspection: EditableTextTargetInspection
+    ) -> TranscriptDelivery.Route {
+        TranscriptDelivery.route(for: text, targetInspection: targetInspection)
     }
 
     static func shouldPromptAccessibilityOnLaunch(
@@ -537,9 +546,14 @@ final class AppController: NSObject {
 
     func start() {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
+        inputFallbackPanelController.applyInterfaceTheme(model.interfaceTheme)
+        inputFallbackPanelController.onCopySuccess = { [weak self] in
+            self?.statusBarController?.setTransientStatus("Copied")
+        }
         model.$interfaceTheme
             .sink { [weak self] theme in
                 self?.floatingPanelController.applyInterfaceTheme(theme)
+                self?.inputFallbackPanelController.applyInterfaceTheme(theme)
             }
             .store(in: &cancellables)
 
@@ -748,6 +762,7 @@ final class AppController: NSObject {
         isStartingRecording = true
         latestTranscript = ""
         statusBarController?.setTransientStatus(nil)
+        inputFallbackPanelController.hide()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -838,14 +853,27 @@ final class AppController: NSObject {
             let finalText = await self.refineIfNeeded(captured)
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
-            do {
-                try await self.textInjector.inject(text: finalText)
-                self.statusBarController?.setTransientStatus("Injected")
-            } catch {
-                self.presentTransientError(error.localizedDescription)
+            switch Self.transcriptDeliveryRoute(
+                for: finalText,
+                targetInspection: self.editableTextTargetInspector.inspectCurrentTarget()
+            ) {
+            case .emptyResult:
+                self.statusBarController?.setTransientStatus(nil)
+                self.floatingPanelController.hide()
+            case .injectableTarget:
+                do {
+                    try await self.textInjector.inject(text: finalText)
+                    self.statusBarController?.setTransientStatus("Injected")
+                } catch {
+                    self.presentTransientError(error.localizedDescription)
+                }
+                self.floatingPanelController.hide()
+            case .fallbackPanel:
+                if let payload = InputFallbackPanelPayload(text: finalText) {
+                    self.presentInputFallbackPanel(payload)
+                }
             }
 
-            self.floatingPanelController.hide()
             self.model.hideOverlay()
             self.isProcessingRelease = false
         }
@@ -862,6 +890,13 @@ final class AppController: NSObject {
         statusBarController?.setTransientStatus(nil)
         floatingPanelController.hide()
         model.hideOverlay()
+    }
+
+    private func presentInputFallbackPanel(_ payload: InputFallbackPanelPayload) {
+        floatingPanelController.hide(immediately: true) { [weak self] in
+            guard let self else { return }
+            self.inputFallbackPanelController.show(payload: payload)
+        }
     }
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {
