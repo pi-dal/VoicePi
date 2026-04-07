@@ -245,6 +245,28 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func transcriptDeliveryRouteUsesInjectionForEditableTarget() {
+        #expect(
+            AppController.transcriptDeliveryRoute(
+                for: "hello world",
+                targetInspection: .editable
+            ) == .injectableTarget
+        )
+    }
+
+    @Test
+    @MainActor
+    func transcriptDeliveryRouteUsesFallbackForMissingInputTarget() {
+        #expect(
+            AppController.transcriptDeliveryRoute(
+                for: "hello world",
+                targetInspection: .notEditable
+            ) == .fallbackPanel
+        )
+    }
+
+    @Test
+    @MainActor
     func modeCycleRepeatStartsOnlyWhenShortcutIsConfiguredAndAppIsIdle() {
         #expect(
             AppController.shouldStartModeCycleRepeat(

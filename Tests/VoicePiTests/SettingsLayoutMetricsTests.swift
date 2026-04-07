@@ -44,4 +44,14 @@ struct SettingsLayoutMetricsTests {
         #expect(SettingsLayoutMetrics.updatePanelNotesHeight == 120)
         #expect(SettingsLayoutMetrics.updatePanelOuterInset == 18)
     }
+
+    @Test
+    @MainActor
+    func promptEditorUsesDedicatedSheetRhythm() {
+        #expect(SettingsLayoutMetrics.promptEditorOuterInset == 18)
+        #expect(SettingsLayoutMetrics.promptEditorSectionSpacing == 12)
+        #expect(SettingsLayoutMetrics.promptEditorFieldSpacing == 8)
+        #expect(SettingsLayoutMetrics.promptEditorBodyMinHeight == 240)
+        #expect(SettingsLayoutMetrics.promptEditorSidebarWidth == 272)
+    }
 }

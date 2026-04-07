@@ -189,6 +189,29 @@ struct LLMSectionFeedback {
 
 @MainActor
 final class StatusBarController: NSObject {
+    private struct PromptBindingCapture {
+        let kind: PromptBindingKind
+        let value: String
+
+        var summaryTitle: String {
+            switch kind {
+            case .appBundleID:
+                return "Captured App: \(value)"
+            case .websiteHost:
+                return "Captured Website: \(value)"
+            }
+        }
+
+        var bindingSubject: String {
+            switch kind {
+            case .appBundleID:
+                return "app \(value)"
+            case .websiteHost:
+                return "site \(value)"
+            }
+        }
+    }
+
     enum AboutOverviewRow: Equatable {
         case repository
         case builtBy
@@ -219,6 +242,7 @@ final class StatusBarController: NSObject {
 
     private var isRecording = false
     private var transientStatus: String?
+    private var promptDestinationInspector = PromptDestinationInspector()
 
     static let aboutOverviewRowOrder: [AboutOverviewRow] = [
         .builtBy,
@@ -233,6 +257,24 @@ final class StatusBarController: NSObject {
         "Settings…",
         "Quit VoicePi"
     ]
+
+    static let refinementPromptCaptureActionTitles = [
+        "Capture Frontmost App",
+        "Capture Current Website"
+    ]
+
+    static let promptBindingPickerActionTitles = [
+        "Bind",
+        "New Prompt…",
+        "Cancel"
+    ]
+
+    static func refinementPromptCaptureActionsEnabled(
+        mode: PostProcessingMode,
+        isPromptEditorPresented: Bool
+    ) -> Bool {
+        mode == .refinement && !isPromptEditorPresented
+    }
 
     static func disabledRefinementPromptTitle(_ title: String) -> NSAttributedString {
         let shadow = NSShadow()
@@ -589,6 +631,10 @@ final class StatusBarController: NSObject {
         menu.removeAllItems()
 
         let canSelectPrompt = model.postProcessingMode == .refinement
+        let captureActionsEnabled = Self.refinementPromptCaptureActionsEnabled(
+            mode: model.postProcessingMode,
+            isPromptEditorPresented: settingsWindowController?.isPromptEditorSheetPresented == true
+        )
         let currentSelection = model.promptWorkspace.activeSelection
         let allPresets = [PromptPreset.builtInDefault] + model.starterPromptPresets()
             + model.promptWorkspace.userPresets.sorted(by: {
@@ -612,6 +658,26 @@ final class StatusBarController: NSObject {
             item.isEnabled = canSelectPrompt
             menu.addItem(item)
         }
+
+        menu.addItem(.separator())
+
+        let captureFrontmostAppItem = NSMenuItem(
+            title: Self.refinementPromptCaptureActionTitles[0],
+            action: #selector(captureFrontmostAppForPromptBinding),
+            keyEquivalent: ""
+        )
+        captureFrontmostAppItem.target = self
+        captureFrontmostAppItem.isEnabled = captureActionsEnabled
+        menu.addItem(captureFrontmostAppItem)
+
+        let captureCurrentWebsiteItem = NSMenuItem(
+            title: Self.refinementPromptCaptureActionTitles[1],
+            action: #selector(captureCurrentWebsiteForPromptBinding),
+            keyEquivalent: ""
+        )
+        captureCurrentWebsiteItem.target = self
+        captureCurrentWebsiteItem.isEnabled = captureActionsEnabled
+        menu.addItem(captureCurrentWebsiteItem)
 
         if !canSelectPrompt {
             for item in menu.items {
@@ -754,6 +820,101 @@ final class StatusBarController: NSObject {
     }
 
     @objc
+    private func captureFrontmostAppForPromptBinding() {
+        let destination = promptDestinationInspector.currentDestinationContext()
+        capturePromptBinding(
+            kind: .appBundleID,
+            capturedRawValue: destination.appBundleID,
+            unavailableMessage: "Couldn't capture a frontmost app bundle ID."
+        )
+    }
+
+    @objc
+    private func captureCurrentWebsiteForPromptBinding() {
+        let destination = promptDestinationInspector.currentDestinationContext()
+        capturePromptBinding(
+            kind: .websiteHost,
+            capturedRawValue: destination.websiteHost,
+            unavailableMessage: "Couldn't capture a website host from the frontmost browser tab."
+        )
+    }
+
+    private func capturePromptBinding(
+        kind: PromptBindingKind,
+        capturedRawValue: String?,
+        unavailableMessage: String
+    ) {
+        guard let captured = PromptBindingActions.normalizedCapturedValue(capturedRawValue, kind: kind) else {
+            setTransientStatus(unavailableMessage)
+            return
+        }
+
+        presentPromptBindingPicker(
+            for: PromptBindingCapture(kind: kind, value: captured)
+        )
+    }
+
+    private func applyPromptBindingCapture(
+        _ capture: PromptBindingCapture,
+        to target: PromptBindingTarget
+    ) {
+        guard let result = PromptBindingActions.apply(
+            capturedRawValue: capture.value,
+            kind: capture.kind,
+            target: target,
+            model: model
+        ) else {
+            setTransientStatus("Couldn't save the captured binding.")
+            return
+        }
+
+        let statusText: String
+        switch result.status {
+        case .added:
+            statusText = "Bound \(capture.bindingSubject) to \(result.preset.resolvedTitle)"
+        case .alreadyPresent:
+            statusText = "\(result.preset.resolvedTitle) already includes \(capture.bindingSubject)"
+        }
+
+        refreshAll()
+        setTransientStatus(statusText)
+    }
+
+    private func presentPromptBindingPicker(for capture: PromptBindingCapture) {
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 28), pullsDown: false)
+        let targets = PromptBindingActions.pickerTargets(model: model)
+        for (index, target) in targets.enumerated() {
+            popup.addItem(withTitle: target.title)
+            popup.lastItem?.tag = index
+        }
+
+        let alert = NSAlert()
+        alert.messageText = capture.summaryTitle
+        alert.informativeText = "Choose a prompt to bind. Starter prompts and VoicePi Default will be copied into a new editable prompt before saving the binding."
+        alert.accessoryView = popup
+        alert.addButton(withTitle: Self.promptBindingPickerActionTitles[0])
+        alert.addButton(withTitle: Self.promptBindingPickerActionTitles[1])
+        alert.addButton(withTitle: Self.promptBindingPickerActionTitles[2])
+
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            let selectedIndex = max(0, popup.indexOfSelectedItem)
+            let target = targets[min(selectedIndex, targets.count - 1)].target
+            applyPromptBindingCapture(capture, to: target)
+        case .alertSecondButtonReturn:
+            showSettingsWindow(section: .llm)
+            settingsWindowController?.presentNewPromptEditor(
+                prefillingCapturedValue: capture.value,
+                kind: capture.kind
+            )
+            setTransientStatus("Editing new prompt for \(capture.bindingSubject)")
+        default:
+            setTransientStatus("Cancelled binding \(capture.bindingSubject)")
+        }
+    }
+
+    @objc
     private func openSettings() {
         showSettingsWindow(section: .home)
     }
@@ -820,6 +981,11 @@ enum SettingsLayoutMetrics {
     static let updatePanelMinHeight: CGFloat = 408
     static let updatePanelNotesHeight: CGFloat = 120
     static let updatePanelOuterInset: CGFloat = 18
+    static let promptEditorOuterInset: CGFloat = 18
+    static let promptEditorSectionSpacing: CGFloat = 12
+    static let promptEditorFieldSpacing: CGFloat = 8
+    static let promptEditorBodyMinHeight: CGFloat = 240
+    static let promptEditorSidebarWidth: CGFloat = 272
 }
 
 enum AboutProfile {
@@ -886,11 +1052,6 @@ protocol SettingsWindowControllerDelegate: AnyObject {
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
-    enum PromptBindingCaptureKind {
-        case appBundleID
-        case websiteHost
-    }
-
     enum PromptBindingEntryAction {
         case createFromDefault
         case createFromStarter
@@ -901,6 +1062,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let promptBindingsButtonTitle = "Bindings"
     static let captureFrontmostAppButtonTitle = "Capture Frontmost App"
     static let captureCurrentWebsiteButtonTitle = "Capture Current Website"
+    static let promptEditorBodyHintText = "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
+    static let promptEditorBodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    static let promptEditorBodyTextInset = NSSize(width: 14, height: 12)
+
+    static func promptEditorSheetTitle(for preset: PromptPreset) -> String {
+        isNewPromptDraft(preset) ? "New Prompt" : "Edit Prompt"
+    }
+
+    static func promptEditorPrimaryActionTitle(for preset: PromptPreset) -> String {
+        isNewPromptDraft(preset) ? "Create Prompt" : "Save Prompt"
+    }
+
+    private static func isNewPromptDraft(_ preset: PromptPreset) -> Bool {
+        preset.source == .user
+            && preset.title == "New Prompt"
+            && preset.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     weak var delegate: SettingsWindowControllerDelegate?
 
@@ -1031,6 +1209,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private weak var promptEditorWebsiteHostsField: NSTextField?
     private weak var promptEditorBindingStatusLabel: NSTextField?
     private weak var promptEditorBodyTextView: NSTextView?
+
+    var isPromptEditorSheetPresented: Bool {
+        promptEditorDraft != nil || window?.attachedSheet != nil
+    }
 
     init(model: AppModel, delegate: SettingsWindowControllerDelegate?) {
         self.model = model
@@ -2033,6 +2215,85 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             websiteHosts: template.websiteHosts
         )
     }
+
+    static func makeNewUserPromptDraft(
+        prefillingCapturedValue capturedRawValue: String,
+        kind: PromptBindingKind
+    ) -> PromptPreset {
+        let normalized = PromptBindingActions.normalizedCapturedValue(capturedRawValue, kind: kind)
+        return PromptPreset(
+            id: "user.\(UUID().uuidString.lowercased())",
+            title: "New Prompt",
+            body: "",
+            source: .user,
+            appBundleIDs: kind == .appBundleID ? [normalized].compactMap { $0 } : [],
+            websiteHosts: kind == .websiteHost ? [normalized].compactMap { $0 } : []
+        )
+    }
+
+    struct PromptEditorBodyPalette: Equatable {
+        let text: NSColor
+        let background: NSColor
+        let insertionPoint: NSColor
+    }
+
+    struct PromptEditorBodyContainerChrome: Equatable {
+        let background: NSColor
+        let border: NSColor
+        let cornerRadius: CGFloat
+    }
+
+    static func promptEditorBodyPalette(for appearance: NSAppearance?) -> PromptEditorBodyPalette {
+        let resolvedAppearance = appearance ?? NSApp.effectiveAppearance
+        let isDarkTheme = resolvedAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let background = isDarkTheme
+            ? NSColor(calibratedWhite: 0.205, alpha: 1)
+            : NSColor(
+                calibratedRed: 0xFC / 255.0,
+                green: 0xFB / 255.0,
+                blue: 0xF8 / 255.0,
+                alpha: 1
+            )
+
+        return PromptEditorBodyPalette(
+            text: .labelColor,
+            background: background,
+            insertionPoint: .labelColor
+        )
+    }
+
+    static func promptEditorBodyContainerChrome(for appearance: NSAppearance?) -> PromptEditorBodyContainerChrome {
+        let resolvedAppearance = appearance ?? NSApp.effectiveAppearance
+        let isDarkTheme = resolvedAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+
+        return PromptEditorBodyContainerChrome(
+            background: isDarkTheme
+                ? NSColor(calibratedWhite: 0.24, alpha: 1)
+                : NSColor(
+                    calibratedRed: 0xF6 / 255.0,
+                    green: 0xF3 / 255.0,
+                    blue: 0xEC / 255.0,
+                    alpha: 1
+                ),
+            border: isDarkTheme
+                ? NSColor(calibratedWhite: 1, alpha: 0.08)
+                : NSColor(calibratedWhite: 0, alpha: 0.08),
+            cornerRadius: 12
+        )
+    }
+
+    func presentNewPromptEditor(
+        prefillingCapturedValue capturedRawValue: String,
+        kind: PromptBindingKind
+    ) {
+        selectSection(.llm)
+        presentPromptEditorSheet(
+            for: Self.makeNewUserPromptDraft(
+                prefillingCapturedValue: capturedRawValue,
+                kind: kind
+            )
+        )
+    }
     @objc
     private func openPromptBindingsEditor() {
         guard let selectedPreset = selectedPromptPresetFromDraft() else { return }
@@ -2567,7 +2828,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        sheet.title = "Edit Prompt"
+        sheet.title = Self.promptEditorSheetTitle(for: preset)
         sheet.setContentSize(sheetSize)
         sheet.minSize = sheetSize
         sheet.appearance = window?.effectiveAppearance ?? window?.appearance
@@ -2581,13 +2842,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let nameField = NSTextField(string: preset.resolvedTitle)
-        nameField.placeholderString = "Prompt name"
+        nameField.placeholderString = "Short name, for example Meeting Notes"
+        nameField.font = .systemFont(ofSize: 14, weight: .medium)
+        nameField.controlSize = .large
         nameField.translatesAutoresizingMaskIntoConstraints = false
 
-        let bindingActionsLabel = NSTextField(labelWithString: Self.promptBindingActionBarTitle)
-        bindingActionsLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        bindingActionsLabel.textColor = .secondaryLabelColor
-        bindingActionsLabel.translatesAutoresizingMaskIntoConstraints = false
+        let bindingsTitleLabel = NSTextField(labelWithString: "Automatic Bindings")
+        bindingsTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        bindingsTitleLabel.textColor = .labelColor
+        bindingsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let bindingsSubtitleLabel = NSTextField(
+            wrappingLabelWithString: "Use captures to target this prompt to the frontmost app or current site while Active Prompt stays on VoicePi Default."
+        )
+        bindingsSubtitleLabel.font = .systemFont(ofSize: 12)
+        bindingsSubtitleLabel.textColor = .secondaryLabelColor
+        bindingsSubtitleLabel.maximumNumberOfLines = 0
+        bindingsSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let captureFrontmostAppButton = makeSecondaryActionButton(
             title: Self.captureFrontmostAppButtonTitle,
@@ -2602,9 +2873,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         captureCurrentWebsiteButton.translatesAutoresizingMaskIntoConstraints = false
 
         let bindingActionButtons = NSStackView(views: [captureFrontmostAppButton, captureCurrentWebsiteButton])
-        bindingActionButtons.orientation = .horizontal
-        bindingActionButtons.alignment = .centerY
-        bindingActionButtons.distribution = .fillEqually
+        bindingActionButtons.orientation = .vertical
+        bindingActionButtons.alignment = .leading
+        bindingActionButtons.distribution = .fill
         bindingActionButtons.spacing = 8
         bindingActionButtons.translatesAutoresizingMaskIntoConstraints = false
 
@@ -2612,7 +2883,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         bindingStatusLabel.font = .systemFont(ofSize: 12)
         bindingStatusLabel.textColor = .secondaryLabelColor
         bindingStatusLabel.lineBreakMode = .byWordWrapping
-        bindingStatusLabel.maximumNumberOfLines = 2
+        bindingStatusLabel.maximumNumberOfLines = 0
         bindingStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let appBindingsLabel = NSTextField(labelWithString: "App Bundle IDs")
@@ -2634,17 +2905,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         websiteBindingsField.translatesAutoresizingMaskIntoConstraints = false
 
         let bindingsHintLabel = NSTextField(
-            wrappingLabelWithString: "Bindings are optional. When Active Prompt stays on VoicePi Default, VoicePi checks matching app bundle IDs and website hosts before falling back to the default prompt."
+            wrappingLabelWithString: "You can type comma-separated bundle IDs or hosts manually if capture is not enough."
         )
         bindingsHintLabel.font = .systemFont(ofSize: 12)
         bindingsHintLabel.textColor = .secondaryLabelColor
         bindingsHintLabel.maximumNumberOfLines = 0
         bindingsHintLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let bodyLabel = NSTextField(labelWithString: "Prompt Body")
-        bodyLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        bodyLabel.textColor = .secondaryLabelColor
+        let bodyLabel = NSTextField(labelWithString: "Instructions")
+        bodyLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        bodyLabel.textColor = .labelColor
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let bodyHintLabel = NSTextField(
+            wrappingLabelWithString: Self.promptEditorBodyHintText
+        )
+        bodyHintLabel.font = .systemFont(ofSize: 12)
+        bodyHintLabel.textColor = .secondaryLabelColor
+        bodyHintLabel.maximumNumberOfLines = 0
+        bodyHintLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let textView = NSTextView(frame: .zero)
         textView.isRichText = false
@@ -2656,17 +2935,38 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
-        textView.font = .systemFont(ofSize: 13)
-        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.font = Self.promptEditorBodyFont
+        textView.textContainerInset = Self.promptEditorBodyTextInset
         textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.autoresizingMask = .width
+        let bodyPalette = Self.promptEditorBodyPalette(for: sheet.appearance)
+        textView.textColor = bodyPalette.text
+        textView.backgroundColor = bodyPalette.background
+        textView.insertionPointColor = bodyPalette.insertionPoint
+        textView.typingAttributes = [
+            .font: textView.font ?? Self.promptEditorBodyFont,
+            .foregroundColor: bodyPalette.text
+        ]
         textView.string = preset.body
 
         let scrollView = NSScrollView(frame: .zero)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .bezelBorder
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
         scrollView.documentView = textView
+
+        let bodyContainerChrome = Self.promptEditorBodyContainerChrome(for: sheet.appearance)
+        let bodyContainer = NSView()
+        bodyContainer.translatesAutoresizingMaskIntoConstraints = false
+        bodyContainer.wantsLayer = true
+        bodyContainer.layer?.cornerRadius = bodyContainerChrome.cornerRadius
+        bodyContainer.layer?.borderWidth = 1
+        bodyContainer.layer?.borderColor = bodyContainerChrome.border.cgColor
+        bodyContainer.layer?.backgroundColor = bodyContainerChrome.background.cgColor
+        bodyContainer.addSubview(scrollView)
 
         let cancelButton = makeSecondaryActionButton(
             title: "Cancel",
@@ -2676,11 +2976,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         cancelButton.keyEquivalent = "\u{1b}"
 
         let saveButton = makePrimaryActionButton(
-            title: "Save Prompt",
+            title: Self.promptEditorPrimaryActionTitle(for: preset),
             action: #selector(savePromptEditorSheet)
         )
         saveButton.translatesAutoresizingMaskIntoConstraints = false
         saveButton.keyEquivalent = "\r"
+        saveButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 118).isActive = true
+        cancelButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 94).isActive = true
 
         let buttonRow = NSStackView(views: [NSView(), cancelButton, saveButton])
         buttonRow.orientation = .horizontal
@@ -2688,19 +2990,70 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buttonRow.spacing = 10
         buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
+        let nameStack = NSStackView(views: [nameLabel, nameField])
+        nameStack.orientation = .vertical
+        nameStack.alignment = .leading
+        nameStack.spacing = SettingsLayoutMetrics.promptEditorFieldSpacing
+        nameField.widthAnchor.constraint(equalTo: nameStack.widthAnchor).isActive = true
+
+        let bindingsStack = NSStackView(views: [
+            bindingsTitleLabel,
+            bindingsSubtitleLabel,
+            bindingActionButtons,
+            bindingStatusLabel,
+            appBindingsLabel,
+            appBindingsField,
+            websiteBindingsLabel,
+            websiteBindingsField,
+            bindingsHintLabel
+        ])
+        bindingsStack.orientation = .vertical
+        bindingsStack.alignment = .leading
+        bindingsStack.spacing = SettingsLayoutMetrics.promptEditorFieldSpacing
+        bindingsStack.setCustomSpacing(SettingsLayoutMetrics.promptEditorSectionSpacing, after: bindingsSubtitleLabel)
+        bindingsStack.setCustomSpacing(SettingsLayoutMetrics.promptEditorSectionSpacing, after: bindingStatusLabel)
+        bindingsStack.setCustomSpacing(SettingsLayoutMetrics.promptEditorSectionSpacing, after: appBindingsField)
+        bindingsStack.setCustomSpacing(SettingsLayoutMetrics.promptEditorSectionSpacing, after: websiteBindingsField)
+        bindingActionButtons.widthAnchor.constraint(equalTo: bindingsStack.widthAnchor).isActive = true
+        bindingStatusLabel.widthAnchor.constraint(equalTo: bindingsStack.widthAnchor).isActive = true
+        appBindingsField.widthAnchor.constraint(equalTo: bindingsStack.widthAnchor).isActive = true
+        websiteBindingsField.widthAnchor.constraint(equalTo: bindingsStack.widthAnchor).isActive = true
+        bindingsHintLabel.widthAnchor.constraint(equalTo: bindingsStack.widthAnchor).isActive = true
+
+        let bindingsCard = makeCardView()
+        pinCardContent(bindingsStack, into: bindingsCard)
+        bindingsCard.translatesAutoresizingMaskIntoConstraints = false
+        bindingsCard.widthAnchor.constraint(equalToConstant: SettingsLayoutMetrics.promptEditorSidebarWidth).isActive = true
+
+        let bodyStack = NSStackView(views: [bodyLabel, bodyHintLabel, bodyContainer])
+        bodyStack.orientation = .vertical
+        bodyStack.alignment = .leading
+        bodyStack.spacing = SettingsLayoutMetrics.promptEditorFieldSpacing
+        bodyContainer.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
+        bodyHintLabel.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
+
+        let bodyCard = makeCardView()
+        pinCardContent(bodyStack, into: bodyCard)
+        bodyCard.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentSplit = NSStackView(views: [bindingsCard, bodyCard])
+        contentSplit.orientation = .horizontal
+        contentSplit.alignment = .top
+        contentSplit.distribution = .fill
+        contentSplit.spacing = SettingsLayoutMetrics.promptEditorSectionSpacing
+        contentSplit.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentStack = NSStackView(views: [nameStack, contentSplit])
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = SettingsLayoutMetrics.promptEditorSectionSpacing
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        nameStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        contentSplit.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        bodyCard.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+
         let contentView = NSView()
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(nameField)
-        contentView.addSubview(bindingActionsLabel)
-        contentView.addSubview(bindingActionButtons)
-        contentView.addSubview(bindingStatusLabel)
-        contentView.addSubview(appBindingsLabel)
-        contentView.addSubview(appBindingsField)
-        contentView.addSubview(websiteBindingsLabel)
-        contentView.addSubview(websiteBindingsField)
-        contentView.addSubview(bindingsHintLabel)
-        contentView.addSubview(bodyLabel)
-        contentView.addSubview(scrollView)
+        contentView.addSubview(contentStack)
         contentView.addSubview(buttonRow)
         sheet.contentView = contentView
 
@@ -2708,58 +3061,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             contentView.widthAnchor.constraint(equalToConstant: sheetSize.width),
             contentView.heightAnchor.constraint(equalToConstant: sheetSize.height),
 
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: SettingsLayoutMetrics.promptEditorOuterInset),
+            contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -SettingsLayoutMetrics.promptEditorOuterInset),
+            contentStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: SettingsLayoutMetrics.promptEditorOuterInset),
+            contentStack.bottomAnchor.constraint(equalTo: buttonRow.topAnchor, constant: -SettingsLayoutMetrics.promptEditorSectionSpacing),
 
-            nameField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            nameField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            nameField.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
+            bodyContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.promptEditorBodyMinHeight),
 
-            bindingActionsLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            bindingActionsLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            bindingActionsLabel.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 14),
+            scrollView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor, constant: 1),
+            scrollView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor, constant: -1),
+            scrollView.topAnchor.constraint(equalTo: bodyContainer.topAnchor, constant: 1),
+            scrollView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor, constant: -1),
 
-            bindingActionButtons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            bindingActionButtons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            bindingActionButtons.topAnchor.constraint(equalTo: bindingActionsLabel.bottomAnchor, constant: 8),
-
-            bindingStatusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            bindingStatusLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            bindingStatusLabel.topAnchor.constraint(equalTo: bindingActionButtons.bottomAnchor, constant: 6),
-
-            appBindingsLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            appBindingsLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            appBindingsLabel.topAnchor.constraint(equalTo: bindingStatusLabel.bottomAnchor, constant: 10),
-
-            appBindingsField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            appBindingsField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            appBindingsField.topAnchor.constraint(equalTo: appBindingsLabel.bottomAnchor, constant: 8),
-
-            websiteBindingsLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            websiteBindingsLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            websiteBindingsLabel.topAnchor.constraint(equalTo: appBindingsField.bottomAnchor, constant: 14),
-
-            websiteBindingsField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            websiteBindingsField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            websiteBindingsField.topAnchor.constraint(equalTo: websiteBindingsLabel.bottomAnchor, constant: 8),
-
-            bindingsHintLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            bindingsHintLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            bindingsHintLabel.topAnchor.constraint(equalTo: websiteBindingsField.bottomAnchor, constant: 10),
-
-            bodyLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            bodyLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            bodyLabel.topAnchor.constraint(equalTo: bindingsHintLabel.bottomAnchor, constant: 14),
-
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            scrollView.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 8),
-            scrollView.bottomAnchor.constraint(equalTo: buttonRow.topAnchor, constant: -16),
-
-            buttonRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            buttonRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            buttonRow.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
+            buttonRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: SettingsLayoutMetrics.promptEditorOuterInset),
+            buttonRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -SettingsLayoutMetrics.promptEditorOuterInset),
+            buttonRow.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -SettingsLayoutMetrics.promptEditorOuterInset)
         ])
 
         promptEditorNameField = nameField
@@ -2956,36 +3272,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static func mergeBindingFieldText(
         existingText: String,
         capturedRawValue: String?,
-        kind: PromptBindingCaptureKind
+        kind: PromptBindingKind
     ) -> String {
-        var merged: [String] = []
-        var seen: Set<String> = []
-
-        for value in bindingValues(from: existingText) {
-            let normalized = normalizedCapturedBinding(value, kind: kind) ?? value
-            if seen.insert(normalized).inserted {
-                merged.append(normalized)
-            }
-        }
-
-        if let captured = normalizedCapturedBinding(capturedRawValue, kind: kind),
-           seen.insert(captured).inserted {
-            merged.append(captured)
-        }
-
-        return merged.joined(separator: ", ")
-    }
-
-    private static func normalizedCapturedBinding(
-        _ rawValue: String?,
-        kind: PromptBindingCaptureKind
-    ) -> String? {
-        switch kind {
-        case .appBundleID:
-            return PromptDestinationContext.normalizedAppBundleID(rawValue)
-        case .websiteHost:
-            return PromptDestinationContext.normalizedWebsiteHost(rawValue)
-        }
+        PromptBindingActions.mergeBindingValues(
+            existingValues: bindingValues(from: existingText),
+            capturedRawValue: capturedRawValue,
+            kind: kind
+        ).joined(separator: ", ")
     }
 
     private func promptBindingValues(from text: String) -> [String] {
@@ -2993,19 +3286,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func applyCapturedPromptBinding(
-        kind: PromptBindingCaptureKind,
+        kind: PromptBindingKind,
         capturedRawValue: String?,
         field: NSTextField?,
         unavailableMessage: String
     ) {
         guard let field else { return }
 
-        guard let captured = Self.normalizedCapturedBinding(capturedRawValue, kind: kind) else {
+        guard let captured = PromptBindingActions.normalizedCapturedValue(capturedRawValue, kind: kind) else {
             setPromptEditorBindingStatus(unavailableMessage, isError: true)
             return
         }
 
-        let previousValues = Set(Self.bindingValues(from: field.stringValue))
+        let previousValues = Set(
+            PromptBindingActions.mergeBindingValues(
+                existingValues: Self.bindingValues(from: field.stringValue),
+                capturedRawValue: nil,
+                kind: kind
+            )
+        )
         field.stringValue = Self.mergeBindingFieldText(
             existingText: field.stringValue,
             capturedRawValue: captured,

@@ -5,6 +5,38 @@ import Testing
 struct SettingsWindowPromptTemplateTests {
     @Test
     @MainActor
+    func promptEditorCopyAdaptsForNewPromptDraft() {
+        let draft = SettingsWindowController.makeNewUserPromptDraft()
+
+        #expect(SettingsWindowController.promptEditorSheetTitle(for: draft) == "New Prompt")
+        #expect(SettingsWindowController.promptEditorPrimaryActionTitle(for: draft) == "Create Prompt")
+    }
+
+    @Test
+    @MainActor
+    func promptEditorCopyAdaptsForExistingPrompt() {
+        let draft = PromptPreset(
+            id: "user.reply",
+            title: "Reply",
+            body: "Keep this concise.",
+            source: .user
+        )
+
+        #expect(SettingsWindowController.promptEditorSheetTitle(for: draft) == "Edit Prompt")
+        #expect(SettingsWindowController.promptEditorPrimaryActionTitle(for: draft) == "Save Prompt")
+    }
+
+    @Test
+    @MainActor
+    func promptEditorBodyHintExplainsDefaultFallback() {
+        #expect(
+            SettingsWindowController.promptEditorBodyHintText
+                == "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
+        )
+    }
+
+    @Test
+    @MainActor
     func promptEditorExposesBindingActionBarCopy() {
         #expect(SettingsWindowController.promptBindingActionBarTitle == "Bindings")
         #expect(SettingsWindowController.promptBindingsButtonTitle == "Bindings")
@@ -48,6 +80,36 @@ struct SettingsWindowPromptTemplateTests {
         #expect(draft.body == template.body)
         #expect(draft.appBundleIDs == ["com.figma.desktop"])
         #expect(draft.websiteHosts == ["mail.google.com"])
+    }
+
+    @Test
+    @MainActor
+    func makeNewUserPromptDraftPrefillsCapturedWebsiteBinding() {
+        let draft = SettingsWindowController.makeNewUserPromptDraft(
+            prefillingCapturedValue: "https://MAIL.google.com/inbox",
+            kind: .websiteHost
+        )
+
+        #expect(draft.source == .user)
+        #expect(draft.title == "New Prompt")
+        #expect(draft.body.isEmpty)
+        #expect(draft.appBundleIDs.isEmpty)
+        #expect(draft.websiteHosts == ["mail.google.com"])
+    }
+
+    @Test
+    @MainActor
+    func makeNewUserPromptDraftPrefillsCapturedAppBinding() {
+        let draft = SettingsWindowController.makeNewUserPromptDraft(
+            prefillingCapturedValue: " COM.GOOGLE.CHROME ",
+            kind: .appBundleID
+        )
+
+        #expect(draft.source == .user)
+        #expect(draft.title == "New Prompt")
+        #expect(draft.body.isEmpty)
+        #expect(draft.appBundleIDs == ["com.google.chrome"])
+        #expect(draft.websiteHosts.isEmpty)
     }
 
     @Test

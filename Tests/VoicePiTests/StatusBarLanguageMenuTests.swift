@@ -21,6 +21,52 @@ struct StatusBarLanguageMenuTests {
 
     @Test
     @MainActor
+    func refinementPromptMenuAdvertisesCaptureActions() {
+        #expect(
+            StatusBarController.refinementPromptCaptureActionTitles == [
+                "Capture Frontmost App",
+                "Capture Current Website"
+            ]
+        )
+    }
+
+    @Test
+    @MainActor
+    func promptEditorStateDisablesRefinementPromptCaptureActions() {
+        #expect(
+            StatusBarController.refinementPromptCaptureActionsEnabled(
+                mode: .refinement,
+                isPromptEditorPresented: false
+            )
+        )
+        #expect(
+            StatusBarController.refinementPromptCaptureActionsEnabled(
+                mode: .refinement,
+                isPromptEditorPresented: true
+            ) == false
+        )
+        #expect(
+            StatusBarController.refinementPromptCaptureActionsEnabled(
+                mode: .disabled,
+                isPromptEditorPresented: false
+            ) == false
+        )
+    }
+
+    @Test
+    @MainActor
+    func promptBindingPickerAdvertisesExpectedButtons() {
+        #expect(
+            StatusBarController.promptBindingPickerActionTitles == [
+                "Bind",
+                "New Prompt…",
+                "Cancel"
+            ]
+        )
+    }
+
+    @Test
+    @MainActor
     func outputLanguageStaysSelectableWhenRefinementModeIsOn() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.outputLanguageStaysSelectableWhenRefinementModeIsOn.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
