@@ -252,6 +252,55 @@ struct AppModelPersistenceTests {
     }
 
     @Test
+    @MainActor
+    func savingBoundPromptsFromDefaultKeepsAutomaticBindingsWorkingAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.savingBoundPromptsFromDefaultKeepsAutomaticBindingsWorkingAcrossReloads.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let slackPrompt = PromptPreset(
+            id: "user-slack",
+            title: "Slack Reply",
+            body: "Respond like a concise Slack reply.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let figmaPrompt = PromptPreset(
+            id: "user-figma",
+            title: "Figma Spec",
+            body: "Turn this into a terse product spec.",
+            source: .user,
+            appBundleIDs: ["com.figma.Desktop"]
+        )
+
+        var workspace = PromptWorkspaceSettings()
+        workspace.saveUserPreset(slackPrompt)
+        workspace.activeSelection = SettingsWindowController.activeSelectionAfterSavingPromptEditor(
+            previousSelection: workspace.activeSelection,
+            savedPreset: slackPrompt
+        )
+        workspace.saveUserPreset(figmaPrompt)
+        workspace.activeSelection = SettingsWindowController.activeSelectionAfterSavingPromptEditor(
+            previousSelection: workspace.activeSelection,
+            savedPreset: figmaPrompt
+        )
+
+        model.promptWorkspace = workspace
+
+        let reloaded = AppModel(defaults: defaults)
+
+        #expect(reloaded.promptWorkspace.activeSelection == .builtInDefault)
+        #expect(
+            reloaded.resolvedPromptPreset(
+                destination: .init(appBundleID: "com.tinyspeck.slackmacgap")
+            ).title == "Slack Reply"
+        )
+        #expect(
+            reloaded.resolvedPromptPreset(
+                destination: .init(appBundleID: "com.figma.Desktop")
+            ).title == "Figma Spec"
+        )
+    }
+
+    @Test
     func translationProviderAvailabilityHidesAppleTranslateWhenUnsupported() {
         #expect(TranslationProvider.availableProviders(appleTranslateSupported: true) == [.appleTranslate, .llm])
         #expect(TranslationProvider.availableProviders(appleTranslateSupported: false) == [.llm])

@@ -210,11 +210,12 @@ enum PromptWorkspaceResolver {
         destination: PromptDestinationContext? = nil,
         library: PromptLibrary
     ) -> ResolvedPromptPreset {
+        if let boundPreset = workspace.userPresets.last(where: { $0.matches(destination: destination) }) {
+            return resolvedPreset(from: boundPreset)
+        }
+
         switch workspace.activeSelection.mode {
         case .builtInDefault:
-            if let boundPreset = workspace.userPresets.first(where: { $0.matches(destination: destination) }) {
-                return resolvedPreset(from: boundPreset)
-            }
             return resolvedPreset(from: PromptPreset.builtInDefault)
         case .preset:
             guard

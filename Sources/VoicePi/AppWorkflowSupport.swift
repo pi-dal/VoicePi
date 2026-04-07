@@ -98,6 +98,7 @@ enum AppWorkflowSupport {
         sourceLanguage: SupportedLanguage,
         targetLanguage: SupportedLanguage,
         configuration: LLMConfiguration,
+        refinementPromptTitle: String? = nil,
         resolvedRefinementPrompt: String?,
         refiner: TranscriptRefining,
         translator: TranscriptTranslating,
@@ -112,6 +113,8 @@ enum AppWorkflowSupport {
                 return text
             }
 
+            let refinementStatusText = refinementStatusText(promptTitle: refinementPromptTitle)
+
             let refinerConfiguration = LLMRefinerConfiguration(
                 baseURL: configuration.baseURL,
                 apiKey: configuration.apiKey,
@@ -120,7 +123,12 @@ enum AppWorkflowSupport {
             )
 
             await MainActor.run {
-                onPresentation(.refining(overlayTranscript: "Refining...", statusText: "Refining…"))
+                onPresentation(
+                    .refining(
+                        overlayTranscript: refinementStatusText,
+                        statusText: refinementStatusText
+                    )
+                )
             }
 
             do {
@@ -225,5 +233,10 @@ enum AppWorkflowSupport {
         case .remoteOpenAICompatible, .remoteAliyunASR, .appleSpeech:
             return "API Base URL, API Key, and Model"
         }
+    }
+
+    private static func refinementStatusText(promptTitle: String?) -> String {
+        let trimmed = promptTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Refining…" : "Refining with \(trimmed)"
     }
 }

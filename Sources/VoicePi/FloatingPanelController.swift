@@ -403,7 +403,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         case .recording:
             nextText = trimmed.isEmpty ? "正在聆听…" : transcript
         case .refining:
-            nextText = "Refining..."
+            nextText = trimmed.isEmpty ? "Refining..." : transcript
         case .modeSwitch:
             nextText = transcript
         }
@@ -438,11 +438,14 @@ private final class FloatingPanelContentViewController: NSViewController {
         switch phase {
         case .recording:
             setTranscriptText(
-                currentText.isEmpty || currentText == "Refining..." ? "正在聆听…" : currentText,
+                currentText.isEmpty || Self.isRefiningPlaceholder(currentText) ? "正在聆听…" : currentText,
                 animated: false
             )
         case .refining:
-            setTranscriptText("Refining...", animated: false)
+            setTranscriptText(
+                currentText.isEmpty ? "Refining..." : currentText,
+                animated: false
+            )
         case .modeSwitch:
             updateModeSelection(currentText.isEmpty ? "Disabled" : currentText, refinementPromptTitle: nil)
         }
@@ -471,6 +474,11 @@ private final class FloatingPanelContentViewController: NSViewController {
 
         transcriptLabel.stringValue = text
         updateTranscriptFadeMask()
+    }
+
+    private static func isRefiningPlaceholder(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == "Refining..." || trimmed.hasPrefix("Refining with ")
     }
 
     private func recalculatePreferredWidth() {

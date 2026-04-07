@@ -1668,7 +1668,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, conservative LLM refinement, or explicit translation."))
         contentStack.addArrangedSubview(makeBodyLabel("Refinement always uses the LLM provider. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
-        contentStack.addArrangedSubview(makeBodyLabel("When Active Prompt is VoicePi Default, VoicePi checks any saved app and website bindings first, then falls back to the built-in default prompt. Starter prompts give you a baseline, and user prompts let you take full control over the editable middle section."))
+        contentStack.addArrangedSubview(makeBodyLabel("VoicePi checks saved app and website bindings against the current destination before falling back to the selected Active Prompt. Starter prompts give you a baseline, and user prompts let you take full control over the editable middle section."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
         contentStack.addArrangedSubview(llmStatusView)
@@ -2195,6 +2195,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    static func activeSelectionAfterSavingPromptEditor(
+        previousSelection: PromptActiveSelection,
+        savedPreset: PromptPreset
+    ) -> PromptActiveSelection {
+        let hasAutomaticBindings = !savedPreset.appBundleIDs.isEmpty || !savedPreset.websiteHosts.isEmpty
+
+        guard hasAutomaticBindings else {
+            return .preset(savedPreset.id)
+        }
+
+        if previousSelection == .preset(savedPreset.id) {
+            return .preset(savedPreset.id)
+        }
+
+        return previousSelection
+    }
+
     static func makeNewUserPromptDraft(template: PromptPreset? = nil) -> PromptPreset {
         let id = "user.\(UUID().uuidString.lowercased())"
         guard let template else {
@@ -2345,7 +2362,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 }.joined(separator: "\n")
 
                 previewText = """
-                VoicePi Default remains the fallback when no manual binding matches.
+                Matching app and website bindings override the selected Active Prompt.
 
                 Automatic bindings:
                 \(bindingLines)
@@ -2853,7 +2870,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         bindingsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let bindingsSubtitleLabel = NSTextField(
-            wrappingLabelWithString: "Use captures to target this prompt to the frontmost app or current site while Active Prompt stays on VoicePi Default."
+            wrappingLabelWithString: "Use captures to target this prompt to the frontmost app or current site. Matching bindings override the selected Active Prompt automatically."
         )
         bindingsSubtitleLabel.font = .systemFont(ofSize: 12)
         bindingsSubtitleLabel.textColor = .secondaryLabelColor
@@ -3112,10 +3129,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             websiteHosts: websiteHosts
         )
 
+        let nextSelection = Self.activeSelectionAfterSavingPromptEditor(
+            previousSelection: promptWorkspaceDraft.activeSelection,
+            savedPreset: draft
+        )
         promptWorkspaceDraft.saveUserPreset(draft)
-        promptWorkspaceDraft.activeSelection = .preset(draft.id)
+        promptWorkspaceDraft.activeSelection = nextSelection
         reloadPromptPopupItems()
-        selectPromptWorkspaceItem(in: activePromptPopup, for: .preset(draft.id))
+        selectPromptWorkspaceItem(in: activePromptPopup, for: nextSelection)
         updatePromptEditorState()
         closePromptEditorSheet()
     }

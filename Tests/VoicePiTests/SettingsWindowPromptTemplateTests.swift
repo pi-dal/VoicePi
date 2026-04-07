@@ -220,6 +220,62 @@ struct SettingsWindowPromptTemplateTests {
 
     @Test
     @MainActor
+    func savingBoundPromptKeepsBuiltInDefaultActiveForAutomaticBindings() {
+        let savedPreset = PromptPreset(
+            id: "user.slack",
+            title: "Slack Reply",
+            body: "Keep Slack replies concise.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+
+        let selection = SettingsWindowController.activeSelectionAfterSavingPromptEditor(
+            previousSelection: .builtInDefault,
+            savedPreset: savedPreset
+        )
+
+        #expect(selection == .builtInDefault)
+    }
+
+    @Test
+    @MainActor
+    func savingBoundPromptPreservesExistingManualSelection() {
+        let savedPreset = PromptPreset(
+            id: "user.slack",
+            title: "Slack Reply",
+            body: "Keep Slack replies concise.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+
+        let selection = SettingsWindowController.activeSelectionAfterSavingPromptEditor(
+            previousSelection: .preset("user.manual"),
+            savedPreset: savedPreset
+        )
+
+        #expect(selection == .preset("user.manual"))
+    }
+
+    @Test
+    @MainActor
+    func savingUnboundPromptSelectsItImmediately() {
+        let savedPreset = PromptPreset(
+            id: "user.custom",
+            title: "Custom",
+            body: "Summarize tersely.",
+            source: .user
+        )
+
+        let selection = SettingsWindowController.activeSelectionAfterSavingPromptEditor(
+            previousSelection: .builtInDefault,
+            savedPreset: savedPreset
+        )
+
+        #expect(selection == .preset(savedPreset.id))
+    }
+
+    @Test
+    @MainActor
     func duplicatePromptPresetPreservesBindings() throws {
         let defaults = UserDefaults(suiteName: "VoicePiTests.duplicatePromptPresetPreservesBindings.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)

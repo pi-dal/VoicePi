@@ -122,7 +122,7 @@ struct PromptWorkspaceTests {
     }
 
     @Test
-    func manualPresetSelectionOverridesMatchingAutomaticBinding() throws {
+    func matchingAutomaticBindingOverridesManualPresetSelection() throws {
         let library = try PromptLibrary.loadBundled()
         let manual = PromptPreset(
             id: "user.manual",
@@ -148,9 +148,73 @@ struct PromptWorkspaceTests {
             library: library
         )
 
+        #expect(resolved.title == "Slack Reply")
+        #expect(resolved.middleSection == "Respond like a concise Slack reply.")
+        #expect(resolved.source == .user)
+    }
+
+    @Test
+    func manualPresetSelectionStillAppliesWhenNoAutomaticBindingMatches() throws {
+        let library = try PromptLibrary.loadBundled()
+        let manual = PromptPreset(
+            id: "user.manual",
+            title: "Pinned",
+            body: "Always use this while pinned.",
+            source: .user
+        )
+        let bound = PromptPreset(
+            id: "user.slack",
+            title: "Slack Reply",
+            body: "Respond like a concise Slack reply.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let workspace = PromptWorkspaceSettings(
+            activeSelection: .preset(manual.id),
+            userPresets: [manual, bound]
+        )
+
+        let resolved = PromptWorkspaceResolver.resolve(
+            workspace: workspace,
+            destination: .init(appBundleID: "com.figma.Desktop"),
+            library: library
+        )
+
         #expect(resolved.title == "Pinned")
         #expect(resolved.middleSection == "Always use this while pinned.")
         #expect(resolved.source == .user)
+    }
+
+    @Test
+    func latestMatchingAutomaticBindingWinsWhenMultiplePromptsTargetSameApp() throws {
+        let library = try PromptLibrary.loadBundled()
+        let original = PromptPreset(
+            id: "user.original",
+            title: "Original",
+            body: "Use the original prompt.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let replacement = PromptPreset(
+            id: "user.replacement",
+            title: "Replacement",
+            body: "Use the replacement prompt.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let workspace = PromptWorkspaceSettings(
+            activeSelection: .builtInDefault,
+            userPresets: [original, replacement]
+        )
+
+        let resolved = PromptWorkspaceResolver.resolve(
+            workspace: workspace,
+            destination: .init(appBundleID: "com.tinyspeck.slackmacgap"),
+            library: library
+        )
+
+        #expect(resolved.title == "Replacement")
+        #expect(resolved.middleSection == "Use the replacement prompt.")
     }
 
     @Test

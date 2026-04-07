@@ -1002,6 +1002,7 @@ final class AppController: NSObject {
 
     private func refineIfNeeded(_ text: String) async -> String {
         let destination = promptDestinationInspector.currentDestinationContext()
+        let resolvedPrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
 
         return await AppWorkflowSupport.postProcessIfNeeded(
             text,
@@ -1012,8 +1013,9 @@ final class AppController: NSObject {
             sourceLanguage: model.selectedLanguage,
             targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
+            refinementPromptTitle: model.postProcessingMode == .refinement ? resolvedPrompt.title : nil,
             resolvedRefinementPrompt: model.postProcessingMode == .refinement
-                ? model.resolvedRefinementPrompt(for: .voicePi, destination: destination)
+                ? resolvedPrompt.middleSection
                 : nil,
             refiner: llmRefiner,
             translator: appleTranslateService,
@@ -1023,7 +1025,7 @@ final class AppController: NSObject {
                 case .transcribing:
                     break
                 case .refining(let overlayTranscript, let statusText):
-                    self.floatingPanelController.showRefining(transcript: text)
+                    self.floatingPanelController.showRefining(transcript: overlayTranscript)
                     self.model.updateOverlayRefining(transcript: overlayTranscript)
                     self.statusBarController?.setTransientStatus(statusText)
                 }

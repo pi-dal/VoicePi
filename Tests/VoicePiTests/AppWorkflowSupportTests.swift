@@ -100,6 +100,7 @@ struct AppWorkflowSupportTests {
     func refinementIncorporatesTargetLanguageIntoLLMPath() async {
         let refiner = RefinerStub(result: .success("日本語の出力"))
         let translator = TranslatorStub(result: .success("translated"))
+        var presentations: [AppWorkflowPresentation] = []
 
         let text = await AppWorkflowSupport.postProcessIfNeeded(
             "original",
@@ -113,14 +114,21 @@ struct AppWorkflowSupportTests {
                 model: "gpt",
                 refinementPrompt: "legacy freeform prompt"
             ),
+            refinementPromptTitle: "Slack Reply",
             resolvedRefinementPrompt: "Format the output as concise release notes.",
             refiner: refiner,
             translator: translator,
-            onPresentation: { _ in },
+            onPresentation: { presentations.append($0) },
             onError: { _ in }
         )
 
         #expect(text == "日本語の出力")
+        #expect(
+            presentations == [.refining(
+                overlayTranscript: "Refining with Slack Reply",
+                statusText: "Refining with Slack Reply"
+            )]
+        )
         #expect(refiner.calls == 1)
         #expect(refiner.lastTargetLanguage == .japanese)
         #expect(refiner.lastMode == .refinement)
