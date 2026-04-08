@@ -17,16 +17,51 @@
 
 The redesigned Hero must preserve:
 
-- `Voice Input for macOS` eyebrow
 - `Sunny / Moonlight` theme switcher
 - VoicePi app icon
 - `VoicePi` heading
-- the current two intro paragraphs
-- the current primary and secondary CTAs
+- primary and secondary CTAs (Download Latest Release, Install Guide, View Repository)
 - the install tabs and actions
 - the current Hero highlight points
 
 The redesign may re-order and restyle these elements, but it should not drop them.
+
+### Actual Implemented Copy
+
+Some copy diverged from the pre-design spec during implementation. The following reflects what was actually built:
+
+**Eyebrow:** `Voice. Perfected.` (was: `Voice Input for macOS`)
+
+**Hero intro paragraphs:**
+- `The most natural way to create on macOS.`
+- `Speak. It simply appears.`
+
+**Hero summary (theme-specific):**
+- Sunny: `Clarity. Your thoughts, effortlessly present in the light.`
+- Moonlight: `Focus. Turning whispers into wisdom in the quiet.`
+
+**Hero points (flattened list):**
+- Always present.
+- Safe paste.
+- Private by design.
+- Your voice, your choice.
+
+**Install prompt:** `Become part of the flow.`
+
+**Install tab chip labels:**
+- Homebrew: `Yep, Homebrew`
+- Download: `Show me the zip`
+
+**Install followup copy (per tab):**
+- Homebrew followup kicker: `The faster route.` | title: `The simple path.` | detail: `Two terminal lines. One tool. Always up to date.`
+- Download followup kicker: `The classic way.` | title: `Direct. Simple.` | detail: `Grab the archive. Drop it in. Start speaking.`
+
+**Section headings:**
+- Highlights: `The Essence` / `The power of simplicity.` / `One shortcut. Zero friction. Everything in its place.`
+- Changelog: `The Journey` / `The Art of Progress.` / `Progress is the art of subtraction. Every version, a bit more essential.`
+
+**Feature list:** `The rhythm of your work, captured.`
+**Gallery window:** `Focused UI. Daytime or night.`
 
 ## Layout Direction
 
@@ -66,46 +101,47 @@ The right-side character is not a full illustration centerpiece. The scene shoul
 
 ### Character Scene
 
-The scene should include:
+The scene includes (implemented):
 
-- a single focused figure bent over desk work
-- a display with subtle code or text-entry cues
-- a coffee cup
-- voice-wave or speech-activity accents
-- one or two lightweight floating text fragments that suggest transcription or insertion
+- single focused figure with: hair, head, face, neck, torso, shoulder, upper arm, forearm, hand
+- display with: three code/text lines and a blinking cursor
+- coffee cup with three steam wisps
+- voice-wave accent (four animated bars)
+- two floating text fragments: `voice captured` and `inserting text...`
+- chair with back and seat
+- desk with surface, front, and shadow
 
 The figure should feel calm and absorbed in work, not expressive, cartoonish, or playful-for-its-own-sake. The visual weight should stay below the heading and CTA cluster, so the product message still leads.
 
 ## Theme-Specific Behavior
 
-Sunny and Moonlight should feel like two versions of the same desk scene at different times of day.
+Sunny and Moonlight feel like two versions of the same desk scene at different times of day.
 
-### Sunny
+### Sunny (implemented tokens)
 
-Sunny should feel like warm daytime work:
+- `--bg: #f8edcf` — warm cream background
+- `--scene-window: rgba(255, 239, 197, 0.94)` — warm window light
+- `--scene-window-cast: rgba(255, 219, 157, 0.56)` — amber cast across desk
+- `--scene-lamp: rgba(236, 168, 73, 0.22)` — warm ambient lamp
+- `--scene-lamp-glow: rgba(255, 211, 134, 0.18)` — soft golden halo
+- `--particle: rgba(210, 126, 36, 0.82)` — warm floating particles
+- `--scene-wave: rgba(227, 124, 31, 0.86)` — orange voice-wave bars
+- `--scene-stars: rgba(255, 255, 255, 0)` — stars hidden in sunny
+- `--dialog-surface: rgba(255, 248, 232, 0.95)` — cream install dialog
 
-- sunlight entering through a nearby window
-- warm ambient light
-- visible window-cast light across the desk or character area
-- softer cream and amber surfaces for the floating install dialog
-- visible coffee steam
-- friendlier speech-wave accents in orange or golden tones
-- a more relaxed and conversational atmosphere
+### Moonlight (implemented tokens)
 
-### Moonlight
+- `--bg: #08111d` — deep navy background
+- `--scene-lamp: rgba(198, 220, 255, 0.94)` — cool lamp as primary light
+- `--scene-lamp-glow: rgba(136, 173, 247, 0.44)` — cool blue halo
+- `--scene-stars: rgba(222, 236, 255, 0.94)` — visible starlight
+- `--particle: rgba(214, 228, 255, 0.9)` — cool floating particles
+- `--scene-wave: rgba(170, 200, 255, 0.88)` — blue-white voice-wave bars
+- `--scene-window: rgba(34, 54, 81, 0.58)` — dark window in moonlight
+- `--scene-desk-top: #233d63` / `--scene-desk-bottom: #182b46` — dark blue desk
+- `--dialog-surface: rgba(14, 28, 49, 0.94)` — deep blue install dialog
 
-Moonlight should feel like quiet, focused night work:
-
-- a desk lamp as the primary light source
-- faint starlight outside or around the scene as secondary atmosphere only
-- cooler desk light and screen glow
-- lamp-shaped highlights and shadows that define the desk scene
-- deeper blue-gray surfaces for the floating install dialog
-- colder voice-wave and text accents
-- slightly sharper contrast between the scene and the background
-- a more concentrated mood without becoming sterile
-
-Both themes should share structure, but each should have distinct atmosphere cues. A simple palette swap is not enough.
+Both themes share structure and scene elements, but scene atmosphere cues (lamp vs window, stars vs warm cast) create distinct moods rather than a simple color swap.
 
 ## Hero Content Styling
 
@@ -157,6 +193,20 @@ Mobile should still feel intentional and atmospheric, not like the desktop layou
 - Preserve readable line lengths in the copy block.
 - Ensure motion respects reduced-motion preferences.
 
+## Implemented Technical Additions
+
+These features were added during implementation but were not part of the pre-design spec:
+
+**Canvas-based atmosphere layer:** `mountAtmosphere()` in `main.ts` draws a full-viewport canvas with radial gradient particles that drift slowly. Respects `prefers-reduced-motion`. Palette and particle count differ per theme.
+
+**Hero atmosphere mask:** `mountHeroAtmosphereMask()` in `main.ts` with `resolveHeroMaskVars()` in `hero-mask.ts` uses a `ResizeObserver` to compute and apply `--hero-cutout-*` CSS custom properties on `.theme-atmosphere`, creating a masked cutout around the hero section so the atmosphere layer shows through everywhere except the hero itself.
+
+**Install dialog stage tracking:** `site-state.ts` tracks `installDialogStage: "prompt" | "followup"` with `selectInstallTab` transitioning from `prompt` → `followup`. Outside-click on the document returns to `prompt` stage, dismissing the followup panel.
+
+**Copy-to-clipboard feedback:** Copy buttons in the install followup panel use `data-copy` attributes wired in `main.ts`. On click, label temporarily changes to "Copied" and resets after 1400ms.
+
+**Scene fragment text:** Two floating text fragments in the scene (`scene-fragment-1: "voice captured"`, `scene-fragment-2: "inserting text..."`) suggest real-time transcription activity.
+
 ## Implementation Constraints
 
 When this design moves into implementation, the structure should evolve rather than reset:
@@ -180,3 +230,5 @@ The redesign is successful when all of the following are true:
 - The Hero keeps all current product messaging and actions.
 - Sunny and Moonlight feel like distinct daytime and nighttime versions of the same workspace.
 - The page still transitions naturally into the more card-driven sections below.
+- The atmosphere canvas and hero mask system cut around the hero without breaking layout.
+- All new tests pass (`vitest -- --run` in `site/`).
