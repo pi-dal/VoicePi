@@ -102,6 +102,83 @@ struct PromptBindingActionTests {
 
     @Test
     @MainActor
+    func bindingAppBundleIDDraftReportsConflictsBeforeSaving() throws {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.bindingAppBundleIDDraftReportsConflictsBeforeSaving.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let existing = model.createUserPromptPreset(
+            title: "Customer Reply",
+            body: "",
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let target = model.createUserPromptPreset(
+            title: "Standup Notes",
+            body: ""
+        )
+
+        let draft = try #require(
+            PromptBindingActions.prepareSave(
+                capturedRawValue: "com.tinyspeck.slackmacgap",
+                kind: .appBundleID,
+                target: .preset(target.id),
+                model: model
+            )
+        )
+
+        #expect(draft.preset.id == target.id)
+        #expect(draft.preset.appBundleIDs == ["com.tinyspeck.slackmacgap"])
+        #expect(draft.status == .added("com.tinyspeck.slackmacgap"))
+        #expect(draft.conflicts == [
+            .init(
+                appBundleID: "com.tinyspeck.slackmacgap",
+                owners: [
+                    .init(
+                        presetID: existing.id,
+                        title: existing.resolvedTitle
+                    )
+                ]
+            )
+        ])
+        #expect(model.promptWorkspace.userPreset(id: existing.id)?.appBundleIDs == ["com.tinyspeck.slackmacgap"])
+        #expect(model.promptWorkspace.userPreset(id: target.id)?.appBundleIDs.isEmpty == true)
+    }
+
+    @Test
+    @MainActor
+    func savingPreparedAppBundleIDBindingCanReassignExistingOwnerAfterConfirmation() throws {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.savingPreparedAppBundleIDBindingCanReassignExistingOwnerAfterConfirmation.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let existing = model.createUserPromptPreset(
+            title: "Customer Reply",
+            body: "",
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let target = model.createUserPromptPreset(
+            title: "Standup Notes",
+            body: ""
+        )
+
+        let draft = try #require(
+            PromptBindingActions.prepareSave(
+                capturedRawValue: "com.tinyspeck.slackmacgap",
+                kind: .appBundleID,
+                target: .preset(target.id),
+                model: model
+            )
+        )
+
+        let result = PromptBindingActions.commitPreparedSave(
+            draft,
+            model: model,
+            reassigningConflictingAppBindings: true
+        )
+
+        #expect(result.preset.id == target.id)
+        #expect(result.preset.appBundleIDs == ["com.tinyspeck.slackmacgap"])
+        #expect(model.promptWorkspace.userPreset(id: existing.id)?.appBundleIDs.isEmpty == true)
+    }
+
+    @Test
+    @MainActor
     func pickerTargetsPreferActivePromptAndThenListRemainingPrompts() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.pickerTargetsPreferActivePromptAndThenListRemainingPrompts.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)

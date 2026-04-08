@@ -32,6 +32,12 @@ struct StatusBarLanguageMenuTests {
 
     @Test
     @MainActor
+    func textProcessingMenuExposesStrictModeToggleTitle() {
+        #expect(StatusBarController.strictModeMenuItemTitle == "Strict Mode")
+    }
+
+    @Test
+    @MainActor
     func promptEditorStateDisablesRefinementPromptCaptureActions() {
         #expect(
             StatusBarController.refinementPromptCaptureActionsEnabled(

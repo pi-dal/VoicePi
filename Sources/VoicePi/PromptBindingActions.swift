@@ -21,12 +21,83 @@ struct PromptBindingSaveResult: Equatable {
     let status: PromptBindingSaveStatus
 }
 
+struct PromptBindingPreparedSave: Equatable {
+    let preset: PromptPreset
+    let status: PromptBindingSaveStatus
+    let conflicts: [PromptAppBindingConflict]
+}
+
 struct PromptBindingQuickTarget: Equatable {
     let title: String
     let target: PromptBindingTarget
 }
 
 enum PromptBindingActions {
+    @MainActor
+    static func prepareSave(
+        capturedRawValue: String?,
+        kind: PromptBindingKind,
+        target: PromptBindingTarget,
+        model: AppModel
+    ) -> PromptBindingPreparedSave? {
+        guard let captured = normalizedCapturedValue(capturedRawValue, kind: kind) else {
+            return nil
+        }
+
+        guard var preset = editablePreset(for: target, model: model) else {
+            return nil
+        }
+
+        let existingValues = bindingValues(for: preset, kind: kind)
+        let mergedValues = mergeBindingValues(
+            existingValues: existingValues,
+            capturedRawValue: captured,
+            kind: kind
+        )
+        let status: PromptBindingSaveStatus = existingValues.contains(captured)
+            ? .alreadyPresent(captured)
+            : .added(captured)
+
+        switch kind {
+        case .appBundleID:
+            preset.appBundleIDs = mergedValues
+        case .websiteHost:
+            preset.websiteHosts = mergedValues
+        }
+
+        let conflicts: [PromptAppBindingConflict]
+        switch kind {
+        case .appBundleID:
+            conflicts = model.promptWorkspace.appBindingConflicts(for: preset)
+        case .websiteHost:
+            conflicts = []
+        }
+
+        return PromptBindingPreparedSave(
+            preset: preset,
+            status: status,
+            conflicts: conflicts
+        )
+    }
+
+    @MainActor
+    static func commitPreparedSave(
+        _ preparedSave: PromptBindingPreparedSave,
+        model: AppModel,
+        reassigningConflictingAppBindings: Bool = false
+    ) -> PromptBindingSaveResult {
+        model.saveUserPromptPreset(
+            preparedSave.preset,
+            reassigningConflictingAppBindings: reassigningConflictingAppBindings
+        )
+        model.setActivePromptSelection(.preset(preparedSave.preset.id))
+
+        return PromptBindingSaveResult(
+            preset: preparedSave.preset,
+            status: preparedSave.status
+        )
+    }
+
     static func normalizedCapturedValue(
         _ rawValue: String?,
         kind: PromptBindingKind
@@ -68,37 +139,18 @@ enum PromptBindingActions {
         target: PromptBindingTarget,
         model: AppModel
     ) -> PromptBindingSaveResult? {
-        guard let captured = normalizedCapturedValue(capturedRawValue, kind: kind) else {
+        guard let preparedSave = prepareSave(
+            capturedRawValue: capturedRawValue,
+            kind: kind,
+            target: target,
+            model: model
+        ), preparedSave.conflicts.isEmpty else {
             return nil
         }
 
-        guard var preset = editablePreset(for: target, model: model) else {
-            return nil
-        }
-
-        let existingValues = bindingValues(for: preset, kind: kind)
-        let mergedValues = mergeBindingValues(
-            existingValues: existingValues,
-            capturedRawValue: captured,
-            kind: kind
-        )
-        let status: PromptBindingSaveStatus = existingValues.contains(captured)
-            ? .alreadyPresent(captured)
-            : .added(captured)
-
-        switch kind {
-        case .appBundleID:
-            preset.appBundleIDs = mergedValues
-        case .websiteHost:
-            preset.websiteHosts = mergedValues
-        }
-
-        model.saveUserPromptPreset(preset)
-        model.setActivePromptSelection(.preset(preset.id))
-
-        return PromptBindingSaveResult(
-            preset: preset,
-            status: status
+        return commitPreparedSave(
+            preparedSave,
+            model: model
         )
     }
 

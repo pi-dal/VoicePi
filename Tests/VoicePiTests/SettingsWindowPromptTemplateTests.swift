@@ -46,6 +46,70 @@ struct SettingsWindowPromptTemplateTests {
 
     @Test
     @MainActor
+    func strictModeCopyMatchesDesign() {
+        #expect(SettingsWindowController.strictModeToggleLabel == "Strict Mode")
+        #expect(
+            SettingsWindowController.strictModeHelpText
+                == "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
+        )
+        #expect(
+            SettingsWindowController.strictModeSummaryText(enabled: true)
+                == "Strict Mode on • Matching app bindings override Active Prompt"
+        )
+        #expect(
+            SettingsWindowController.strictModeSummaryText(enabled: false)
+                == "Strict Mode off • Always uses Active Prompt"
+        )
+    }
+
+    @Test
+    @MainActor
+    func singleAppBindingConflictAlertUsesExplicitReassignmentCopy() {
+        let content = SettingsWindowController.promptAppBindingConflictAlertContent(
+            for: [
+                .init(
+                    appBundleID: "com.tinyspeck.slackmacgap",
+                    owners: [.init(presetID: "user.reply", title: "Customer Reply")]
+                )
+            ],
+            destinationPromptTitle: "Standup Notes"
+        )
+
+        #expect(
+            content.messageText
+                == "com.tinyspeck.slackmacgap is already bound to “Customer Reply”."
+        )
+        #expect(
+            content.informativeText
+                == "Do you want to unbind it there and bind it to “Standup Notes” instead?"
+        )
+    }
+
+    @Test
+    @MainActor
+    func multipleAppBindingConflictsAreSummarizedInSingleAlert() {
+        let content = SettingsWindowController.promptAppBindingConflictAlertContent(
+            for: [
+                .init(
+                    appBundleID: "com.figma.desktop",
+                    owners: [.init(presetID: "user.spec", title: "Design Specs")]
+                ),
+                .init(
+                    appBundleID: "com.tinyspeck.slackmacgap",
+                    owners: [.init(presetID: "user.reply", title: "Customer Reply")]
+                )
+            ],
+            destinationPromptTitle: "Standup Notes"
+        )
+
+        #expect(content.messageText == "Some apps are already bound to other prompts.")
+        #expect(content.informativeText.contains("com.figma.desktop → Design Specs"))
+        #expect(content.informativeText.contains("com.tinyspeck.slackmacgap → Customer Reply"))
+        #expect(content.informativeText.contains("Standup Notes"))
+    }
+
+    @Test
+    @MainActor
     func bindingEntryActionMatchesPromptSourceRules() {
         #expect(SettingsWindowController.bindingEntryAction(for: .builtInDefault) == .createFromDefault)
         #expect(SettingsWindowController.bindingEntryAction(for: .starter) == .createFromStarter)

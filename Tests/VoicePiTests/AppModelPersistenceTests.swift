@@ -253,6 +253,21 @@ struct AppModelPersistenceTests {
 
     @Test
     @MainActor
+    func strictModeSettingPersistsAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.strictModeSettingPersistsAcrossReloads.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        var workspace = model.promptWorkspace
+        workspace.strictModeEnabled = false
+        model.promptWorkspace = workspace
+
+        let reloaded = AppModel(defaults: defaults)
+
+        #expect(reloaded.promptWorkspace.strictModeEnabled == false)
+    }
+
+    @Test
+    @MainActor
     func savingBoundPromptsFromDefaultKeepsAutomaticBindingsWorkingAcrossReloads() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.savingBoundPromptsFromDefaultKeepsAutomaticBindingsWorkingAcrossReloads.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)

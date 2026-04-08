@@ -1389,8 +1389,20 @@ final class AppModel: ObservableObject {
         promptWorkspace = next
     }
 
-    func saveUserPromptPreset(_ preset: PromptPreset) {
+    func setPromptStrictModeEnabled(_ enabled: Bool) {
         var next = promptWorkspace
+        next.strictModeEnabled = enabled
+        promptWorkspace = next
+    }
+
+    func saveUserPromptPreset(
+        _ preset: PromptPreset,
+        reassigningConflictingAppBindings: Bool = false
+    ) {
+        var next = promptWorkspace
+        if reassigningConflictingAppBindings {
+            next.reassignConflictingAppBindings(for: preset)
+        }
         next.saveUserPreset(preset)
         promptWorkspace = next
     }

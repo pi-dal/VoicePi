@@ -573,12 +573,15 @@ The prompt workspace only affects **Refinement mode**. It does not replace Voice
 
 The settings UI exposes these prompt controls:
 
-- **Active Prompt** chooses how VoicePi resolves the refinement prompt. Picking a concrete prompt pins that prompt manually. Leaving it on `VoicePi Default` enables automatic app and website bindings and still falls back to the built-in default when nothing matches.
+- **Active Prompt** chooses the manual prompt selection. VoicePi uses this prompt directly whenever `Strict Mode` is off.
+- **Strict Mode** controls runtime routing. When on, matching app bindings override the current Active Prompt; when off, VoicePi always uses the Active Prompt.
 - **Prompt Name** is editable for user-created prompts.
 - **Prompt Body** is the freeform middle section that gets inserted between VoicePi's fixed prefix and suffix instructions.
-- **App Bundle IDs** lets a user prompt match specific macOS apps such as `com.tinyspeck.slackmacgap`.
+- **App Bundle IDs** lets a user prompt match specific macOS apps such as `com.tinyspeck.slackmacgap`. App bundle IDs are globally unique across user prompts. If a save would conflict, VoicePi asks for confirmation before reassigning those app bindings.
 - **Website Hosts** lets a user prompt match supported browser tabs by host such as `mail.google.com`, `trello.com`, or wildcard entries like `*.notion.so`.
 - **New**, **Duplicate**, and **Delete** let you create and manage custom prompts. Starter prompts are duplicated before editing so the shipped presets stay intact, and bindings live on the editable user copies.
+
+`VoicePi Default` is always available as the built-in fallback prompt profile.
 
 The **Resolved Prompt** preview shows the exact editable middle section that will be sent at runtime. VoicePi still wraps that body with fixed prefix and suffix instructions in code.
 

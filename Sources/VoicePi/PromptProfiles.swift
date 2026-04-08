@@ -85,13 +85,21 @@ struct PromptPreset: Codable, Equatable, Identifiable {
     func matches(destination: PromptDestinationContext?) -> Bool {
         guard let destination else { return false }
 
-        if let bundleID = destination.appBundleID,
-           appBundleIDs.contains(bundleID) {
+        if matchesAppBundleID(destination.appBundleID) {
             return true
         }
 
-        guard let websiteHost = destination.websiteHost else { return false }
-        return websiteHosts.contains(where: { Self.websiteHost($0, matches: websiteHost) })
+        return matchesWebsiteHost(destination.websiteHost)
+    }
+
+    func matchesAppBundleID(_ bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        return appBundleIDs.contains(bundleID)
+    }
+
+    func matchesWebsiteHost(_ host: String?) -> Bool {
+        guard let host else { return false }
+        return websiteHosts.contains(where: { Self.websiteHost($0, matches: host) })
     }
 
     static var builtInDefault: Self {
@@ -159,14 +167,46 @@ struct PromptActiveSelection: Codable, Equatable {
 
 struct PromptWorkspaceSettings: Codable, Equatable {
     var activeSelection: PromptActiveSelection
+    var strictModeEnabled: Bool
     var userPresets: [PromptPreset]
+
+    enum CodingKeys: String, CodingKey {
+        case activeSelection
+        case strictModeEnabled
+        case userPresets
+    }
 
     init(
         activeSelection: PromptActiveSelection = .builtInDefault,
+        strictModeEnabled: Bool = true,
         userPresets: [PromptPreset] = []
     ) {
         self.activeSelection = activeSelection
+        self.strictModeEnabled = strictModeEnabled
         self.userPresets = userPresets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.activeSelection = try container.decodeIfPresent(
+            PromptActiveSelection.self,
+            forKey: .activeSelection
+        ) ?? .builtInDefault
+        self.strictModeEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .strictModeEnabled
+        ) ?? true
+        self.userPresets = try container.decodeIfPresent(
+            [PromptPreset].self,
+            forKey: .userPresets
+        ) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(activeSelection, forKey: .activeSelection)
+        try container.encode(strictModeEnabled, forKey: .strictModeEnabled)
+        try container.encode(userPresets, forKey: .userPresets)
     }
 
     func userPreset(id: String) -> PromptPreset? {
@@ -189,6 +229,47 @@ struct PromptWorkspaceSettings: Codable, Equatable {
             activeSelection = .builtInDefault
         }
     }
+
+    func appBindingConflicts(for preset: PromptPreset) -> [PromptAppBindingConflict] {
+        let targetBundleIDs = Set(preset.appBundleIDs)
+        guard !targetBundleIDs.isEmpty else { return [] }
+
+        var conflictsByBundleID: [String: [PromptAppBindingConflictOwner]] = [:]
+        for ownerPreset in userPresets where ownerPreset.id != preset.id {
+            for bundleID in ownerPreset.appBundleIDs where targetBundleIDs.contains(bundleID) {
+                conflictsByBundleID[bundleID, default: []].append(
+                    .init(presetID: ownerPreset.id, title: ownerPreset.resolvedTitle)
+                )
+            }
+        }
+
+        return conflictsByBundleID.keys.sorted().map { bundleID in
+            let owners = (conflictsByBundleID[bundleID] ?? []).sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+            return .init(appBundleID: bundleID, owners: owners)
+        }
+    }
+
+    mutating func reassignConflictingAppBindings(for preset: PromptPreset) {
+        let targetBundleIDs = Set(preset.appBundleIDs)
+        guard !targetBundleIDs.isEmpty else { return }
+
+        for index in userPresets.indices {
+            guard userPresets[index].id != preset.id else { continue }
+            userPresets[index].appBundleIDs.removeAll(where: { targetBundleIDs.contains($0) })
+        }
+    }
+}
+
+struct PromptAppBindingConflictOwner: Equatable {
+    let presetID: String
+    let title: String
+}
+
+struct PromptAppBindingConflict: Equatable {
+    let appBundleID: String
+    let owners: [PromptAppBindingConflictOwner]
 }
 
 enum ResolvedPromptPresetSource: Equatable {
@@ -210,8 +291,18 @@ enum PromptWorkspaceResolver {
         destination: PromptDestinationContext? = nil,
         library: PromptLibrary
     ) -> ResolvedPromptPreset {
-        if let boundPreset = workspace.userPresets.last(where: { $0.matches(destination: destination) }) {
-            return resolvedPreset(from: boundPreset)
+        if workspace.strictModeEnabled {
+            if let appBundleID = destination?.appBundleID,
+               let appBoundPreset = workspace.userPresets.last(where: { $0.matchesAppBundleID(appBundleID) }) {
+                return resolvedPreset(from: appBoundPreset)
+            }
+
+            if let websiteHost = destination?.websiteHost,
+               let websiteBoundPreset = workspace.userPresets.last(where: {
+                   $0.matchesWebsiteHost(websiteHost)
+               }) {
+                return resolvedPreset(from: websiteBoundPreset)
+            }
         }
 
         switch workspace.activeSelection.mode {

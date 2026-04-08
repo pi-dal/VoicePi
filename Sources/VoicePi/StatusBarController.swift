@@ -258,6 +258,8 @@ final class StatusBarController: NSObject {
         "Quit VoicePi"
     ]
 
+    static let strictModeMenuItemTitle = "Strict Mode"
+
     static let refinementPromptCaptureActionTitles = [
         "Capture Frontmost App",
         "Capture Current Website"
@@ -578,6 +580,17 @@ final class StatusBarController: NSObject {
 
         llmMenu.addItem(.separator())
 
+        let strictModeItem = NSMenuItem(
+            title: Self.strictModeMenuItemTitle,
+            action: #selector(togglePromptStrictModeFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        strictModeItem.target = self
+        strictModeItem.state = model.promptWorkspace.strictModeEnabled ? .on : .off
+        llmMenu.addItem(strictModeItem)
+
+        llmMenu.addItem(.separator())
+
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(openLLMSettings),
@@ -802,6 +815,19 @@ final class StatusBarController: NSObject {
     }
 
     @objc
+    private func togglePromptStrictModeFromMenu(_ sender: NSMenuItem) {
+        model.setPromptStrictModeEnabled(!model.promptWorkspace.strictModeEnabled)
+        refreshLLMMenuState()
+        refreshStatusSummary()
+        settingsWindowController?.reloadFromModel()
+        setTransientStatus(
+            SettingsWindowController.strictModeSummaryText(
+                enabled: model.promptWorkspace.strictModeEnabled
+            )
+        )
+    }
+
+    @objc
     private func selectRefinementPromptFromMenu(_ sender: NSMenuItem) {
         guard model.postProcessingMode == .refinement else { return }
         guard let presetID = sender.representedObject as? String else { return }
@@ -858,7 +884,7 @@ final class StatusBarController: NSObject {
         _ capture: PromptBindingCapture,
         to target: PromptBindingTarget
     ) {
-        guard let result = PromptBindingActions.apply(
+        guard let preparedSave = PromptBindingActions.prepareSave(
             capturedRawValue: capture.value,
             kind: capture.kind,
             target: target,
@@ -866,6 +892,27 @@ final class StatusBarController: NSObject {
         ) else {
             setTransientStatus("Couldn't save the captured binding.")
             return
+        }
+
+        let result: PromptBindingSaveResult
+        if !preparedSave.conflicts.isEmpty {
+            guard confirmPromptBindingCaptureReassignment(
+                conflicts: preparedSave.conflicts,
+                destinationPromptTitle: preparedSave.preset.resolvedTitle
+            ) else {
+                setTransientStatus("Binding unchanged.")
+                return
+            }
+            result = PromptBindingActions.commitPreparedSave(
+                preparedSave,
+                model: model,
+                reassigningConflictingAppBindings: true
+            )
+        } else {
+            result = PromptBindingActions.commitPreparedSave(
+                preparedSave,
+                model: model
+            )
         }
 
         let statusText: String
@@ -878,6 +925,24 @@ final class StatusBarController: NSObject {
 
         refreshAll()
         setTransientStatus(statusText)
+    }
+
+    private func confirmPromptBindingCaptureReassignment(
+        conflicts: [PromptAppBindingConflict],
+        destinationPromptTitle: String
+    ) -> Bool {
+        let copy = SettingsWindowController.promptAppBindingConflictAlertContent(
+            for: conflicts,
+            destinationPromptTitle: destinationPromptTitle
+        )
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = copy.messageText
+        alert.informativeText = copy.informativeText
+        alert.addButton(withTitle: "Reassign and Bind")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func presentPromptBindingPicker(for capture: PromptBindingCapture) {
@@ -1065,9 +1130,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let promptBindingsButtonTitle = "Bindings"
     static let captureFrontmostAppButtonTitle = "Capture Frontmost App"
     static let captureCurrentWebsiteButtonTitle = "Capture Current Website"
+    static let strictModeToggleLabel = "Strict Mode"
+    static let strictModeHelpText = "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
     static let promptEditorBodyHintText = "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
     static let promptEditorBodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     static let promptEditorBodyTextInset = NSSize(width: 14, height: 12)
+
+    struct PromptAppBindingConflictAlertContent: Equatable {
+        let messageText: String
+        let informativeText: String
+    }
 
     static func promptEditorSheetTitle(for preset: PromptPreset) -> String {
         isNewPromptDraft(preset) ? "New Prompt" : "Edit Prompt"
@@ -1075,6 +1147,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     static func promptEditorPrimaryActionTitle(for preset: PromptPreset) -> String {
         isNewPromptDraft(preset) ? "Create Prompt" : "Save Prompt"
+    }
+
+    static func strictModeSummaryText(enabled: Bool) -> String {
+        if enabled {
+            return "Strict Mode on • Matching app bindings override Active Prompt"
+        }
+        return "Strict Mode off • Always uses Active Prompt"
+    }
+
+    static func promptAppBindingConflictAlertContent(
+        for conflicts: [PromptAppBindingConflict],
+        destinationPromptTitle: String
+    ) -> PromptAppBindingConflictAlertContent {
+        if
+            let conflict = conflicts.first,
+            conflicts.count == 1,
+            let owner = conflict.owners.first,
+            conflict.owners.count == 1
+        {
+            return .init(
+                messageText: "\(conflict.appBundleID) is already bound to “\(owner.title)”.",
+                informativeText: "Do you want to unbind it there and bind it to “\(destinationPromptTitle)” instead?"
+            )
+        }
+
+        let details = conflicts.map { conflict in
+            let owners = conflict.owners.map(\.title).joined(separator: ", ")
+            return "\(conflict.appBundleID) → \(owners)"
+        }.joined(separator: "\n")
+
+        return .init(
+            messageText: "Some apps are already bound to other prompts.",
+            informativeText: """
+            Do you want to unbind these app bindings and bind them to “\(destinationPromptTitle)” instead?
+
+            \(details)
+            """
+        )
     }
 
     private static func isNewPromptDraft(_ preset: PromptPreset) -> Bool {
@@ -1151,6 +1261,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let apiKeyField = NSSecureTextField(string: "")
     private let modelField = NSTextField(string: "")
     private let activePromptPopup = ThemedPopUpButton()
+    private let promptStrictModeSwitch = NSSwitch()
     private let resolvedPromptSummaryLabel = NSTextField(labelWithString: "")
     private lazy var resolvedPromptPreviewButton = StyledSettingsButton(
         title: "Preview",
@@ -1655,6 +1766,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resolvedPromptControl.alignment = .leading
         resolvedPromptControl.spacing = 8
 
+        let strictModeHelpLabel = NSTextField(
+            wrappingLabelWithString: Self.strictModeHelpText
+        )
+        strictModeHelpLabel.font = .systemFont(ofSize: 12)
+        strictModeHelpLabel.textColor = .secondaryLabelColor
+        strictModeHelpLabel.maximumNumberOfLines = 0
+        strictModeHelpLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let strictModeControl = NSStackView(views: [promptStrictModeSwitch, strictModeHelpLabel])
+        strictModeControl.orientation = .vertical
+        strictModeControl.alignment = .leading
+        strictModeControl.spacing = 6
+        strictModeControl.translatesAutoresizingMaskIntoConstraints = false
+        strictModeHelpLabel.widthAnchor.constraint(equalTo: strictModeControl.widthAnchor).isActive = true
+
         let promptActionsRow = makeButtonGroup([
             editPromptButton,
             newPromptButton,
@@ -1671,6 +1797,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "API Key", control: apiKeyField),
             makePreferenceRow(title: "Model", control: modelField),
             makePreferenceRow(title: "Active Prompt", control: activePromptPopup),
+            makePreferenceRow(title: Self.strictModeToggleLabel, control: strictModeControl),
             makePreferenceRow(title: "Prompt Summary", control: resolvedPromptControl),
             makePreferenceRow(title: "Prompt Actions", control: promptActionsRow)
         ])
@@ -1682,7 +1809,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, conservative LLM refinement, or explicit translation."))
         contentStack.addArrangedSubview(makeBodyLabel("Refinement always uses the LLM provider. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
-        contentStack.addArrangedSubview(makeBodyLabel("VoicePi checks saved app and website bindings against the current destination before falling back to the selected Active Prompt. Starter prompts give you a baseline, and user prompts let you take full control over the editable middle section."))
+        contentStack.addArrangedSubview(makeBodyLabel("Strict Mode controls whether app bindings can override the selected Active Prompt. Keep it on for automatic routing by app, or switch it off for manual prompt routing."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
         contentStack.addArrangedSubview(llmStatusView)
@@ -2577,6 +2704,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
+    private func promptStrictModeChanged(_ sender: NSSwitch) {
+        promptWorkspaceDraft.strictModeEnabled = sender.state == .on
+        updatePromptEditorState()
+    }
+
+    @objc
     private func editPromptPreset() {
         guard
             let selectedPreset = selectedPromptPresetFromDraft(),
@@ -2752,7 +2885,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func previewResolvedPrompt() {
         let previewText: String
-        if promptWorkspaceDraft.activeSelection == .builtInDefault {
+        if !promptWorkspaceDraft.strictModeEnabled {
+            previewText = """
+            \(Self.strictModeSummaryText(enabled: false))
+
+            \(resolvedPromptTextFromControls() ?? "VoicePi Default adds no extra editable middle section.")
+            """
+        } else if promptWorkspaceDraft.activeSelection == .builtInDefault {
             let boundPresets = promptWorkspaceDraft.userPresets.filter {
                 !$0.appBundleIDs.isEmpty || !$0.websiteHosts.isEmpty
             }
@@ -2772,7 +2911,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 }.joined(separator: "\n")
 
                 previewText = """
-                Matching app and website bindings override the selected Active Prompt.
+                \(Self.strictModeSummaryText(enabled: true))
 
                 Automatic bindings:
                 \(bindingLines)
@@ -3244,6 +3383,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resolvedPromptSummaryLabel.stringValue = "Active prompt: VoicePi Default"
         resolvedPromptPreviewButton.isEnabled = false
 
+        promptStrictModeSwitch.target = self
+        promptStrictModeSwitch.action = #selector(promptStrictModeChanged(_:))
+
         activePromptPopup.target = self
         activePromptPopup.action = #selector(activePromptChanged(_:))
 
@@ -3273,6 +3415,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         promptWorkspaceDraft = model.promptWorkspace
         reloadPromptPopupItems()
         selectPromptWorkspaceItem(in: activePromptPopup, for: promptWorkspaceDraft.activeSelection)
+        promptStrictModeSwitch.state = promptWorkspaceDraft.strictModeEnabled ? .on : .off
         promptEditorDraft = nil
         updatePromptEditorState()
     }
@@ -3656,6 +3799,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             websiteHosts: websiteHosts
         )
 
+        let conflicts = promptWorkspaceDraft.appBindingConflicts(for: draft)
+        if !conflicts.isEmpty {
+            guard confirmPromptEditorAppBindingReassignment(
+                conflicts: conflicts,
+                destinationPromptTitle: draft.resolvedTitle
+            ) else {
+                return
+            }
+            promptWorkspaceDraft.reassignConflictingAppBindings(for: draft)
+        }
+
         let nextSelection = Self.activeSelectionAfterSavingPromptEditor(
             previousSelection: promptWorkspaceDraft.activeSelection,
             savedPreset: draft
@@ -3666,6 +3820,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         selectPromptWorkspaceItem(in: activePromptPopup, for: nextSelection)
         updatePromptEditorState()
         closePromptEditorSheet()
+    }
+
+    private func confirmPromptEditorAppBindingReassignment(
+        conflicts: [PromptAppBindingConflict],
+        destinationPromptTitle: String
+    ) -> Bool {
+        let copy = Self.promptAppBindingConflictAlertContent(
+            for: conflicts,
+            destinationPromptTitle: destinationPromptTitle
+        )
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = copy.messageText
+        alert.informativeText = copy.informativeText
+        alert.addButton(withTitle: "Reassign and Save")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @objc
@@ -3791,11 +3963,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .user:
             resolvedPromptSummaryLabel.stringValue = "Active custom prompt: \(resolved.title)"
         }
+        resolvedPromptSummaryLabel.stringValue += " • \(Self.strictModeSummaryText(enabled: promptWorkspaceDraft.strictModeEnabled))"
 
         if let selectedPreset = selectedPromptPresetFromDraft(),
            let bindingSummary = promptBindingSummary(for: selectedPreset) {
             resolvedPromptSummaryLabel.stringValue += " • \(bindingSummary)"
-        } else if promptWorkspaceDraft.activeSelection == .builtInDefault {
+        } else if
+            promptWorkspaceDraft.strictModeEnabled,
+            promptWorkspaceDraft.activeSelection == .builtInDefault
+        {
             let automaticBindingsCount = promptWorkspaceDraft.userPresets.filter {
                 !$0.appBundleIDs.isEmpty || !$0.websiteHosts.isEmpty
             }.count

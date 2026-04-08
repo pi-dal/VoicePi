@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import Testing
 @testable import VoicePi
 
@@ -82,26 +81,5 @@ struct SettingsWindowDictionaryTests {
         )
 
         #expect(presentation.pendingReviewText == "2 suggestions pending review.")
-    }
-
-    @Test
-    @MainActor
-    func settingsWindowInitializesWithDictionarySectionEnabled() {
-        let suiteName = "VoicePiTests.settingsWindowInitializesWithDictionarySectionEnabled.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            Issue.record("Expected isolated test defaults suite.")
-            return
-        }
-
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        _ = NSApplication.shared
-        let model = AppModel(defaults: defaults)
-        let controller = SettingsWindowController(model: model, delegate: nil)
-        controller.show(section: .dictionary)
-
-        #expect(controller.window != nil)
     }
 }

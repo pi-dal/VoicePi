@@ -218,6 +218,148 @@ struct PromptWorkspaceTests {
     }
 
     @Test
+    func strictModeDisabledAlwaysUsesActivePromptEvenWhenAppBindingMatches() throws {
+        let library = try PromptLibrary.loadBundled()
+        let manual = PromptPreset(
+            id: "user.manual",
+            title: "Pinned",
+            body: "Always use this while pinned.",
+            source: .user
+        )
+        let bound = PromptPreset(
+            id: "user.slack",
+            title: "Slack Reply",
+            body: "Respond like a concise Slack reply.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let workspace = PromptWorkspaceSettings(
+            activeSelection: .preset(manual.id),
+            strictModeEnabled: false,
+            userPresets: [manual, bound]
+        )
+
+        let resolved = PromptWorkspaceResolver.resolve(
+            workspace: workspace,
+            destination: .init(appBundleID: "com.tinyspeck.slackmacgap"),
+            library: library
+        )
+
+        #expect(resolved.title == "Pinned")
+        #expect(resolved.middleSection == "Always use this while pinned.")
+        #expect(resolved.source == .user)
+    }
+
+    @Test
+    func strictModeDisabledAlwaysUsesActivePromptEvenWhenWebsiteBindingMatches() throws {
+        let library = try PromptLibrary.loadBundled()
+        let manual = PromptPreset(
+            id: "user.manual",
+            title: "Pinned",
+            body: "Always use this while pinned.",
+            source: .user
+        )
+        let websiteBound = PromptPreset(
+            id: "user.gmail",
+            title: "Gmail Reply",
+            body: "Respond as a direct email draft.",
+            source: .user,
+            websiteHosts: ["mail.google.com"]
+        )
+        let workspace = PromptWorkspaceSettings(
+            activeSelection: .preset(manual.id),
+            strictModeEnabled: false,
+            userPresets: [manual, websiteBound]
+        )
+
+        let resolved = PromptWorkspaceResolver.resolve(
+            workspace: workspace,
+            destination: .init(appBundleID: "com.google.Chrome", websiteHost: "mail.google.com"),
+            library: library
+        )
+
+        #expect(resolved.title == "Pinned")
+        #expect(resolved.middleSection == "Always use this while pinned.")
+        #expect(resolved.source == .user)
+    }
+
+    @Test
+    func appBindingConflictsExposeBundleIDsAndOwningPromptTitles() {
+        let customerReply = PromptPreset(
+            id: "user.customer-reply",
+            title: "Customer Reply",
+            body: "",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap", "com.figma.desktop"]
+        )
+        let standup = PromptPreset(
+            id: "user.standup",
+            title: "Standup Notes",
+            body: "",
+            source: .user
+        )
+        let workspace = PromptWorkspaceSettings(
+            activeSelection: .preset(standup.id),
+            userPresets: [customerReply, standup]
+        )
+        let editedStandup = PromptPreset(
+            id: standup.id,
+            title: standup.title,
+            body: standup.body,
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap", "com.linear"]
+        )
+
+        let conflicts = workspace.appBindingConflicts(for: editedStandup)
+
+        #expect(conflicts == [
+            .init(
+                appBundleID: "com.tinyspeck.slackmacgap",
+                owners: [
+                    .init(
+                        presetID: customerReply.id,
+                        title: customerReply.resolvedTitle
+                    )
+                ]
+            )
+        ])
+    }
+
+    @Test
+    func reassigningConflictingAppBindingsKeepsBundleIDsGloballyUnique() {
+        let customerReply = PromptPreset(
+            id: "user.customer-reply",
+            title: "Customer Reply",
+            body: "",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap", "com.figma.desktop"]
+        )
+        let standup = PromptPreset(
+            id: "user.standup",
+            title: "Standup Notes",
+            body: "",
+            source: .user
+        )
+        var workspace = PromptWorkspaceSettings(
+            activeSelection: .preset(standup.id),
+            userPresets: [customerReply, standup]
+        )
+        let editedStandup = PromptPreset(
+            id: standup.id,
+            title: standup.title,
+            body: standup.body,
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap", "com.linear"]
+        )
+
+        workspace.reassignConflictingAppBindings(for: editedStandup)
+        workspace.saveUserPreset(editedStandup)
+
+        #expect(workspace.userPreset(id: customerReply.id)?.appBundleIDs == ["com.figma.desktop"])
+        #expect(workspace.userPreset(id: standup.id)?.appBundleIDs == ["com.tinyspeck.slackmacgap", "com.linear"])
+    }
+
+    @Test
     func deletingActiveUserPresetFallsBackToBuiltInDefault() {
         var workspace = PromptWorkspaceSettings(
             activeSelection: .preset("user.custom"),
