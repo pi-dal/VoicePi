@@ -39,7 +39,7 @@ describe("renderApp", () => {
     const html = renderApp(state);
 
     expect(html).toContain('class="hero"');
-    expect(html).toContain("Want me on your Mac?");
+    expect(html).toContain("Become part of the flow.");
     expect(html).not.toContain("Homebrew keeps it easy.");
     expect(html).toContain("Download Latest Release");
     expect(html).toContain(">Sunny<");
@@ -89,8 +89,8 @@ describe("renderApp", () => {
     const state = createSiteState(entries, "sunny");
     const html = renderApp(state);
 
-    expect(html).toContain("Three product surfaces that define the VoicePi flow from shortcut to final paste.");
-    expect(html).toContain("The key VoicePi surfaces, shown in matched Sunny and Moonlight captures.");
+    expect(html).toContain("The rhythm of your work, captured.");
+    expect(html).toContain("Focused UI. Daytime or night.");
     expect(html).not.toContain("Each section on the left maps to one explanation surface on the right.");
     expect(html).not.toContain("Click any section on the left to scroll this window to its paired explanation.");
   });
@@ -106,24 +106,24 @@ describe("renderApp", () => {
     expect(html).toContain('class="scene-character"');
     expect(html).toContain('class="scene-character-face"');
     expect(html).toContain('class="scene-character-forearm"');
-    expect(html).toContain('class="scene-chair-back"');
+    expect(html).toContain('class="scene-chair"');
     expect(html).toContain('class="scene-voice-wave"');
     expect(html).toContain('class="scene-desk-surface"');
     expect(html).toContain('class="install-panel install-dialog"');
     expect(html).toContain('class="install-prompt"');
     expect(html).not.toContain('class="install-followup"');
     expect(html).toContain('class="hero-points" aria-label="VoicePi highlights"');
-    expect(html).toContain("<li>Floating overlay</li>");
+    expect(html).toContain("<li>Always present.</li>");
   });
 
   test("uses theme-specific hero summary copy for window light and lamp-lit night work", () => {
     const sunnyHtml = renderApp(createSiteState(entries, "sunny"));
     const moonHtml = renderApp(createSiteState(entries, "moon"));
 
-    expect(sunnyHtml).toContain("window light");
-    expect(sunnyHtml).toContain("daytime desk");
-    expect(moonHtml).toContain("desk lamp");
-    expect(moonHtml).toContain("starlight");
+    expect(sunnyHtml).toContain("in the light.");
+    expect(sunnyHtml).toContain("Clarity.");
+    expect(moonHtml).toContain("in the quiet.");
+    expect(moonHtml).toContain("Focus.");
   });
 
   test("uses a playful install opener and compact follow-up choices in the hero dialog", () => {
@@ -131,14 +131,14 @@ describe("renderApp", () => {
     const homebrewFollowupHtml = renderApp({ ...createSiteState(entries, "sunny"), installDialogStage: "followup", installTab: "homebrew" });
     const downloadFollowupHtml = renderApp({ ...createSiteState(entries, "sunny"), installDialogStage: "followup", installTab: "download" });
 
-    expect(sunnyHtml).toContain("Want me on your Mac?");
+    expect(sunnyHtml).toContain("Become part of the flow.");
     expect(sunnyHtml).toContain(">Yep, Homebrew<");
     expect(sunnyHtml).toContain(">Show me the zip<");
     expect(sunnyHtml).not.toContain("Nice. Here’s the fast lane.");
-    expect(homebrewFollowupHtml).toContain("Nice. Here’s the fast lane.");
-    expect(homebrewFollowupHtml).toContain("Homebrew keeps it easy.");
-    expect(downloadFollowupHtml).toContain("Alright. Here’s the direct route.");
-    expect(downloadFollowupHtml).toContain("Grab the zip and go.");
+    expect(homebrewFollowupHtml).toContain("The faster route.");
+    expect(homebrewFollowupHtml).toContain("The simple path.");
+    expect(downloadFollowupHtml).toContain("The classic way.");
+    expect(downloadFollowupHtml).toContain("Direct. Simple.");
   });
 
   test("switching highlights only activates the selected gallery frame", () => {
