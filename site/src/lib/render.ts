@@ -1,35 +1,43 @@
 import type { ChangelogEntry, InstallTab, SiteState, SiteTheme } from "../types";
 
-const installContent: Record<InstallTab, { title: string; detail: string; command: string; cta: string; href: string; renderCommand: () => string }> = {
+const installContent: Record<InstallTab, { title: string; detail: string; command: string; cta: string; href: string; followup: string; chipLabel: string; renderCommand: () => string }> = {
   homebrew: {
-    title: "Install with Homebrew",
-    detail: "Recommended if you want the shortest install path and a package-managed update flow.",
+    title: "The simple path.",
+    detail: "Two terminal lines. One tool. Always up to date.",
     command: `brew tap pi-dal/voicepi https://github.com/pi-dal/VoicePi\nbrew install --cask pi-dal/voicepi/voicepi`,
-    cta: "Open Homebrew Guide",
+    cta: "Brew Guide",
     href: "https://github.com/pi-dal/VoicePi#install-with-homebrew",
+    followup: "The faster route.",
+    chipLabel: "Yep, Homebrew",
     renderCommand: () => `
       <span class="command-line">
         <span class="token-prompt">$</span>
         <span class="token-command">brew</span>
         <span class="token-subcommand">tap</span>
-        <span class="token-value">pi-dal/voicepi</span>
+        <span class="token-value">pi-dal/voicepi \\</span>
+      </span>
+      <span class="command-line command-continuation">
         <span class="token-url">https://github.com/pi-dal/VoicePi</span>
       </span>
       <span class="command-line">
         <span class="token-prompt">$</span>
         <span class="token-command">brew</span>
         <span class="token-subcommand">install</span>
-        <span class="token-flag">--cask</span>
+        <span class="token-flag">--cask \\</span>
+      </span>
+      <span class="command-line command-continuation">
         <span class="token-value">pi-dal/voicepi/voicepi</span>
       </span>
     `
   },
   download: {
-    title: "Install from GitHub Releases",
-    detail: "Use the versioned zip archive when you want the direct-download build and in-app update support.",
+    title: "Direct. Simple.",
+    detail: "Grab the archive. Drop it in. Start speaking.",
     command: `1. Open the latest GitHub Release\n2. Download VoicePi-<version>.zip\n3. Move VoicePi.app into /Applications`,
-    cta: "Open Releases",
+    cta: "Releases",
     href: "https://github.com/pi-dal/VoicePi/releases",
+    followup: "The classic way.",
+    chipLabel: "Show me the zip",
     renderCommand: () => `
       <span class="command-line">
         <span class="token-step">1.</span>
@@ -157,6 +165,14 @@ function resolveThemeLabel(theme: SiteTheme): string {
   return theme === "sunny" ? "Sunny Mode" : "Moonlight Mode";
 }
 
+function resolveHeroSummary(theme: SiteTheme): string {
+  if (theme === "sunny") {
+    return "Clarity. Your thoughts, effortlessly present in the light.";
+  }
+
+  return "Focus. Turning whispers into wisdom in the quiet.";
+}
+
 function renderHighlightNav(activeHighlight: SiteState["activeHighlight"]): string {
   return highlightItems.map((item) => `
     <a
@@ -209,9 +225,9 @@ export function renderApp(state: SiteState): string {
     <main class="page-shell">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-topline">
-            <p class="eyebrow">Voice Input for macOS</p>
-            <div class="theme-switcher" role="tablist" aria-label="Theme modes">
-              <button class="theme-chip${state.theme === "sunny" ? " is-active" : ""}" data-theme="sunny" role="tab" aria-selected="${state.theme === "sunny"}">Sunny</button>
+          <p class="eyebrow">Voice. Perfected.</p>
+          <div class="theme-switcher" role="tablist" aria-label="Theme modes">
+            <button class="theme-chip${state.theme === "sunny" ? " is-active" : ""}" data-theme="sunny" role="tab" aria-selected="${state.theme === "sunny"}">Sunny</button>
             <button class="theme-chip${state.theme === "moon" ? " is-active" : ""}" data-theme="moon" role="tab" aria-selected="${state.theme === "moon"}">Moonlight</button>
           </div>
         </div>
@@ -223,74 +239,131 @@ export function renderApp(state: SiteState): string {
               <div>
                 <h1 id="hero-title">VoicePi</h1>
                 <p class="hero-intro">
-                  Menu bar voice input for macOS, designed to stay close to the app you are already using.
+                  The most natural way to create on macOS.
                 </p>
                 <p class="hero-intro hero-intro-secondary">
-                  Capture from a shortcut, optionally refine or translate it, then paste the result back with a safer final handoff.
+                  Speak. It simply appears.
                 </p>
               </div>
             </div>
 
-            <p class="hero-summary">
-              ${resolveThemeLabel(state.theme)} keeps the same structure, but shifts the page atmosphere, screenshot pairing,
-              and shadow depth so the site feels like a real companion to the app.
-            </p>
+            <p class="hero-summary">${resolveHeroSummary(state.theme)}</p>
 
             <div class="hero-actions">
               <a class="hero-button hero-button-primary" href="https://github.com/pi-dal/VoicePi/releases" target="_blank" rel="noreferrer">Download Latest Release</a>
               <a class="hero-button hero-button-secondary" href="https://github.com/pi-dal/VoicePi#install-with-homebrew" target="_blank" rel="noreferrer">Install Guide</a>
               <a class="hero-button hero-button-secondary" href="https://github.com/pi-dal/VoicePi" target="_blank" rel="noreferrer">View Repository</a>
             </div>
-
-            <div class="hero-points" aria-label="VoicePi highlights">
-              <p>Floating overlay</p>
-              <p>Clipboard restoration</p>
-              <p>Input-method-safe paste flow</p>
-              <p>Apple Speech or remote ASR</p>
-            </div>
           </div>
 
-          <aside class="install-panel" aria-label="Install options">
-            <div class="install-panel-head">
-              <p class="eyebrow">Install</p>
-              <h2>Pick the path you actually want.</h2>
+          <div class="hero-scene" data-scene-theme="${state.theme}">
+            <div class="scene-stage" aria-hidden="true">
+              <span class="scene-window-light"></span>
+              <span class="scene-window-cast"></span>
+              <span class="scene-lamp"></span>
+              <span class="scene-lamp-glow"></span>
+              <span class="scene-stars"></span>
+
+              <div class="scene-monitor">
+                <span class="scene-monitor-line scene-monitor-line-1"></span>
+                <span class="scene-monitor-line scene-monitor-line-2"></span>
+                <span class="scene-monitor-line scene-monitor-line-3"></span>
+                <span class="scene-monitor-cursor"></span>
+              </div>
+
+              <div class="scene-character">
+                <span class="scene-character-hair"></span>
+                <span class="scene-character-head"></span>
+                <span class="scene-character-face"></span>
+                <span class="scene-character-neck"></span>
+                <span class="scene-character-torso"></span>
+                <span class="scene-character-shoulder"></span>
+                <span class="scene-character-upper-arm"></span>
+                <span class="scene-character-forearm"></span>
+                <span class="scene-character-hand"></span>
+              </div>
+
+              <div class="scene-chair">
+                <span class="scene-chair-back"></span>
+                <span class="scene-chair-seat"></span>
+              </div>
+
+              <div class="scene-coffee">
+                <span class="scene-steam scene-steam-1"></span>
+                <span class="scene-steam scene-steam-2"></span>
+                <span class="scene-steam scene-steam-3"></span>
+              </div>
+
+              <div class="scene-voice-wave">
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+
+              <p class="scene-fragment scene-fragment-1">voice captured</p>
+              <p class="scene-fragment scene-fragment-2">inserting text...</p>
+              <div class="scene-desk">
+                <span class="scene-desk-surface"></span>
+                <span class="scene-desk-front"></span>
+                <span class="scene-desk-shadow"></span>
+              </div>
             </div>
 
-            <div class="install-tabs" role="tablist" aria-label="Install options">
-              <button class="install-tab${state.installTab === "homebrew" ? " is-active" : ""}" data-install-tab="homebrew" role="tab" aria-selected="${state.installTab === "homebrew"}">Homebrew</button>
-              <button class="install-tab${state.installTab === "download" ? " is-active" : ""}" data-install-tab="download" role="tab" aria-selected="${state.installTab === "download"}">Direct Download</button>
-            </div>
-
-            <div class="install-copy">
-              <h3>${install.title}</h3>
-              <p>${install.detail}</p>
-            </div>
-
-            <pre class="install-command"><code>${install.renderCommand()}</code></pre>
-
-            <div class="install-actions">
-              <button class="copy-button" data-copy="${escapeHtml(install.command)}">Copy Command</button>
-              <a class="link-button" href="${install.href}" target="_blank" rel="noreferrer">${install.cta}</a>
-            </div>
-          </aside>
+            <aside class="install-panel install-dialog" aria-label="Install options">
+              ${state.installDialogStage === "prompt" ? `
+                <div class="install-prompt">
+                  <p class="eyebrow">VoicePi</p>
+                  <p class="install-prompt-line">Become part of the flow.</p>
+                  <div class="install-tabs" role="tablist" aria-label="Install options">
+                    <button class="install-tab${state.installTab === "homebrew" ? " is-active" : ""}" data-install-tab="homebrew" role="tab" aria-selected="${state.installTab === "homebrew"}">${installContent.homebrew.chipLabel}</button>
+                    <button class="install-tab${state.installTab === "download" ? " is-active" : ""}" data-install-tab="download" role="tab" aria-selected="${state.installTab === "download"}">${installContent.download.chipLabel}</button>
+                  </div>
+                </div>
+              ` : `
+                <div class="install-followup">
+                  <div class="install-followup-info">
+                    <p class="install-followup-kicker">${install.followup}</p>
+                    <div class="install-copy">
+                      <h3>${install.title}</h3>
+                      <p>${install.detail}</p>
+                    </div>
+                  </div>
+                  <div class="install-followup-interactive">
+                    <pre class="install-command"><code>${install.renderCommand()}</code></pre>
+                    <div class="install-actions">
+                      <button class="copy-button" data-copy="${escapeHtml(install.command)}">Copy Command</button>
+                      <a class="link-button" href="${install.href}" target="_blank" rel="noreferrer">${install.cta}</a>
+                    </div>
+                  </div>
+                </div>
+              `}
+            </aside>
+          </div>
         </div>
+
+        <ul class="hero-points" aria-label="VoicePi highlights">
+          <li>Always present.</li>
+          <li>Safe paste.</li>
+          <li>Private by design.</li>
+          <li>Your voice, your choice.</li>
+        </ul>
       </section>
 
       <section class="highlights" aria-labelledby="highlights-title">
         <div class="section-heading">
-          <p class="eyebrow">Highlights</p>
-          <h2 id="highlights-title">A simpler page, with the product details doing the real work.</h2>
+          <p class="eyebrow">The Essence</p>
+          <h2 id="highlights-title">The power of simplicity.</h2>
           <p>
-            Instead of stacking cards, the site now uses a left-side jump list and a single explanation window:
-            click a section, then read its paired Sunny / Moonlight view on the right.
+            One shortcut. Zero friction. Everything in its place.
           </p>
         </div>
 
         <div class="highlight-surface">
           <div class="feature-list">
             <div class="feature-list-head">
-              <p class="gallery-window-kicker">Jump Between Views</p>
-              <p>Three product surfaces that define the VoicePi flow from shortcut to final paste.</p>
+              <p class="gallery-window-kicker">The Interaction</p>
+              <p>The rhythm of your work, captured.</p>
             </div>
             <nav class="highlight-nav" aria-label="Highlight sections">
               ${renderHighlightNav(state.activeHighlight)}
@@ -299,8 +372,8 @@ export function renderApp(state: SiteState): string {
 
           <div class="gallery-window">
             <div class="gallery-window-head">
-              <p class="gallery-window-kicker">Windowed Gallery</p>
-              <p>The key VoicePi surfaces, shown in matched Sunny and Moonlight captures.</p>
+              <p class="gallery-window-kicker">The Vision</p>
+              <p>Focused UI. Daytime or night.</p>
             </div>
             <div class="gallery-track">
               ${renderGalleryFrames(state.activeHighlight)}
@@ -311,11 +384,10 @@ export function renderApp(state: SiteState): string {
 
       <section class="changelog" aria-labelledby="changelog-title">
         <div class="section-heading">
-          <p class="eyebrow">Release Timeline</p>
-          <h2 id="changelog-title">Every published change, kept in one window.</h2>
+          <p class="eyebrow">The Journey</p>
+          <h2 id="changelog-title">The Art of Progress.</h2>
           <p>
-            The latest version opens first. Older versions stay available in the rail so the page can show the full timeline
-            without turning into a very long document.
+            Progress is the art of subtraction. Every version, a bit more essential.
           </p>
         </div>
 
@@ -365,10 +437,9 @@ export function renderApp(state: SiteState): string {
       <footer class="footprint">
         <div class="footprint-copy">
           <p class="eyebrow">Footprint</p>
-          <h2>Built with love by pi-dal.</h2>
+          <h2>Mindfully Crafted.</h2>
           <p>
-            VoicePi is maintained as a compact macOS tool: menu bar first, shortcut driven,
-            with readable release notes and a public home for every shipped version.
+            VoicePi is a small tool for big ideas. Simple. Private. Human.
           </p>
         </div>
 

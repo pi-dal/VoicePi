@@ -13,6 +13,7 @@ export interface ChangelogEntry {
 export type SiteTheme = "sunny" | "moon";
 
 export type InstallTab = "homebrew" | "download";
+export type InstallDialogStage = "prompt" | "followup";
 
 export type HighlightId = "mode-cycle" | "recording-overlay" | "settings-home";
 
@@ -20,6 +21,7 @@ export interface SiteState {
   entries: ChangelogEntry[];
   theme: SiteTheme;
   installTab: InstallTab;
+  installDialogStage: InstallDialogStage;
   activeHighlight: HighlightId;
   activeVersion: string;
   expandedVersions: Set<string>;

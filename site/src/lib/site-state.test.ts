@@ -30,6 +30,7 @@ describe("createSiteState", () => {
     const state = createSiteState(entries, "sunny");
 
     expect(state.installTab).toBe("homebrew");
+    expect(state.installDialogStage).toBe("prompt");
     expect(state.theme).toBe("sunny");
     expect(state.activeHighlight).toBe("mode-cycle");
     expect(state.activeVersion).toBe("1.3.2");
@@ -40,8 +41,10 @@ describe("createSiteState", () => {
 describe("site state transitions", () => {
   test("switches install tabs and themes", () => {
     const state = createSiteState(entries, "moon");
+    const next = selectInstallTab(state, "download");
 
-    expect(selectInstallTab(state, "download").installTab).toBe("download");
+    expect(next.installTab).toBe("download");
+    expect(next.installDialogStage).toBe("followup");
     expect(selectTheme(state, "sunny").theme).toBe("sunny");
   });
 

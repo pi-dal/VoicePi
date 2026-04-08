@@ -10,6 +10,7 @@ export function createSiteState(
     entries,
     theme: initialTheme,
     installTab: "homebrew",
+    installDialogStage: "prompt",
     activeHighlight: "mode-cycle",
     activeVersion: latestVersion,
     expandedVersions: new Set(latestVersion ? [latestVersion] : [])
@@ -19,7 +20,8 @@ export function createSiteState(
 export function selectInstallTab(state: SiteState, installTab: InstallTab): SiteState {
   return {
     ...state,
-    installTab
+    installTab,
+    installDialogStage: "followup"
   };
 }
 
