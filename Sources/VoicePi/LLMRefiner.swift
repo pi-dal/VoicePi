@@ -98,7 +98,8 @@ final class LLMRefiner {
         text: String,
         configuration: LLMRefinerConfiguration,
         mode: LLMRefinerPromptMode = .refinement,
-        targetLanguage: SupportedLanguage? = nil
+        targetLanguage: SupportedLanguage? = nil,
+        dictionaryEntries: [DictionaryEntry] = []
     ) async throws -> String {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return text }
@@ -133,7 +134,8 @@ final class LLMRefiner {
                     content: Self.systemPrompt(
                         mode: mode,
                         targetLanguage: targetLanguage,
-                        refinementPrompt: configuration.trimmedRefinementPrompt
+                        refinementPrompt: configuration.trimmedRefinementPrompt,
+                        dictionaryEntries: mode == .refinement ? dictionaryEntries : []
                     )
                 ),
                 .init(role: "user", content: input)
@@ -174,20 +176,23 @@ final class LLMRefiner {
             text: "测试 Python 和 JSON mixed speech input",
             configuration: configuration,
             mode: .refinement,
-            targetLanguage: nil
+            targetLanguage: nil,
+            dictionaryEntries: []
         )
     }
 
     static func systemPrompt(
         mode: LLMRefinerPromptMode,
         targetLanguage: SupportedLanguage?,
-        refinementPrompt: String
+        refinementPrompt: String,
+        dictionaryEntries: [DictionaryEntry] = []
     ) -> String {
         switch mode {
         case .refinement:
             return refinementSystemPrompt(
                 targetLanguage: targetLanguage,
-                refinementPrompt: refinementPrompt
+                refinementPrompt: refinementPrompt,
+                dictionaryEntries: dictionaryEntries
             )
         case .translation:
             return translationSystemPrompt(targetLanguage: targetLanguage)
@@ -196,7 +201,8 @@ final class LLMRefiner {
 
     private static func refinementSystemPrompt(
         targetLanguage: SupportedLanguage?,
-        refinementPrompt: String
+        refinementPrompt: String,
+        dictionaryEntries: [DictionaryEntry]
     ) -> String {
         let outputContract = outputContract(
             mode: .refinement,
@@ -208,6 +214,7 @@ final class LLMRefiner {
             return joinPromptSections(
                 conservativeSystemPromptPrefix,
                 customRefinementPromptSection(refinementPrompt),
+                dictionaryContextSection(from: dictionaryEntries),
                 outputInstructions(
                     for: outputContract,
                     targetLanguage: nil
@@ -218,6 +225,7 @@ final class LLMRefiner {
         return joinPromptSections(
             outputContract == .jsonText ? structuredTranslationSystemPromptPrefix : translationSystemPromptPrefix,
             customRefinementPromptSection(refinementPrompt),
+            dictionaryContextSection(from: dictionaryEntries),
             outputInstructions(
                 for: outputContract,
                 targetLanguage: targetLanguage
@@ -247,6 +255,31 @@ final class LLMRefiner {
         Additional user requirements:
         \(trimmed)
         """
+    }
+
+    private static func dictionaryContextSection(from entries: [DictionaryEntry]) -> String? {
+        let enabledEntries = entries
+            .filter(\.isEnabled)
+            .filter { !$0.canonical.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !enabledEntries.isEmpty else {
+            return nil
+        }
+
+        var lines: [String] = [
+            "Preferred dictionary terms (when context matches, keep canonical spellings):"
+        ]
+
+        for entry in enabledEntries {
+            let canonical = entry.canonical.trimmingCharacters(in: .whitespacesAndNewlines)
+            let aliases = DictionaryNormalization.uniqueAliases(entry.aliases, excluding: canonical)
+            if aliases.isEmpty {
+                lines.append("- \(canonical)")
+            } else {
+                lines.append("- \(canonical) (aliases: \(aliases.joined(separator: ", ")))")
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private static func outputContract(

@@ -30,6 +30,19 @@ struct HomeSectionPresentation: Equatable {
     let statusTone: SettingsPresentationStatusTone
 }
 
+struct DictionarySectionPresentation: Equatable {
+    let termCount: Int
+    let suggestionCount: Int
+    let summaryText: String
+    let pendingReviewText: String
+}
+
+struct DictionaryTermRowPresentation: Equatable {
+    let canonical: String
+    let aliasSummary: String
+    let enabledStateText: String
+}
+
 struct AboutSectionPresentation: Equatable {
     let version: String
     let build: String
@@ -168,5 +181,36 @@ enum SettingsPresentation {
         case .unknown:
             return .init(title: "Unknown", tone: .unknown)
         }
+    }
+
+    static func dictionarySectionPresentation(
+        entries: [DictionaryEntry],
+        suggestions: [DictionarySuggestion]
+    ) -> DictionarySectionPresentation {
+        let termCount = entries.count
+        let suggestionCount = suggestions.count
+        return DictionarySectionPresentation(
+            termCount: termCount,
+            suggestionCount: suggestionCount,
+            summaryText: "Dictionary terms: \(termCount) • Suggestions: \(suggestionCount)",
+            pendingReviewText: suggestionCount == 1
+                ? "1 suggestion pending review."
+                : "\(suggestionCount) suggestions pending review."
+        )
+    }
+
+    static func dictionaryRowPresentation(entry: DictionaryEntry) -> DictionaryTermRowPresentation {
+        let aliasSummary: String
+        if entry.aliases.isEmpty {
+            aliasSummary = "No aliases"
+        } else {
+            aliasSummary = entry.aliases.joined(separator: ", ")
+        }
+
+        return DictionaryTermRowPresentation(
+            canonical: entry.canonical,
+            aliasSummary: aliasSummary,
+            enabledStateText: entry.isEnabled ? "Enabled" : "Disabled"
+        )
     }
 }

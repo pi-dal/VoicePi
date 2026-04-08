@@ -14,7 +14,8 @@ protocol TranscriptRefining {
         text: String,
         configuration: LLMRefinerConfiguration,
         mode: LLMRefinerPromptMode,
-        targetLanguage: SupportedLanguage?
+        targetLanguage: SupportedLanguage?,
+        dictionaryEntries: [DictionaryEntry]
     ) async throws -> String
 }
 
@@ -100,6 +101,7 @@ enum AppWorkflowSupport {
         configuration: LLMConfiguration,
         refinementPromptTitle: String? = nil,
         resolvedRefinementPrompt: String?,
+        dictionaryEntries: [DictionaryEntry] = [],
         refiner: TranscriptRefining,
         translator: TranscriptTranslating,
         onPresentation: (AppWorkflowPresentation) -> Void,
@@ -137,7 +139,8 @@ enum AppWorkflowSupport {
                     text: text,
                     configuration: refinerConfiguration,
                     mode: .refinement,
-                    targetLanguage: effectiveTargetLanguage
+                    targetLanguage: effectiveTargetLanguage,
+                    dictionaryEntries: dictionaryEntries
                 )
                 let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? text : trimmed
@@ -177,7 +180,8 @@ enum AppWorkflowSupport {
                         text: text,
                         configuration: refinerConfiguration,
                         mode: .translation,
-                        targetLanguage: targetLanguage
+                        targetLanguage: targetLanguage,
+                        dictionaryEntries: []
                     )
                     let trimmed = translated.trimmingCharacters(in: .whitespacesAndNewlines)
                     return trimmed.isEmpty ? text : trimmed

@@ -104,11 +104,13 @@ final class AppController: NSObject {
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
+    private let dictionarySuggestionToastController = DictionarySuggestionToastController()
     private let llmRefiner = LLMRefiner()
     private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
     private let realtimeASRSessionCoordinator = RealtimeASRSessionCoordinator()
     private let textInjector = TextInjector.shared
+    private let postInjectionLearningCoordinator = PostInjectionLearningCoordinator()
     private let updateChecker = GitHubReleaseUpdateChecker()
     private let homebrewInstallationDetector = HomebrewInstallationDetector()
     private let appDefaults = UserDefaults.standard
@@ -124,6 +126,7 @@ final class AppController: NSObject {
     private var pendingErrorHideTask: Task<Void, Never>?
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
     private var inputMonitoringAuthorizationFollowUpTask: Task<Void, Never>?
+    private var postInjectionLearningTask: Task<Void, Never>?
     private var modeCycleRepeatTask: Task<Void, Never>?
     private var startupHotkeyBootstrapTask: Task<Void, Never>?
     private var modeCycleSessionActive = false
@@ -547,13 +550,29 @@ final class AppController: NSObject {
     func start() {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.applyInterfaceTheme(model.interfaceTheme)
+        dictionarySuggestionToastController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.onCopySuccess = { [weak self] in
             self?.statusBarController?.setTransientStatus("Copied")
+        }
+        dictionarySuggestionToastController.onApprove = { [weak self] suggestion in
+            guard let self else { return }
+            self.model.approveDictionarySuggestion(id: suggestion.id)
+            self.statusBarController?.refreshAll()
+            self.statusBarController?.setTransientStatus("Approved dictionary suggestion")
+        }
+        dictionarySuggestionToastController.onReview = { [weak self] _ in
+            guard let self else { return }
+            self.statusBarController?.showSettingsWindow(section: .dictionary)
+            self.statusBarController?.setTransientStatus("Open Dictionary suggestions in Settings")
+        }
+        dictionarySuggestionToastController.onDismiss = { [weak self] _ in
+            self?.statusBarController?.setTransientStatus("Suggestion kept for later review")
         }
         model.$interfaceTheme
             .sink { [weak self] theme in
                 self?.floatingPanelController.applyInterfaceTheme(theme)
                 self?.inputFallbackPanelController.applyInterfaceTheme(theme)
+                self?.dictionarySuggestionToastController.applyInterfaceTheme(theme)
             }
             .store(in: &cancellables)
 
@@ -603,6 +622,10 @@ final class AppController: NSObject {
         accessibilityAuthorizationFollowUpTask?.cancel()
         inputMonitoringAuthorizationFollowUpTask?.cancel()
         pendingErrorHideTask?.cancel()
+        postInjectionLearningTask?.cancel()
+        postInjectionLearningTask = nil
+        postInjectionLearningCoordinator.cancelTracking()
+        dictionarySuggestionToastController.hide()
         modeCycleRepeatTask?.cancel()
         startupHotkeyBootstrapTask?.cancel()
         modeCycleRepeatTask = nil
@@ -761,6 +784,7 @@ final class AppController: NSObject {
 
         isStartingRecording = true
         latestTranscript = ""
+        cancelPostInjectionLearning()
         statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
 
@@ -853,17 +877,22 @@ final class AppController: NSObject {
             let finalText = await self.refineIfNeeded(captured)
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
+            let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
             switch Self.transcriptDeliveryRoute(
                 for: finalText,
-                targetInspection: self.editableTextTargetInspector.inspectCurrentTarget()
+                targetInspection: targetSnapshot.inspection
             ) {
             case .emptyResult:
                 self.statusBarController?.setTransientStatus(nil)
                 self.floatingPanelController.hide()
             case .injectableTarget:
                 do {
-                    try await self.textInjector.inject(text: finalText)
+                    let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
                     self.statusBarController?.setTransientStatus("Injected")
+                    self.beginPostInjectionLearning(
+                        targetSnapshot: targetSnapshot,
+                        injectionRecord: injectionRecord
+                    )
                 } catch {
                     self.presentTransientError(error.localizedDescription)
                 }
@@ -884,6 +913,7 @@ final class AppController: NSObject {
 
         processingTask?.cancel()
         processingTask = nil
+        cancelPostInjectionLearning()
         isProcessingRelease = false
         latestTranscript = ""
         statusBarController?.setRecording(false)
@@ -896,6 +926,61 @@ final class AppController: NSObject {
         floatingPanelController.hide(immediately: true) { [weak self] in
             guard let self else { return }
             self.inputFallbackPanelController.show(payload: payload)
+        }
+    }
+
+    private func cancelPostInjectionLearning() {
+        postInjectionLearningTask?.cancel()
+        postInjectionLearningTask = nil
+        postInjectionLearningCoordinator.cancelTracking()
+        dictionarySuggestionToastController.hide()
+    }
+
+    private func beginPostInjectionLearning(
+        targetSnapshot: EditableTextTargetSnapshot,
+        injectionRecord: TextInjectionRecord
+    ) {
+        postInjectionLearningTask?.cancel()
+        postInjectionLearningTask = nil
+
+        let sourceApplication = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let session = PostInjectionLearningSession(
+            insertedText: injectionRecord.text,
+            targetIdentifier: targetSnapshot.targetIdentifier,
+            sourceApplication: sourceApplication,
+            startedAt: injectionRecord.injectedAt
+        )
+        postInjectionLearningCoordinator.startTracking(session)
+
+        postInjectionLearningTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.postInjectionLearningTask = nil
+            }
+
+            while !Task.isCancelled, self.postInjectionLearningCoordinator.isTracking {
+                let snapshot = self.editableTextTargetInspector.currentSnapshot()
+                if let suggestion = self.postInjectionLearningCoordinator.processSnapshot(
+                    snapshot,
+                    now: Date()
+                ) {
+                    let queued = self.model.enqueueDictionarySuggestion(suggestion)
+                    self.statusBarController?.refreshAll()
+                    guard queued else { return }
+
+                    self.dictionarySuggestionToastController.show(
+                        payload: DictionarySuggestionToastPayload(
+                            sessionID: session.id,
+                            suggestion: suggestion,
+                            summaryText: "Saved to suggestions: \(suggestion.proposedCanonical)"
+                        )
+                    )
+                    self.statusBarController?.setTransientStatus("Dictionary suggestion captured")
+                    return
+                }
+
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         }
     }
 
@@ -1017,6 +1102,7 @@ final class AppController: NSObject {
             resolvedRefinementPrompt: model.postProcessingMode == .refinement
                 ? resolvedPrompt.middleSection
                 : nil,
+            dictionaryEntries: model.enabledDictionaryEntries,
             refiner: llmRefiner,
             translator: appleTranslateService,
             onPresentation: { [weak self] presentation in

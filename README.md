@@ -531,6 +531,7 @@ The settings window is organized into multiple sections:
 
 - **Home** — product introduction, quick usage overview, and feature summary
 - **Permissions** — direct permission status for Microphone, Speech Recognition, Accessibility, and Input Monitoring, plus buttons that jump to the relevant macOS settings pages and explain what each one controls
+- **Dictionary** — term management, suggestion review, and quick add/export actions
 - **ASR** — backend selection, recognition language, and remote ASR configuration
 - **LLM** — API Base URL, API Key, Model, Test, and Save controls
 
@@ -552,6 +553,19 @@ The API key field can be fully cleared.
 - The API must expose an OpenAI-compatible chat completions endpoint
 - If your provider uses a custom base path, set the base URL accordingly
 - The app does not hardcode any API key
+
+## Dictionary Settings
+
+In **Settings → Dictionary**:
+
+- **Add** accepts multiple lines in one dialog.
+- You can set aliases inline per line with this format:
+  - `Canonical Term`
+  - `Canonical Term | alias one, alias two`
+- **Edit** is scoped to the selected row only and exposes:
+  - one canonical field
+  - one comma-separated aliases field
+- **Export Text** and **Export JSON** copy the current dictionary snapshot.
 
 ## Prompt Workspace
 

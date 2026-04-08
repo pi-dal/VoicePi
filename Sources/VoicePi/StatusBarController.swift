@@ -944,9 +944,10 @@ final class StatusBarController: NSObject {
 enum SettingsSection: Int, CaseIterable {
     case home = 0
     case permissions = 1
-    case asr = 2
-    case llm = 3
-    case about = 4
+    case dictionary = 2
+    case asr = 3
+    case llm = 4
+    case about = 5
 
     var title: String {
         switch self {
@@ -954,6 +955,8 @@ enum SettingsSection: Int, CaseIterable {
             return "Home"
         case .permissions:
             return "Permissions"
+        case .dictionary:
+            return "Dictionary"
         case .asr:
             return "ASR"
         case .llm:
@@ -1091,6 +1094,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let asrView = NSView()
     private let llmView = NSView()
     private let aboutView = NSView()
+    private let dictionaryView = NSScrollView()
 
     private let homeSummaryLabel = NSTextField(labelWithString: "")
     private let homePermissionSummaryLabel = NSTextField(labelWithString: "")
@@ -1099,6 +1103,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let homeModeShortcutLabel = NSTextField(labelWithString: "")
     private let homeASRLabel = NSTextField(labelWithString: "")
     private let homeLLMLabel = NSTextField(labelWithString: "")
+    private let dictionarySummaryLabel = NSTextField(labelWithString: "")
+    private let dictionaryPendingReviewLabel = NSTextField(labelWithString: "")
+    private let dictionarySearchField = NSSearchField()
+    private let dictionaryTermRowsStack = NSStackView()
+    private let dictionarySuggestionRowsStack = NSStackView()
 
     private let shortcutRecorderField = ShortcutRecorderField()
     private let shortcutHintLabel = NSTextField(labelWithString: "")
@@ -1275,6 +1284,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshHomeSection()
         refreshASRSection()
         refreshLLMSection()
+        refreshDictionarySection()
     }
 
     @objc
@@ -1299,14 +1309,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let titleLabel = NSTextField(labelWithString: "VoicePi Settings")
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.alignment = .left
 
-        let subtitleLabel = NSTextField(labelWithString: "A cleaner control center for permissions, dictation, translation, and LLM processing.")
+        let subtitleLabel = NSTextField(labelWithString: "Quick controls for permissions, dictation, and dictionary.")
         subtitleLabel.font = .systemFont(ofSize: 12.5)
         subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.alignment = .left
 
         let titleStack = NSStackView(views: [titleLabel, subtitleLabel])
         titleStack.orientation = .vertical
-        titleStack.spacing = 4
+        titleStack.spacing = 3
         titleStack.alignment = .leading
 
         let navigation = makeSectionNavigation()
@@ -1352,14 +1364,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buildASRView()
         buildLLMView()
         buildAboutView()
+        buildDictionaryView()
 
         contentContainer.addSubview(homeView)
         contentContainer.addSubview(permissionsView)
         contentContainer.addSubview(asrView)
         contentContainer.addSubview(llmView)
         contentContainer.addSubview(aboutView)
+        contentContainer.addSubview(dictionaryView)
 
-        [homeView, permissionsView, asrView, llmView, aboutView].forEach { view in
+        [homeView, permissionsView, asrView, llmView, aboutView, dictionaryView].forEach { view in
             view.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
@@ -1798,6 +1812,91 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
+    private func buildDictionaryView() {
+        let contentStack = makePageStack()
+
+        dictionarySummaryLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        dictionarySummaryLabel.textColor = .secondaryLabelColor
+        dictionarySummaryLabel.alignment = .left
+        dictionarySummaryLabel.lineBreakMode = .byWordWrapping
+        dictionarySummaryLabel.maximumNumberOfLines = 0
+
+        dictionaryPendingReviewLabel.font = .systemFont(ofSize: 12.5)
+        dictionaryPendingReviewLabel.textColor = .secondaryLabelColor
+        dictionaryPendingReviewLabel.alignment = .left
+        dictionaryPendingReviewLabel.lineBreakMode = .byWordWrapping
+        dictionaryPendingReviewLabel.maximumNumberOfLines = 0
+
+        dictionarySearchField.placeholderString = "Search terms"
+        dictionarySearchField.target = self
+        dictionarySearchField.action = #selector(dictionarySearchChanged(_:))
+        dictionarySearchField.sendsSearchStringImmediately = true
+        dictionarySearchField.sendsWholeSearchString = false
+
+        dictionaryTermRowsStack.orientation = .vertical
+        dictionaryTermRowsStack.spacing = 8
+        dictionaryTermRowsStack.alignment = .leading
+
+        dictionarySuggestionRowsStack.orientation = .vertical
+        dictionarySuggestionRowsStack.spacing = 8
+        dictionarySuggestionRowsStack.alignment = .leading
+
+        let termActionButton = makePrimaryActionButton(title: "Add", action: #selector(addDictionaryTermFromSettings))
+        termActionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        termActionButton.setContentHuggingPriority(.required, for: .horizontal)
+        let exportTextButton = makeSecondaryActionButton(title: "Export Text", action: #selector(exportDictionaryTermsAsPlainText))
+        let exportJSONButton = makeSecondaryActionButton(title: "Export JSON", action: #selector(exportDictionaryTermsAsJSON))
+
+        let termsHeader = NSStackView(views: [dictionarySearchField, NSView(), termActionButton])
+        termsHeader.orientation = .horizontal
+        termsHeader.alignment = .centerY
+        termsHeader.spacing = 8
+        dictionarySearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+
+        let termsRowsScrollView = makeDictionaryRowsScrollView(contentStack: dictionaryTermRowsStack)
+
+        let summaryCard = makeDictionarySummaryCard()
+        let termsCard = makeDictionaryTermsCard(
+            headerSupplementaryView: termsHeader,
+            rowsScrollView: termsRowsScrollView,
+            footerButtons: [exportTextButton, exportJSONButton]
+        )
+        let suggestionsCard = makeDictionaryCollectionCard(
+            title: "Suggestions",
+            listStack: dictionarySuggestionRowsStack
+        )
+
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Dictionary"))
+        contentStack.addArrangedSubview(summaryCard)
+        contentStack.addArrangedSubview(termsCard)
+        contentStack.addArrangedSubview(suggestionsCard)
+
+        dictionaryView.drawsBackground = false
+        dictionaryView.borderType = .noBorder
+        dictionaryView.hasVerticalScroller = true
+        dictionaryView.hasHorizontalScroller = false
+        dictionaryView.autohidesScrollers = true
+
+        let dictionaryDocumentView = FlippedLayoutView()
+        dictionaryDocumentView.translatesAutoresizingMaskIntoConstraints = false
+        dictionaryView.documentView = dictionaryDocumentView
+        dictionaryDocumentView.addSubview(contentStack)
+
+        let clipView = dictionaryView.contentView
+        NSLayoutConstraint.activate([
+            dictionaryDocumentView.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
+            dictionaryDocumentView.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
+            dictionaryDocumentView.topAnchor.constraint(equalTo: clipView.topAnchor),
+            dictionaryDocumentView.bottomAnchor.constraint(greaterThanOrEqualTo: clipView.bottomAnchor),
+            dictionaryDocumentView.widthAnchor.constraint(equalTo: clipView.widthAnchor),
+
+            contentStack.leadingAnchor.constraint(equalTo: dictionaryDocumentView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: dictionaryDocumentView.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: dictionaryDocumentView.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: dictionaryDocumentView.bottomAnchor)
+        ])
+    }
+
     private func loadCurrentValues() {
         if let index = ASRBackend.allCases.firstIndex(of: model.asrBackend) {
             asrBackendPopup.selectItem(at: index)
@@ -1921,6 +2020,198 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ))
     }
 
+    private func refreshDictionarySection() {
+        let presentation = SettingsPresentation.dictionarySectionPresentation(
+            entries: model.dictionaryEntries,
+            suggestions: model.dictionarySuggestions
+        )
+        dictionarySummaryLabel.stringValue = presentation.summaryText
+        dictionaryPendingReviewLabel.stringValue = presentation.pendingReviewText
+
+        rebuildDictionaryTermRows()
+        rebuildDictionarySuggestionRows()
+    }
+
+    private func filteredDictionaryEntries() -> [DictionaryEntry] {
+        let query = DictionaryNormalization.normalized(dictionarySearchField.stringValue)
+        guard !query.isEmpty else { return model.dictionaryEntries }
+
+        return model.dictionaryEntries.filter { entry in
+            if DictionaryNormalization.normalized(entry.canonical).contains(query) {
+                return true
+            }
+
+            return entry.aliases.contains { alias in
+                DictionaryNormalization.normalized(alias).contains(query)
+            }
+        }
+    }
+
+    private func rebuildDictionaryTermRows() {
+        let entries = filteredDictionaryEntries()
+        guard !entries.isEmpty else {
+            let message = dictionarySearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "No dictionary terms yet."
+                : "No terms match your search."
+            let messageLabel = makeBodyLabel(message)
+            replaceArrangedSubviews(
+                in: dictionaryTermRowsStack,
+                with: [messageLabel]
+            )
+            return
+        }
+
+        var rows: [NSView] = []
+        for (index, entry) in entries.enumerated() {
+            rows.append(makeDictionaryTermRow(entry: entry))
+            if index < entries.count - 1 {
+                rows.append(makeDictionaryListSeparator())
+            }
+        }
+        replaceArrangedSubviews(in: dictionaryTermRowsStack, with: rows)
+    }
+
+    private func rebuildDictionarySuggestionRows() {
+        guard !model.dictionarySuggestions.isEmpty else {
+            let messageLabel = makeBodyLabel("No pending suggestions.")
+            replaceArrangedSubviews(
+                in: dictionarySuggestionRowsStack,
+                with: [messageLabel]
+            )
+            return
+        }
+
+        let suggestions = model.dictionarySuggestions.sorted { lhs, rhs in
+            lhs.capturedAt > rhs.capturedAt
+        }
+
+        var rows: [NSView] = []
+        for (index, suggestion) in suggestions.enumerated() {
+            rows.append(makeDictionarySuggestionRow(suggestion: suggestion))
+            if index < suggestions.count - 1 {
+                rows.append(makeDictionaryListSeparator())
+            }
+        }
+        replaceArrangedSubviews(in: dictionarySuggestionRowsStack, with: rows)
+    }
+
+    private func makeDictionaryTermRow(entry: DictionaryEntry) -> NSView {
+        let presentation = SettingsPresentation.dictionaryRowPresentation(entry: entry)
+
+        let canonicalLabel = NSTextField(labelWithString: presentation.canonical)
+        canonicalLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        canonicalLabel.lineBreakMode = .byTruncatingTail
+        canonicalLabel.maximumNumberOfLines = 1
+
+        let aliasLabel = makeBodyLabel(presentation.aliasSummary)
+        aliasLabel.maximumNumberOfLines = 2
+
+        let stateLabel = NSTextField(labelWithString: presentation.enabledStateText)
+        stateLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        stateLabel.textColor = entry.isEnabled
+            ? interfaceColor(light: NSColor.systemGreen.darker(), dark: NSColor.systemGreen.lighter())
+            : .secondaryLabelColor
+        stateLabel.alignment = .right
+        stateLabel.setContentHuggingPriority(.required, for: .horizontal)
+        stateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let textStack = NSStackView(views: [canonicalLabel, aliasLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 2
+        textStack.alignment = .leading
+
+        let toggleButton = makeDictionaryIconActionButton(
+            symbolName: entry.isEnabled ? "eye.slash" : "eye",
+            accessibilityLabel: entry.isEnabled ? "Disable term" : "Enable term",
+            action: #selector(toggleDictionaryTermEnabled(_:)),
+            identifier: entry.id
+        )
+
+        let editButton = makeDictionaryIconActionButton(
+            symbolName: "pencil",
+            accessibilityLabel: "Edit term",
+            action: #selector(editDictionaryTermFromSettings(_:)),
+            identifier: entry.id
+        )
+
+        let deleteButton = makeDictionaryIconActionButton(
+            symbolName: "trash",
+            accessibilityLabel: "Delete term",
+            action: #selector(deleteDictionaryTermFromSettings(_:)),
+            identifier: entry.id
+        )
+
+        let actions = makeButtonGroup([toggleButton, editButton, deleteButton])
+        actions.spacing = 6
+
+        let row = NSStackView(views: [textStack, NSView(), actions, stateLabel])
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.alignment = .centerY
+        row.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
+        return row
+    }
+
+    private func makeDictionarySuggestionRow(suggestion: DictionarySuggestion) -> NSView {
+        let summaryLabel = NSTextField(
+            wrappingLabelWithString: "\"\(suggestion.originalFragment)\" → \"\(suggestion.correctedFragment)\""
+        )
+        summaryLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let aliasSummary = suggestion.proposedAliases.isEmpty
+            ? "No aliases"
+            : suggestion.proposedAliases.joined(separator: ", ")
+        let detailLabel = makeBodyLabel(
+            "Canonical: \(suggestion.proposedCanonical) • Aliases: \(aliasSummary)"
+        )
+
+        let sourceText = suggestion.sourceApplication?.isEmpty == false
+            ? "Source: \(suggestion.sourceApplication!)"
+            : "Source: Unknown app"
+        let sourceLabel = makeBodyLabel(sourceText)
+        sourceLabel.maximumNumberOfLines = 1
+
+        let textStack = NSStackView(views: [summaryLabel, detailLabel, sourceLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 3
+        textStack.alignment = .leading
+
+        let approveButton = makePrimaryActionButton(
+            title: "Approve",
+            action: #selector(approveDictionarySuggestionFromSettings(_:))
+        )
+        approveButton.identifier = NSUserInterfaceItemIdentifier(suggestion.id.uuidString)
+
+        let reviewButton = makeSecondaryActionButton(
+            title: "Review",
+            action: #selector(reviewDictionarySuggestionFromSettings(_:))
+        )
+        reviewButton.identifier = NSUserInterfaceItemIdentifier(suggestion.id.uuidString)
+
+        let dismissButton = makeSecondaryActionButton(
+            title: "Dismiss",
+            action: #selector(dismissDictionarySuggestionFromSettings(_:))
+        )
+        dismissButton.identifier = NSUserInterfaceItemIdentifier(suggestion.id.uuidString)
+
+        let actions = makeButtonGroup([approveButton, reviewButton, dismissButton])
+        actions.orientation = .horizontal
+
+        let row = NSStackView(views: [textStack, NSView(), actions])
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.alignment = .top
+        row.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
+        return row
+    }
+
+    private func makeDictionaryListSeparator() -> NSView {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.alphaValue = 0.35
+        return separator
+    }
+
     private func currentConfigurationFromFields() -> LLMConfiguration {
         LLMConfiguration(
             baseURL: baseURLField.stringValue,
@@ -2002,6 +2293,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrView.isHidden = section != .asr
         llmView.isHidden = section != .llm
         aboutView.isHidden = section != .about
+        dictionaryView.isHidden = section != .dictionary
     }
 
     @objc
@@ -2028,6 +2320,124 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func openAboutSection() {
         selectSection(.about)
+    }
+
+    @objc
+    private func openDictionarySection() {
+        selectSection(.dictionary)
+    }
+
+    @objc
+    private func dictionarySearchChanged(_ sender: NSSearchField) {
+        rebuildDictionaryTermRows()
+    }
+
+    @objc
+    private func addDictionaryTermFromSettings() {
+        guard let importedText = presentDictionaryImportEditor(
+            title: "Add Dictionary Terms",
+            confirmTitle: "Add",
+            informativeText: "One entry per line. Optional aliases: Canonical | alias one, alias two."
+        ) else {
+            return
+        }
+
+        model.importDictionaryTerms(fromPlainText: importedText)
+        reloadFromModel()
+    }
+
+    @objc
+    private func exportDictionaryTermsAsPlainText() {
+        copyStringToPasteboard(model.exportDictionaryAsPlainText())
+    }
+
+    @objc
+    private func exportDictionaryTermsAsJSON() {
+        copyStringToPasteboard(model.exportDictionaryAsJSON())
+    }
+
+    @objc
+    private func toggleDictionaryTermEnabled(_ sender: NSButton) {
+        guard
+            let id = dictionaryTermID(from: sender),
+            let entry = model.dictionaryEntries.first(where: { $0.id == id })
+        else {
+            return
+        }
+
+        model.setDictionaryTermEnabled(id: id, isEnabled: !entry.isEnabled)
+        reloadFromModel()
+    }
+
+    @objc
+    private func editDictionaryTermFromSettings(_ sender: NSButton) {
+        guard
+            let id = dictionaryTermID(from: sender),
+            let entry = model.dictionaryEntries.first(where: { $0.id == id })
+        else {
+            return
+        }
+
+        guard let term = presentDictionaryTermEditor(
+            title: "Edit Dictionary Term",
+            confirmTitle: "Save",
+            canonical: entry.canonical,
+            aliases: entry.aliases
+        ) else {
+            return
+        }
+
+        model.editDictionaryTerm(id: id, canonical: term.canonical, aliases: term.aliases)
+        reloadFromModel()
+    }
+
+    @objc
+    private func deleteDictionaryTermFromSettings(_ sender: NSButton) {
+        guard
+            let id = dictionaryTermID(from: sender),
+            let entry = model.dictionaryEntries.first(where: { $0.id == id })
+        else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete dictionary term?"
+        alert.informativeText = "“\(entry.canonical)” will be removed from the dictionary."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        model.deleteDictionaryTerm(id: id)
+        reloadFromModel()
+    }
+
+    @objc
+    private func approveDictionarySuggestionFromSettings(_ sender: NSButton) {
+        guard let id = dictionaryTermID(from: sender) else { return }
+        model.approveDictionarySuggestion(id: id)
+        reloadFromModel()
+    }
+
+    @objc
+    private func reviewDictionarySuggestionFromSettings(_ sender: NSButton) {
+        guard
+            let id = dictionaryTermID(from: sender),
+            let suggestion = model.dictionarySuggestions.first(where: { $0.id == id })
+        else {
+            return
+        }
+
+        selectSection(.dictionary)
+        dictionarySearchField.stringValue = suggestion.proposedCanonical
+        rebuildDictionaryTermRows()
+    }
+
+    @objc
+    private func dismissDictionarySuggestionFromSettings(_ sender: NSButton) {
+        guard let id = dictionaryTermID(from: sender) else { return }
+        model.dismissDictionarySuggestion(id: id)
+        reloadFromModel()
     }
 
     @objc
@@ -2499,6 +2909,123 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func setASRButtonsEnabled(_ enabled: Bool) {
         asrTestButton.isEnabled = enabled && currentSelectedASRBackend().isRemoteBackend
         asrSaveButton.isEnabled = enabled
+    }
+
+    private func dictionaryTermID(from sender: NSButton) -> UUID? {
+        guard let value = sender.identifier?.rawValue else {
+            return nil
+        }
+        return UUID(uuidString: value)
+    }
+
+    private func presentDictionaryTermEditor(
+        title: String,
+        confirmTitle: String,
+        canonical: String = "",
+        aliases: [String] = []
+    ) -> (canonical: String, aliases: [String])? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Edit this term only. Aliases are comma-separated."
+
+        let canonicalField = NSTextField(string: canonical)
+        canonicalField.placeholderString = "Canonical term"
+        let aliasesField = NSTextField(string: aliases.joined(separator: ", "))
+        aliasesField.placeholderString = "alias one, alias two"
+
+        let accessoryStack = NSStackView(views: [
+            makeDictionaryEditorRow(title: "Canonical", field: canonicalField),
+            makeDictionaryEditorRow(title: "Aliases", field: aliasesField)
+        ])
+        accessoryStack.orientation = .vertical
+        accessoryStack.spacing = 10
+        accessoryStack.alignment = .leading
+        accessoryStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let accessoryContainer = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 84))
+        accessoryContainer.addSubview(accessoryStack)
+        NSLayoutConstraint.activate([
+            accessoryStack.leadingAnchor.constraint(equalTo: accessoryContainer.leadingAnchor),
+            accessoryStack.trailingAnchor.constraint(equalTo: accessoryContainer.trailingAnchor),
+            accessoryStack.topAnchor.constraint(equalTo: accessoryContainer.topAnchor),
+            accessoryStack.bottomAnchor.constraint(equalTo: accessoryContainer.bottomAnchor),
+            accessoryStack.widthAnchor.constraint(equalToConstant: 420)
+        ])
+        alert.accessoryView = accessoryContainer
+        alert.addButton(withTitle: confirmTitle)
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+
+        let normalizedCanonical = DictionaryNormalization.trimmed(canonicalField.stringValue)
+        guard !normalizedCanonical.isEmpty else { return nil }
+        let normalizedAliases = DictionaryNormalization.uniqueAliases(
+            Self.bindingValues(from: aliasesField.stringValue),
+            excluding: normalizedCanonical
+        )
+
+        return (normalizedCanonical, normalizedAliases)
+    }
+
+    private func makeDictionaryEditorRow(title: String, field: NSTextField) -> NSView {
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.setContentHuggingPriority(.required, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [titleLabel, field])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        field.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        return row
+    }
+
+    private func presentDictionaryImportEditor(
+        title: String = "Import Dictionary Terms",
+        confirmTitle: String = "Import",
+        informativeText: String = "Paste one canonical term per line."
+    ) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = informativeText
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 190))
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+
+        let scrollView = NSScrollView(frame: textView.frame)
+        scrollView.borderType = .bezelBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = textView
+
+        let accessoryContainer = NSView(frame: scrollView.frame)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        accessoryContainer.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: accessoryContainer.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: accessoryContainer.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: accessoryContainer.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: accessoryContainer.bottomAnchor),
+            scrollView.widthAnchor.constraint(equalToConstant: 420),
+            scrollView.heightAnchor.constraint(equalToConstant: 190)
+        ])
+
+        alert.accessoryView = accessoryContainer
+        alert.addButton(withTitle: confirmTitle)
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return textView.string
+    }
+
+    private func copyStringToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     private func openExternalURL(_ string: String) {
@@ -3437,6 +3964,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return stack
     }
 
+    private func makeSectionHeader(title: String) -> NSView {
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
+        titleLabel.alignment = .left
+        return titleLabel
+    }
+
     private func makeDetailStack(statusLabel: NSTextField, buttons: NSView) -> NSView {
         let stack = NSStackView(views: [statusLabel, buttons])
         stack.orientation = .vertical
@@ -3486,6 +4020,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return "sparkles"
         case .about:
             return "info.circle"
+        case .dictionary:
+            return "book.closed"
         }
     }
 
@@ -3562,6 +4098,141 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         pinCardContent(stack, into: card)
         return card
+    }
+
+    private func makeDictionarySummaryCard() -> NSView {
+        let card = makeCardView()
+        let stack = NSStackView(views: [
+            makeSectionTitle("Summary"),
+            dictionarySummaryLabel,
+            dictionaryPendingReviewLabel
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeDictionaryTrailingButtonRow(buttons: [NSButton]) -> NSView {
+        let row = NSStackView()
+        row.addArrangedSubview(NSView())
+        for button in buttons {
+            row.addArrangedSubview(button)
+        }
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.alignment = .centerY
+        return row
+    }
+
+    private func makeDictionaryRowsScrollView(contentStack: NSStackView) -> NSScrollView {
+        let scrollView = NSScrollView(frame: .zero)
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.heightAnchor.constraint(equalToConstant: 170).isActive = true
+
+        let documentView = FlippedLayoutView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(contentStack)
+
+        let clipView = scrollView.contentView
+        NSLayoutConstraint.activate([
+            documentView.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: clipView.topAnchor),
+            documentView.widthAnchor.constraint(equalTo: clipView.widthAnchor),
+
+            contentStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor)
+        ])
+
+        return scrollView
+    }
+
+    private func makeDictionaryIconActionButton(
+        symbolName: String,
+        accessibilityLabel: String,
+        action: Selector,
+        identifier: UUID
+    ) -> NSButton {
+        let button = makeSecondaryActionButton(title: "", action: action)
+        button.identifier = NSUserInterfaceItemIdentifier(identifier.uuidString)
+        button.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: accessibilityLabel
+        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+        button.imagePosition = .imageOnly
+        button.image?.isTemplate = true
+        button.toolTip = accessibilityLabel
+        button.setAccessibilityLabel(accessibilityLabel)
+        button.widthAnchor.constraint(equalToConstant: SettingsLayoutMetrics.actionButtonHeight).isActive = true
+        return button
+    }
+
+    private func makeDictionaryTermsCard(
+        headerSupplementaryView: NSView,
+        rowsScrollView: NSScrollView,
+        footerButtons: [NSButton]
+    ) -> NSView {
+        let card = makeCardView()
+        let footerRow = makeDictionaryTrailingButtonRow(buttons: footerButtons)
+        let stack = NSStackView(views: [
+            makeSectionTitle("Terms"),
+            headerSupplementaryView,
+            rowsScrollView,
+            footerRow
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        headerSupplementaryView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        rowsScrollView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        footerRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeDictionaryCollectionCard(
+        title: String,
+        headerSupplementaryView: NSView? = nil,
+        listStack: NSStackView
+    ) -> NSView {
+        let card = makeCardView()
+        var views: [NSView] = [makeSectionTitle(title)]
+        if let headerSupplementaryView {
+            views.append(headerSupplementaryView)
+        }
+        views.append(listStack)
+
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func replaceArrangedSubviews(in stack: NSStackView, with views: [NSView]) {
+        for arrangedSubview in stack.arrangedSubviews {
+            stack.removeArrangedSubview(arrangedSubview)
+            arrangedSubview.removeFromSuperview()
+        }
+
+        for view in views {
+            stack.addArrangedSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
     }
 
     private func makeAboutOverviewCard(
@@ -4584,6 +5255,11 @@ final class StyledSettingsButton: NSButton {
             )
         }
     }
+}
+
+@MainActor
+final class FlippedLayoutView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 @MainActor

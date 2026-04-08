@@ -101,6 +101,9 @@ struct AppWorkflowSupportTests {
         let refiner = RefinerStub(result: .success("日本語の出力"))
         let translator = TranslatorStub(result: .success("translated"))
         var presentations: [AppWorkflowPresentation] = []
+        let dictionaryEntries = [
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre"], isEnabled: true)
+        ]
 
         let text = await AppWorkflowSupport.postProcessIfNeeded(
             "original",
@@ -116,6 +119,7 @@ struct AppWorkflowSupportTests {
             ),
             refinementPromptTitle: "Slack Reply",
             resolvedRefinementPrompt: "Format the output as concise release notes.",
+            dictionaryEntries: dictionaryEntries,
             refiner: refiner,
             translator: translator,
             onPresentation: { presentations.append($0) },
@@ -133,6 +137,7 @@ struct AppWorkflowSupportTests {
         #expect(refiner.lastTargetLanguage == .japanese)
         #expect(refiner.lastMode == .refinement)
         #expect(refiner.lastRefinementPrompt == "Format the output as concise release notes.")
+        #expect(refiner.lastDictionaryEntries == dictionaryEntries)
         #expect(translator.calls == 0)
     }
 
@@ -217,6 +222,7 @@ struct AppWorkflowSupportTests {
         #expect(refiner.calls == 1)
         #expect(refiner.lastMode == .translation)
         #expect(refiner.lastRefinementPrompt == "")
+        #expect(refiner.lastDictionaryEntries.isEmpty)
         #expect(translator.calls == 0)
     }
 
@@ -338,6 +344,7 @@ private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
     private(set) var lastMode: LLMRefinerPromptMode?
     private(set) var lastTargetLanguage: SupportedLanguage?
     private(set) var lastRefinementPrompt: String?
+    private(set) var lastDictionaryEntries: [DictionaryEntry] = []
 
     init(result: Result<String, Error>) {
         self.result = result
@@ -347,12 +354,14 @@ private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
         text: String,
         configuration: LLMRefinerConfiguration,
         mode: LLMRefinerPromptMode,
-        targetLanguage: SupportedLanguage?
+        targetLanguage: SupportedLanguage?,
+        dictionaryEntries: [DictionaryEntry]
     ) async throws -> String {
         calls += 1
         lastMode = mode
         lastTargetLanguage = targetLanguage
         lastRefinementPrompt = configuration.refinementPrompt
+        lastDictionaryEntries = dictionaryEntries
         return try result.get()
     }
 }

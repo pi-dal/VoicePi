@@ -10,6 +10,11 @@ struct InputSourceSnapshot {
     let isCJK: Bool
 }
 
+struct TextInjectionRecord: Equatable {
+    let text: String
+    let injectedAt: Date
+}
+
 enum TextInjectorError: LocalizedError {
     case clipboardUnavailable
     case eventSourceUnavailable
@@ -50,6 +55,23 @@ final class TextInjector {
     }
 
     func inject(text: String) async throws {
+        _ = try await injectAndRecord(text: text)
+    }
+
+    func injectAndRecord(
+        text: String,
+        now: @autoclosure () -> Date = Date()
+    ) async throws -> TextInjectionRecord {
+        let trimmed = text.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else {
+            return TextInjectionRecord(text: "", injectedAt: now())
+        }
+
+        try await performInjection(text: text)
+        return TextInjectionRecord(text: trimmed, injectedAt: now())
+    }
+
+    private func performInjection(text: String) async throws {
         let trimmed = text.trimmingCharacters(in: .newlines)
         guard !trimmed.isEmpty else { return }
 
