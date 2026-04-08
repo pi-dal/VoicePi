@@ -2755,6 +2755,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return previousSelection
     }
 
+    @discardableResult
+    static func persistPromptEditorSaveResult(
+        model: AppModel,
+        promptWorkspaceDraft: inout PromptWorkspaceSettings,
+        savedPreset: PromptPreset,
+        confirmedConflictReassignment: Bool
+    ) -> Bool {
+        let conflicts = promptWorkspaceDraft.appBindingConflicts(for: savedPreset)
+        if !conflicts.isEmpty && !confirmedConflictReassignment {
+            return false
+        }
+
+        var nextWorkspace = promptWorkspaceDraft
+        if !conflicts.isEmpty {
+            nextWorkspace.reassignConflictingAppBindings(for: savedPreset)
+        }
+
+        let nextSelection = activeSelectionAfterSavingPromptEditor(
+            previousSelection: nextWorkspace.activeSelection,
+            savedPreset: savedPreset
+        )
+        nextWorkspace.saveUserPreset(savedPreset)
+        nextWorkspace.activeSelection = nextSelection
+
+        promptWorkspaceDraft = nextWorkspace
+        model.promptWorkspace = nextWorkspace
+        return true
+    }
+
     static func makeNewUserPromptDraft(template: PromptPreset? = nil) -> PromptPreset {
         let id = "user.\(UUID().uuidString.lowercased())"
         guard let template else {
@@ -3807,17 +3836,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             ) else {
                 return
             }
-            promptWorkspaceDraft.reassignConflictingAppBindings(for: draft)
         }
 
-        let nextSelection = Self.activeSelectionAfterSavingPromptEditor(
-            previousSelection: promptWorkspaceDraft.activeSelection,
-            savedPreset: draft
-        )
-        promptWorkspaceDraft.saveUserPreset(draft)
-        promptWorkspaceDraft.activeSelection = nextSelection
+        guard Self.persistPromptEditorSaveResult(
+            model: model,
+            promptWorkspaceDraft: &promptWorkspaceDraft,
+            savedPreset: draft,
+            confirmedConflictReassignment: !conflicts.isEmpty
+        ) else {
+            return
+        }
+
         reloadPromptPopupItems()
-        selectPromptWorkspaceItem(in: activePromptPopup, for: nextSelection)
+        selectPromptWorkspaceItem(in: activePromptPopup, for: promptWorkspaceDraft.activeSelection)
         updatePromptEditorState()
         closePromptEditorSheet()
     }

@@ -340,6 +340,178 @@ struct SettingsWindowPromptTemplateTests {
 
     @Test
     @MainActor
+    func promptEditorSavePersistsWorkspaceImmediatelyAndAcrossReload() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.promptEditorSavePersistsWorkspaceImmediatelyAndAcrossReload.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        var promptWorkspaceDraft = PromptWorkspaceSettings(
+            activeSelection: .builtInDefault,
+            strictModeEnabled: false
+        )
+        let savedPreset = PromptPreset(
+            id: "user.standup",
+            title: "Standup",
+            body: "Format this as a short standup update.",
+            source: .user
+        )
+
+        let persisted = SettingsWindowController.persistPromptEditorSaveResult(
+            model: model,
+            promptWorkspaceDraft: &promptWorkspaceDraft,
+            savedPreset: savedPreset,
+            confirmedConflictReassignment: false
+        )
+
+        #expect(persisted)
+        #expect(model.promptWorkspace == promptWorkspaceDraft)
+        #expect(model.promptWorkspace.activeSelection == .preset(savedPreset.id))
+        #expect(model.promptWorkspace.userPreset(id: savedPreset.id) == savedPreset)
+
+        let reloaded = AppModel(defaults: defaults)
+        #expect(reloaded.promptWorkspace == model.promptWorkspace)
+        #expect(reloaded.promptWorkspace.userPreset(id: savedPreset.id) == savedPreset)
+    }
+
+    @Test
+    @MainActor
+    func promptEditorSaveDoesNotCommitUnrelatedLLMCredentials() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.promptEditorSaveDoesNotCommitUnrelatedLLMCredentials.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.saveLLMConfiguration(
+            baseURL: "https://saved.example.com/v1",
+            apiKey: "saved-key",
+            model: "gpt-4o-mini"
+        )
+        let initialLLMConfiguration = model.llmConfiguration
+        var promptWorkspaceDraft = model.promptWorkspace
+        let savedPreset = PromptPreset(
+            id: "user.custom",
+            title: "Custom",
+            body: "Summarize in plain language.",
+            source: .user
+        )
+
+        let persisted = SettingsWindowController.persistPromptEditorSaveResult(
+            model: model,
+            promptWorkspaceDraft: &promptWorkspaceDraft,
+            savedPreset: savedPreset,
+            confirmedConflictReassignment: false
+        )
+
+        #expect(persisted)
+        #expect(model.llmConfiguration == initialLLMConfiguration)
+    }
+
+    @Test
+    @MainActor
+    func promptEditorSavePreservesUnrelatedPromptWorkspaceDraftState() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.promptEditorSavePreservesUnrelatedPromptWorkspaceDraftState.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let pinnedPreset = PromptPreset(
+            id: "user.pinned",
+            title: "Pinned",
+            body: "Keep this selected manually.",
+            source: .user
+        )
+        var promptWorkspaceDraft = PromptWorkspaceSettings(
+            activeSelection: .preset(pinnedPreset.id),
+            strictModeEnabled: false,
+            userPresets: [pinnedPreset]
+        )
+        let savedPreset = PromptPreset(
+            id: "user.gmail",
+            title: "Gmail Reply",
+            body: "Draft a concise email response.",
+            source: .user,
+            websiteHosts: ["mail.google.com"]
+        )
+
+        let persisted = SettingsWindowController.persistPromptEditorSaveResult(
+            model: model,
+            promptWorkspaceDraft: &promptWorkspaceDraft,
+            savedPreset: savedPreset,
+            confirmedConflictReassignment: false
+        )
+
+        #expect(persisted)
+        #expect(promptWorkspaceDraft.strictModeEnabled == false)
+        #expect(promptWorkspaceDraft.activeSelection == .preset(pinnedPreset.id))
+        #expect(promptWorkspaceDraft.userPreset(id: pinnedPreset.id) == pinnedPreset)
+        #expect(promptWorkspaceDraft.userPreset(id: savedPreset.id) == savedPreset)
+        #expect(model.promptWorkspace == promptWorkspaceDraft)
+    }
+
+    @Test
+    @MainActor
+    func promptEditorSavePersistenceKeepsBuiltInDefaultSelectedForBoundPrompt() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.promptEditorSavePersistenceKeepsBuiltInDefaultSelectedForBoundPrompt.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        var promptWorkspaceDraft = PromptWorkspaceSettings(activeSelection: .builtInDefault)
+        let savedPreset = PromptPreset(
+            id: "user.slack",
+            title: "Slack Reply",
+            body: "Keep Slack replies concise.",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+
+        let persisted = SettingsWindowController.persistPromptEditorSaveResult(
+            model: model,
+            promptWorkspaceDraft: &promptWorkspaceDraft,
+            savedPreset: savedPreset,
+            confirmedConflictReassignment: false
+        )
+
+        #expect(persisted)
+        #expect(promptWorkspaceDraft.activeSelection == .builtInDefault)
+        #expect(model.promptWorkspace.activeSelection == .builtInDefault)
+    }
+
+    @Test
+    @MainActor
+    func cancellingPromptEditorConflictReassignmentLeavesDraftAndModelUnchanged() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.cancellingPromptEditorConflictReassignmentLeavesDraftAndModelUnchanged.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let existing = PromptPreset(
+            id: "user.customer-reply",
+            title: "Customer Reply",
+            body: "",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        model.promptWorkspace = PromptWorkspaceSettings(
+            activeSelection: .preset(existing.id),
+            strictModeEnabled: false,
+            userPresets: [existing]
+        )
+        var promptWorkspaceDraft = PromptWorkspaceSettings(
+            activeSelection: .preset(existing.id),
+            strictModeEnabled: false,
+            userPresets: [existing]
+        )
+        let edited = PromptPreset(
+            id: "user.standup",
+            title: "Standup Notes",
+            body: "",
+            source: .user,
+            appBundleIDs: ["com.tinyspeck.slackmacgap"]
+        )
+        let initialDraft = promptWorkspaceDraft
+        let initialModelWorkspace = model.promptWorkspace
+
+        let persisted = SettingsWindowController.persistPromptEditorSaveResult(
+            model: model,
+            promptWorkspaceDraft: &promptWorkspaceDraft,
+            savedPreset: edited,
+            confirmedConflictReassignment: false
+        )
+
+        #expect(!persisted)
+        #expect(promptWorkspaceDraft == initialDraft)
+        #expect(model.promptWorkspace == initialModelWorkspace)
+    }
+
+    @Test
+    @MainActor
     func duplicatePromptPresetPreservesBindings() throws {
         let defaults = UserDefaults(suiteName: "VoicePiTests.duplicatePromptPresetPreservesBindings.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
