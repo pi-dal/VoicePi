@@ -81,4 +81,14 @@ struct ExternalProcessorManagerTests {
 
         #expect(message == "Alma CLI test failed: empty response.")
     }
+
+    @Test
+    func nonEmptyStdoutMarksExternalProcessorTestAsPassedWithProcessorName() {
+        let message = ExternalProcessorTestFeedback.message(
+            forOutput: " refined transcript ",
+            processorDisplayName: "Alma CLI"
+        )
+
+        #expect(message == "Alma CLI test passed: refined transcript")
+    }
 }

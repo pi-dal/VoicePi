@@ -175,10 +175,10 @@ struct LLMSectionFeedback {
                 return "Refinement is active. VoicePi will fold translation into the LLM prompt and target \(targetLanguage.recognitionDisplayName)."
             case .externalProcessor:
                 guard let externalProcessor else {
-                    return "Refinement is selected, but no external processor entry is configured yet. Click Manage Processors to add one."
+                    return "Refinement is selected, but no processor is configured yet. Click Processors to add one."
                 }
 
-                return "Refinement is active and will use \(externalProcessor.name) through the selected external processor."
+                return "Refinement is active and will use \(externalProcessor.name)."
             }
         case .translation:
             if provider == .appleTranslate {
@@ -1023,7 +1023,8 @@ enum SettingsSection: Int, CaseIterable {
     case dictionary = 2
     case asr = 3
     case llm = 4
-    case about = 5
+    case externalProcessors = 5
+    case about = 6
 
     var title: String {
         switch self {
@@ -1037,6 +1038,8 @@ enum SettingsSection: Int, CaseIterable {
             return "ASR"
         case .llm:
             return "Text"
+        case .externalProcessors:
+            return "Processors"
         case .about:
             return "About"
         }
@@ -1143,11 +1146,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let captureCurrentWebsiteButtonTitle = "Capture Current Website"
     static let strictModeToggleLabel = "Strict Mode"
     static let refinementProviderLabel = "Refinement Provider"
-    static let externalProcessorManagerSheetTitle = "External Processor Manager"
+    static let externalProcessorManagerSheetTitle = "Processors"
     static let externalProcessorManagerAddProcessorButtonTitle = "+"
     static let externalProcessorManagerAddArgumentButtonTitle = "+"
-    static let externalProcessorManagerEmptyStateText = "No external processors configured yet. Click + to add one."
-    static let externalProcessorManagerManageButtonTitle = "Manage Processors"
+    static let externalProcessorManagerEmptyStateText = "No processors configured yet. Click + to add one."
+    static let externalProcessorManagerManageButtonTitle = "Processors"
     static let strictModeHelpText = "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
     static let promptEditorBodyHintText = "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
     static let promptEditorBodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -1220,6 +1223,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let permissionsView = NSView()
     private let asrView = NSView()
     private let llmView = NSView()
+    private let externalProcessorsView = NSView()
     private let aboutView = NSView()
     private let dictionaryView = NSScrollView()
 
@@ -1287,6 +1291,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         target: self,
         action: #selector(openExternalProcessorManager)
     )
+    private let externalProcessorsSummaryLabel = NSTextField(labelWithString: "")
+    private let externalProcessorsDetailLabel = NSTextField(labelWithString: "")
     private lazy var resolvedPromptPreviewButton = StyledSettingsButton(
         title: "Preview",
         role: .secondary,
@@ -1429,6 +1435,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshHomeSection()
         refreshASRSection()
         refreshLLMSection()
+        refreshExternalProcessorsSection()
         refreshDictionarySection()
         if externalProcessorManagerSheetWindow != nil {
             externalProcessorManagerState = ExternalProcessorManagerState(
@@ -1463,7 +1470,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.alignment = .left
 
-        let subtitleLabel = NSTextField(labelWithString: "Quick controls for permissions, dictation, and dictionary.")
+        let subtitleLabel = NSTextField(labelWithString: "Quick controls for permissions, dictation, dictionary, and processor settings.")
         subtitleLabel.font = .systemFont(ofSize: 12.5)
         subtitleLabel.textColor = .secondaryLabelColor
         subtitleLabel.alignment = .left
@@ -1515,6 +1522,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buildPermissionsView()
         buildASRView()
         buildLLMView()
+        buildExternalProcessorsView()
         buildAboutView()
         buildDictionaryView()
 
@@ -1522,10 +1530,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentContainer.addSubview(permissionsView)
         contentContainer.addSubview(asrView)
         contentContainer.addSubview(llmView)
+        contentContainer.addSubview(externalProcessorsView)
         contentContainer.addSubview(aboutView)
         contentContainer.addSubview(dictionaryView)
 
-        [homeView, permissionsView, asrView, llmView, aboutView, dictionaryView].forEach { view in
+        [homeView, permissionsView, asrView, llmView, externalProcessorsView, aboutView, dictionaryView].forEach { view in
             view.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
@@ -1823,7 +1832,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         strictModeHelpLabel.widthAnchor.constraint(equalTo: strictModeControl.widthAnchor).isActive = true
 
         let refinementProviderHelpLabel = NSTextField(
-            wrappingLabelWithString: "Refinement can use the built-in LLM provider or a configurable external processor backend."
+            wrappingLabelWithString: "Refinement can use the built-in LLM provider or a configurable processor backend."
         )
         refinementProviderHelpLabel.font = .systemFont(ofSize: 12)
         refinementProviderHelpLabel.textColor = .secondaryLabelColor
@@ -1836,13 +1845,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refinementProviderControl.spacing = 6
         refinementProviderControl.translatesAutoresizingMaskIntoConstraints = false
         refinementProviderHelpLabel.widthAnchor.constraint(equalTo: refinementProviderControl.widthAnchor).isActive = true
-
-        let externalProcessorManagerControl = NSStackView(views: [externalProcessorManagerButton])
-        externalProcessorManagerControl.orientation = .vertical
-        externalProcessorManagerControl.alignment = .leading
-        externalProcessorManagerControl.spacing = 6
-        externalProcessorManagerControl.translatesAutoresizingMaskIntoConstraints = false
-        externalProcessorManagerButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 186).isActive = true
 
         let promptActionsRow = makeButtonGroup([
             editPromptButton,
@@ -1862,7 +1864,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "Model", control: modelField),
             makePreferenceRow(title: "Active Prompt", control: activePromptPopup),
             makePreferenceRow(title: Self.strictModeToggleLabel, control: strictModeControl),
-            makePreferenceRow(title: "External Processors", control: externalProcessorManagerControl),
             makePreferenceRow(title: "Prompt Summary", control: resolvedPromptControl),
             makePreferenceRow(title: "Prompt Actions", control: promptActionsRow)
         ])
@@ -1872,8 +1873,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePrimaryActionButton(title: "Save", action: #selector(saveConfiguration))
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, LLM refinement, external processors, or explicit translation."))
-        contentStack.addArrangedSubview(makeBodyLabel("Refinement can use either the built-in LLM provider or an external processor backend. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, LLM refinement, processors, or explicit translation."))
+        contentStack.addArrangedSubview(makeBodyLabel("Refinement can use the built-in LLM provider or a configured processor backend. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
         contentStack.addArrangedSubview(makeBodyLabel("Strict Mode controls whether app bindings can override the selected Active Prompt. Keep it on for automatic routing by app, or switch it off for manual prompt routing."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
@@ -1894,6 +1895,53 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             activePromptPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
         ])
+    }
+
+    private func buildExternalProcessorsView() {
+        let contentStack = makePageStack()
+
+        externalProcessorsSummaryLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        externalProcessorsSummaryLabel.textColor = .secondaryLabelColor
+        externalProcessorsSummaryLabel.alignment = .left
+        externalProcessorsSummaryLabel.lineBreakMode = .byWordWrapping
+        externalProcessorsSummaryLabel.maximumNumberOfLines = 0
+
+        externalProcessorsDetailLabel.font = .systemFont(ofSize: 12.5)
+        externalProcessorsDetailLabel.textColor = .secondaryLabelColor
+        externalProcessorsDetailLabel.alignment = .left
+        externalProcessorsDetailLabel.lineBreakMode = .byWordWrapping
+        externalProcessorsDetailLabel.maximumNumberOfLines = 0
+
+        externalProcessorManagerButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 186).isActive = true
+
+        let openManagerRow = makeButtonGroup([
+            externalProcessorManagerButton
+        ])
+
+        let processorSummaryCard = makeCardView()
+        let processorSummaryStack = NSStackView(views: [
+            externalProcessorsSummaryLabel,
+            externalProcessorsDetailLabel,
+            openManagerRow
+        ])
+        processorSummaryStack.orientation = .vertical
+        processorSummaryStack.spacing = 8
+        processorSummaryStack.alignment = .leading
+        pinCardContent(processorSummaryStack, into: processorSummaryCard)
+
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Processors", subtitle: "Configure command-line backends used for refinement."))
+        contentStack.addArrangedSubview(makeBodyLabel("Use this section to add, edit, test, and disable processor profiles. Text processing still controls when the processor is used; this section only manages the backends themselves."))
+        contentStack.addArrangedSubview(processorSummaryCard)
+
+        externalProcessorsView.addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: externalProcessorsView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: externalProcessorsView.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: externalProcessorsView.topAnchor),
+            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: externalProcessorsView.bottomAnchor)
+        ])
+
+        refreshExternalProcessorsSection()
     }
 
     private func buildAboutView() {
@@ -2205,7 +2253,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refinementProviderPopup.isEnabled = mode == .refinement
         translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
         testButton.isEnabled = usesLLM
-        externalProcessorManagerButton.isEnabled = mode == .refinement
         let shouldEnablePromptControls = mode == .refinement && refinementProvider == .llm
         setPromptWorkspaceControlsEnabled(shouldEnablePromptControls)
 
@@ -2221,6 +2268,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 appleTranslateSupported: appleTranslateSupported
             )
         ))
+    }
+
+    private func refreshExternalProcessorsSection() {
+        let selectedEntry = model.selectedExternalProcessorEntry()
+
+        externalProcessorManagerButton.isEnabled = true
+
+        if model.externalProcessorEntries.isEmpty {
+            externalProcessorsSummaryLabel.stringValue = "No processors configured yet."
+            externalProcessorsDetailLabel.stringValue = "Open the Processors tab to add your first backend, set its executable, and add any command-line arguments."
+        } else if let selectedEntry {
+            let stateText = selectedEntry.isEnabled ? "Enabled" : "Disabled"
+            externalProcessorsSummaryLabel.stringValue = "Active processor: \(selectedEntry.name) • \(selectedEntry.kind.title) • \(stateText)"
+            externalProcessorsDetailLabel.stringValue = "Manage the processors used by refinement. Each entry can be tested before VoicePi uses it."
+        } else {
+            externalProcessorsSummaryLabel.stringValue = "Choose a processor to make it active."
+            externalProcessorsDetailLabel.stringValue = "Manage the processors used by refinement. Each entry can be tested before VoicePi uses it."
+        }
     }
 
     private func refreshDictionarySection() {
@@ -2500,6 +2565,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         permissionsView.isHidden = section != .permissions
         asrView.isHidden = section != .asr
         llmView.isHidden = section != .llm
+        externalProcessorsView.isHidden = section != .externalProcessors
         aboutView.isHidden = section != .about
         dictionaryView.isHidden = section != .dictionary
     }
@@ -4918,6 +4984,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return "waveform.and.mic"
         case .llm:
             return "sparkles"
+        case .externalProcessors:
+            return "terminal"
         case .about:
             return "info.circle"
         case .dictionary:

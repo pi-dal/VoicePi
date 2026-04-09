@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import VoicePi
 
+@MainActor
 struct SettingsWindowDictionaryTests {
     @Test
     func settingsNavigationIncludesDictionarySection() {
@@ -17,6 +18,26 @@ struct SettingsWindowDictionaryTests {
         #expect(permissionsIndex != nil)
         #expect(dictionaryIndex != nil)
         #expect(dictionaryIndex == permissionsIndex.map { $0 + 1 })
+    }
+
+    @Test
+    @MainActor
+    func settingsNavigationIncludesDedicatedExternalProcessorsSection() {
+        #expect(SettingsSection.allCases.contains(.externalProcessors))
+        #expect(SettingsSection.externalProcessors.title == "Processors")
+        #expect(SettingsSection.llm.title == "Text")
+    }
+
+    @Test
+    @MainActor
+    func settingsNavigationPlacesExternalProcessorsAfterText() {
+        let sections = SettingsSection.allCases
+        let llmIndex = sections.firstIndex(of: .llm)
+        let externalProcessorsIndex = sections.firstIndex(of: .externalProcessors)
+
+        #expect(llmIndex != nil)
+        #expect(externalProcessorsIndex != nil)
+        #expect(externalProcessorsIndex == llmIndex.map { $0 + 1 })
     }
 
     @Test

@@ -30,7 +30,27 @@ struct SettingsPresentationTests {
 
         #expect(
             presentation.llmSummary
-                == "Text processing: Refinement via External Processor • Backend Alma CLI • Target English • Prompt Meeting Notes • Enabled"
+                == "Text processing: Processors • Alma CLI • Target English • Prompt Meeting Notes • Enabled"
+        )
+    }
+
+    @Test
+    @MainActor
+    func refinementFeedbackGuidesUsersToTheExternalProcessorsSectionWhenNoBackendExists() {
+        let message = LLMSectionFeedback.message(
+            mode: .refinement,
+            provider: .appleTranslate,
+            refinementProvider: .externalProcessor,
+            externalProcessor: nil,
+            configuration: .init(baseURL: "", apiKey: "", model: "", refinementPrompt: ""),
+            selectedLanguage: .english,
+            targetLanguage: .english,
+            appleTranslateSupported: true
+        )
+
+        #expect(
+            message
+                == "Refinement is selected, but no processor is configured yet. Click Processors to add one."
         )
     }
 

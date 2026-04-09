@@ -48,12 +48,13 @@ struct SettingsWindowPromptTemplateTests {
     @MainActor
     func externalProcessorManagerCopyMatchesDesign() {
         #expect(SettingsWindowController.refinementProviderLabel == "Refinement Provider")
-        #expect(SettingsWindowController.externalProcessorManagerSheetTitle == "External Processor Manager")
+        #expect(SettingsWindowController.externalProcessorManagerSheetTitle == "Processors")
+        #expect(SettingsWindowController.externalProcessorManagerManageButtonTitle == "Processors")
         #expect(SettingsWindowController.externalProcessorManagerAddProcessorButtonTitle == "+")
         #expect(SettingsWindowController.externalProcessorManagerAddArgumentButtonTitle == "+")
         #expect(
             SettingsWindowController.externalProcessorManagerEmptyStateText
-                == "No external processors configured yet. Click + to add one."
+                == "No processors configured yet. Click + to add one."
         )
     }
 

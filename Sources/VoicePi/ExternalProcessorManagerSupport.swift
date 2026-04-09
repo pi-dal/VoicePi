@@ -83,7 +83,7 @@ enum ExternalProcessorTestFeedback {
             return "\(processorDisplayName) test failed: empty response."
         }
 
-        return "Test passed: \(trimmedOutput)"
+        return "\(processorDisplayName) test passed: \(trimmedOutput)"
     }
 }
 

@@ -69,7 +69,26 @@ struct StatusBarLLMFeedbackTests {
 
         #expect(
             message
-                == "Refinement is active and will use Alma CLI through the selected external processor."
+                == "Refinement is active and will use Alma CLI."
+        )
+    }
+
+    @Test
+    func refinementWithExternalProcessorWithoutSelectionPointsToProcessorsTab() {
+        let message = LLMSectionFeedback.message(
+            mode: .refinement,
+            provider: .llm,
+            refinementProvider: .externalProcessor,
+            externalProcessor: nil,
+            configuration: .init(),
+            selectedLanguage: .english,
+            targetLanguage: .japanese,
+            appleTranslateSupported: true
+        )
+
+        #expect(
+            message
+                == "Refinement is selected, but no processor is configured yet. Click Processors to add one."
         )
     }
 }

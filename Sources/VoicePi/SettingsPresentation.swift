@@ -140,7 +140,7 @@ enum SettingsPresentation {
             case .externalProcessor:
                 let backendTitle = model.selectedExternalProcessorEntry()?.kind.title ?? "No processor configured"
                 let status = model.selectedExternalProcessorEntry()?.isEnabled == true ? "Enabled" : "Disabled"
-                llmSummary = "Text processing: Refinement via External Processor • Backend \(backendTitle) • Target \(target) • Prompt \(promptTitle) • \(status)"
+                llmSummary = "Text processing: Processors • \(backendTitle) • Target \(target) • Prompt \(promptTitle) • \(status)"
             }
         case .translation:
             let effectiveTranslationProvider = model.effectiveTranslationProvider(
