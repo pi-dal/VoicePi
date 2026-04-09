@@ -4080,7 +4080,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 model.setSelectedExternalProcessorEntryID(externalProcessorManagerState.selectedEntryID)
             }
 
-            let sheetSize = NSSize(width: 944, height: 700)
+            let sheetSize = NSSize(width: 860, height: 620)
             let sheet = PreviewSheetWindow(
                 contentRect: NSRect(origin: .zero, size: sheetSize),
                 styleMask: [.titled, .closable],
@@ -4199,24 +4199,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func makeExternalProcessorManagerSheetContent(sheet: PreviewSheetWindow) -> NSView {
-        let sheetSize = NSSize(width: 944, height: 700)
+        let sheetSize = NSSize(width: 860, height: 620)
         externalProcessorManagerNameFields = [:]
         externalProcessorManagerKindPopups = [:]
         externalProcessorManagerExecutablePathFields = [:]
         externalProcessorManagerEnabledSwitches = [:]
         externalProcessorManagerArgumentFields = [:]
-
-        let titleLabel = NSTextField(labelWithString: Self.externalProcessorManagerSheetTitle)
-        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
-        titleLabel.alignment = .left
-
-        let subtitleLabel = NSTextField(
-            wrappingLabelWithString: "Each processor entry behaves like a small app profile. Use the top + button to add a processor, then use the row + buttons to add command-line arguments."
-        )
-        subtitleLabel.font = .systemFont(ofSize: 12.5)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.maximumNumberOfLines = 0
-        subtitleLabel.alignment = .left
 
         let addProcessorButton = StyledSettingsButton(
             title: Self.externalProcessorManagerAddProcessorButtonTitle,
@@ -4228,22 +4216,30 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         addProcessorButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
 
         let doneButton = makePrimaryActionButton(title: "Done", action: #selector(closeExternalProcessorManagerSheet))
+        let footerButton = makeSecondaryActionButton(title: "Close", action: #selector(closeExternalProcessorManagerSheet))
+        footerButton.translatesAutoresizingMaskIntoConstraints = false
+        footerButton.keyEquivalent = "\u{1b}"
 
-        let headerStack = NSStackView(views: [titleLabel, subtitleLabel])
-        headerStack.orientation = .vertical
-        headerStack.alignment = .leading
-        headerStack.spacing = 6
+        let footerRow = NSStackView(views: [NSView(), footerButton])
+        footerRow.orientation = .horizontal
+        footerRow.alignment = .centerY
+        footerRow.spacing = 8
+        footerRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let controlsContainer: NSView
+        let contentStack = NSStackView()
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = SettingsLayoutMetrics.pageSpacing
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
         if externalProcessorManagerState.entries.isEmpty {
             externalProcessorManagerSelectedEntryPopup = nil
             externalProcessorManagerFeedbackLabel = nil
+            externalProcessorManagerEntriesContainer = nil
 
-            let actionRow = NSStackView(views: [addProcessorButton, NSView(), doneButton])
-            actionRow.orientation = .horizontal
-            actionRow.alignment = .centerY
-            actionRow.spacing = 8
-            controlsContainer = actionRow
+            let emptyStateCard = makeExternalProcessorManagerEmptyStateCard(addButton: addProcessorButton, doneButton: doneButton)
+            contentStack.addArrangedSubview(emptyStateCard)
+            emptyStateCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         } else {
             let selectedPopup = ThemedPopUpButton()
             selectedPopup.target = self
@@ -4270,6 +4266,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 externalProcessorManagerState.selectedEntryID = selectedEntryIDFromPopup(selectedPopup)
             }
 
+            let introLabel = makeBodyLabel(
+                "Manage external CLI processor profiles here, then choose which one VoicePi should use during review-panel refinement."
+            )
             let feedbackLabel = NSTextField(labelWithString: externalProcessorManagerFeedbackText())
             feedbackLabel.font = .systemFont(ofSize: 12)
             feedbackLabel.textColor = .secondaryLabelColor
@@ -4278,86 +4277,60 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             feedbackLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
 
             let selectionRow = makePreferenceRow(title: "Active Processor", control: selectedPopup)
-            let actionRow = NSStackView(views: [addProcessorButton, NSView(), doneButton])
-            actionRow.orientation = .horizontal
-            actionRow.alignment = .centerY
-            actionRow.spacing = 8
+            let actionRow = makeButtonGroup([addProcessorButton, doneButton])
 
-            let controlsStack = NSStackView(views: [selectionRow, feedbackLabel, actionRow])
+            let controlsStack = NSStackView(views: [introLabel, selectionRow, actionRow, feedbackLabel])
             controlsStack.orientation = .vertical
             controlsStack.alignment = .leading
-            controlsStack.spacing = 10
+            controlsStack.spacing = 8
 
             let controlsCard = makeCardView()
             pinCardContent(controlsStack, into: controlsCard)
 
-            externalProcessorManagerSelectedEntryPopup = selectedPopup
-            externalProcessorManagerFeedbackLabel = feedbackLabel
-            controlsContainer = controlsCard
-        }
+            let entriesStack = NSStackView()
+            entriesStack.orientation = .vertical
+            entriesStack.spacing = 12
+            entriesStack.alignment = .leading
+            externalProcessorManagerEntriesContainer = entriesStack
 
-        let entriesStack = NSStackView()
-        entriesStack.orientation = .vertical
-        entriesStack.spacing = 12
-        entriesStack.alignment = .leading
-        externalProcessorManagerEntriesContainer = entriesStack
-
-        if externalProcessorManagerState.entries.isEmpty {
-            entriesStack.addArrangedSubview(makeExternalProcessorManagerEmptyStateCard())
-        } else {
             for entry in externalProcessorManagerState.entries {
                 entriesStack.addArrangedSubview(makeExternalProcessorEntryCard(for: entry))
             }
+
+            let documentView = FlippedLayoutView()
+            documentView.translatesAutoresizingMaskIntoConstraints = false
+            documentView.addSubview(entriesStack)
+
+            let scrollView = NSScrollView(frame: .zero)
+            scrollView.translatesAutoresizingMaskIntoConstraints = false
+            scrollView.drawsBackground = false
+            scrollView.borderType = .noBorder
+            scrollView.hasVerticalScroller = true
+            scrollView.hasHorizontalScroller = false
+            scrollView.autohidesScrollers = true
+            scrollView.documentView = documentView
+
+            NSLayoutConstraint.activate([
+                entriesStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+                entriesStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+                entriesStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+                entriesStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+                entriesStack.widthAnchor.constraint(equalTo: documentView.widthAnchor),
+                documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+            ])
+
+            controlsCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+            scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+            scrollView.heightAnchor.constraint(equalToConstant: 360).isActive = true
+
+            contentStack.addArrangedSubview(controlsCard)
+            contentStack.addArrangedSubview(scrollView)
+            externalProcessorManagerSelectedEntryPopup = selectedPopup
+            externalProcessorManagerFeedbackLabel = feedbackLabel
         }
 
-        let documentView = FlippedLayoutView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(entriesStack)
-
-        let scrollView = NSScrollView(frame: .zero)
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.documentView = documentView
-
-        NSLayoutConstraint.activate([
-            entriesStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
-            entriesStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            entriesStack.topAnchor.constraint(equalTo: documentView.topAnchor),
-            entriesStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
-            entriesStack.widthAnchor.constraint(equalTo: documentView.widthAnchor),
-            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
-        ])
-
-        let footerButton = makeSecondaryActionButton(title: "Close", action: #selector(closeExternalProcessorManagerSheet))
-        footerButton.translatesAutoresizingMaskIntoConstraints = false
-        footerButton.keyEquivalent = "\u{1b}"
-
-        let footerRow = NSStackView(views: [NSView(), footerButton])
-        footerRow.orientation = .horizontal
-        footerRow.alignment = .centerY
-        footerRow.spacing = 8
-        footerRow.translatesAutoresizingMaskIntoConstraints = false
-
-        let headerContainer = NSStackView(views: [headerStack, controlsContainer])
-        headerContainer.orientation = .vertical
-        headerContainer.alignment = .leading
-        headerContainer.spacing = 12
-        headerContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        let contentStack = NSStackView(views: [headerContainer, scrollView, footerRow])
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = SettingsLayoutMetrics.pageSpacing
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        headerContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        controlsContainer.widthAnchor.constraint(equalTo: headerContainer.widthAnchor).isActive = true
-        scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         footerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        scrollView.heightAnchor.constraint(equalToConstant: 470).isActive = true
+        contentStack.addArrangedSubview(footerRow)
 
         let contentView = NSView()
         contentView.addSubview(contentStack)
@@ -4372,15 +4345,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return contentView
     }
 
-    private func makeExternalProcessorManagerEmptyStateCard() -> NSView {
+    private func makeExternalProcessorManagerEmptyStateCard(addButton: NSButton, doneButton: NSButton) -> NSView {
         let card = makeCardView()
         let stack = NSStackView(views: [
             makeSectionTitle("No processors yet"),
-            makeBodyLabel(Self.externalProcessorManagerEmptyStateText)
+            makeBodyLabel(Self.externalProcessorManagerEmptyStateText),
+            makeBodyLabel("Add one now, then choose it as the active processor when you want VoicePi to hand transcript refinement to an external CLI."),
+            makeButtonGroup([addButton, doneButton])
         ])
         stack.orientation = .vertical
-        stack.spacing = 6
+        stack.spacing = 8
         stack.alignment = .leading
+        if let actionsRow = stack.arrangedSubviews.last {
+            actionsRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
         pinCardContent(stack, into: card)
         return card
     }
@@ -4488,8 +4466,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         entryStack.orientation = .vertical
         entryStack.spacing = 8
         entryStack.alignment = .leading
+        [headerRow, nameRow, kindRow, pathRow, enabledRow, argumentsHeaderRow, argumentStack].forEach { row in
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.widthAnchor.constraint(equalTo: entryStack.widthAnchor).isActive = true
+        }
         pinCardContent(entryStack, into: card)
-        card.widthAnchor.constraint(equalTo: entryStack.widthAnchor).isActive = true
         return card
     }
 
@@ -4513,6 +4494,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
         argumentField.widthAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
         return row
     }
