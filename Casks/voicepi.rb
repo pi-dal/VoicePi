@@ -1,8 +1,8 @@
 cask "voicepi" do
-  version "1.5.0"
-  sha256 "26b7cb7612cc516339d2f871bfcfbb2c22828c851b25b3ead2452898e7fda77c"
+  version "1.5.1"
+  sha256 "3b79f3e9a272bbf195316df47faf997cfaaf30ab6100cd8b92b6038b0b510bfd"
 
-  url "https://github.com/pi-dal/VoicePi/releases/download/v1.5.0/VoicePi-1.5.0.zip"
+  url "https://github.com/pi-dal/VoicePi/releases/download/v1.5.1/VoicePi-1.5.1.zip"
   name "VoicePi"
   desc "macOS menu-bar voice input app built with SwiftPM"
   homepage "https://github.com/pi-dal/VoicePi"
