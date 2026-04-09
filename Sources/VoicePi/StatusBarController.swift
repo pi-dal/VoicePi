@@ -151,6 +151,8 @@ struct LLMSectionFeedback {
     static func message(
         mode: PostProcessingMode,
         provider: TranslationProvider,
+        refinementProvider: RefinementProvider = .llm,
+        externalProcessor: ExternalProcessorEntry? = nil,
         configuration: LLMConfiguration,
         selectedLanguage: SupportedLanguage,
         targetLanguage: SupportedLanguage,
@@ -160,15 +162,24 @@ struct LLMSectionFeedback {
         case .disabled:
             return "Text processing is disabled. VoicePi will inject the transcript without additional refinement or translation."
         case .refinement:
-            guard configuration.isConfigured else {
-                return "Refinement is selected, but API Base URL, API Key, and Model are still required."
-            }
+            switch refinementProvider {
+            case .llm:
+                guard configuration.isConfigured else {
+                    return "Refinement is selected, but API Base URL, API Key, and Model are still required."
+                }
 
-            if targetLanguage == selectedLanguage {
-                return "Refinement is active and will use the configured LLM provider."
-            }
+                if targetLanguage == selectedLanguage {
+                    return "Refinement is active and will use the configured LLM provider."
+                }
 
-            return "Refinement is active. VoicePi will fold translation into the LLM prompt and target \(targetLanguage.recognitionDisplayName)."
+                return "Refinement is active. VoicePi will fold translation into the LLM prompt and target \(targetLanguage.recognitionDisplayName)."
+            case .externalProcessor:
+                guard let externalProcessor else {
+                    return "Refinement is selected, but no external processor entry is configured yet. Click Manage Processors to add one."
+                }
+
+                return "Refinement is active and will use \(externalProcessor.name) through the selected external processor."
+            }
         case .translation:
             if provider == .appleTranslate {
                 return "Translation is active and defaults to Apple Translate."
@@ -1131,6 +1142,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let captureFrontmostAppButtonTitle = "Capture Frontmost App"
     static let captureCurrentWebsiteButtonTitle = "Capture Current Website"
     static let strictModeToggleLabel = "Strict Mode"
+    static let refinementProviderLabel = "Refinement Provider"
+    static let externalProcessorManagerSheetTitle = "External Processor Manager"
+    static let externalProcessorManagerAddProcessorButtonTitle = "+"
+    static let externalProcessorManagerAddArgumentButtonTitle = "+"
+    static let externalProcessorManagerEmptyStateText = "No external processors configured yet. Click + to add one."
+    static let externalProcessorManagerManageButtonTitle = "Manage Processors"
     static let strictModeHelpText = "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
     static let promptEditorBodyHintText = "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
     static let promptEditorBodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -1260,9 +1277,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let baseURLField = NSTextField(string: "")
     private let apiKeyField = NSSecureTextField(string: "")
     private let modelField = NSTextField(string: "")
+    private let refinementProviderPopup = ThemedPopUpButton()
     private let activePromptPopup = ThemedPopUpButton()
     private let promptStrictModeSwitch = NSSwitch()
     private let resolvedPromptSummaryLabel = NSTextField(labelWithString: "")
+    private lazy var externalProcessorManagerButton = StyledSettingsButton(
+        title: Self.externalProcessorManagerManageButtonTitle,
+        role: .secondary,
+        target: self,
+        action: #selector(openExternalProcessorManager)
+    )
     private lazy var resolvedPromptPreviewButton = StyledSettingsButton(
         title: "Preview",
         role: .secondary,
@@ -1329,6 +1353,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private weak var promptEditorWebsiteHostsField: NSTextField?
     private weak var promptEditorBindingStatusLabel: NSTextField?
     private weak var promptEditorBodyTextView: NSTextView?
+    private var externalProcessorManagerState = ExternalProcessorManagerState()
+    private var externalProcessorManagerSheetWindow: PreviewSheetWindow?
+    private weak var externalProcessorManagerSelectedEntryPopup: NSPopUpButton?
+    private weak var externalProcessorManagerFeedbackLabel: NSTextField?
+    private weak var externalProcessorManagerEntriesContainer: NSStackView?
+    private var externalProcessorManagerNameFields: [UUID: NSTextField] = [:]
+    private var externalProcessorManagerKindPopups: [UUID: NSPopUpButton] = [:]
+    private var externalProcessorManagerExecutablePathFields: [UUID: NSTextField] = [:]
+    private var externalProcessorManagerEnabledSwitches: [UUID: NSSwitch] = [:]
+    private var externalProcessorManagerArgumentFields: [UUID: [UUID: NSTextField]] = [:]
 
     var isPromptEditorSheetPresented: Bool {
         promptEditorDraft != nil || window?.attachedSheet != nil
@@ -1396,6 +1430,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshASRSection()
         refreshLLMSection()
         refreshDictionarySection()
+        if externalProcessorManagerSheetWindow != nil {
+            externalProcessorManagerState = ExternalProcessorManagerState(
+                entries: model.externalProcessorEntries,
+                selectedEntryID: model.selectedExternalProcessorEntryID ?? model.externalProcessorEntries.first?.id
+            )
+            reloadExternalProcessorManagerSheet()
+        }
     }
 
     @objc
@@ -1781,6 +1822,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         strictModeControl.translatesAutoresizingMaskIntoConstraints = false
         strictModeHelpLabel.widthAnchor.constraint(equalTo: strictModeControl.widthAnchor).isActive = true
 
+        let refinementProviderHelpLabel = NSTextField(
+            wrappingLabelWithString: "Refinement can use the built-in LLM provider or a configurable external processor backend."
+        )
+        refinementProviderHelpLabel.font = .systemFont(ofSize: 12)
+        refinementProviderHelpLabel.textColor = .secondaryLabelColor
+        refinementProviderHelpLabel.maximumNumberOfLines = 0
+        refinementProviderHelpLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let refinementProviderControl = NSStackView(views: [refinementProviderPopup, refinementProviderHelpLabel])
+        refinementProviderControl.orientation = .vertical
+        refinementProviderControl.alignment = .leading
+        refinementProviderControl.spacing = 6
+        refinementProviderControl.translatesAutoresizingMaskIntoConstraints = false
+        refinementProviderHelpLabel.widthAnchor.constraint(equalTo: refinementProviderControl.widthAnchor).isActive = true
+
+        let externalProcessorManagerControl = NSStackView(views: [externalProcessorManagerButton])
+        externalProcessorManagerControl.orientation = .vertical
+        externalProcessorManagerControl.alignment = .leading
+        externalProcessorManagerControl.spacing = 6
+        externalProcessorManagerControl.translatesAutoresizingMaskIntoConstraints = false
+        externalProcessorManagerButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 186).isActive = true
+
         let promptActionsRow = makeButtonGroup([
             editPromptButton,
             newPromptButton,
@@ -1791,6 +1854,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let configurationSection = makeGroupedSection(rows: [
             makePreferenceRow(title: "Mode", control: postProcessingModePopup),
+            makePreferenceRow(title: Self.refinementProviderLabel, control: refinementProviderControl),
             makePreferenceRow(title: "Translate Provider", control: translationProviderPopup),
             makePreferenceRow(title: "Target Language", control: targetLanguagePopup),
             makePreferenceRow(title: "API Base URL", control: baseURLField),
@@ -1798,6 +1862,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "Model", control: modelField),
             makePreferenceRow(title: "Active Prompt", control: activePromptPopup),
             makePreferenceRow(title: Self.strictModeToggleLabel, control: strictModeControl),
+            makePreferenceRow(title: "External Processors", control: externalProcessorManagerControl),
             makePreferenceRow(title: "Prompt Summary", control: resolvedPromptControl),
             makePreferenceRow(title: "Prompt Actions", control: promptActionsRow)
         ])
@@ -1807,8 +1872,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePrimaryActionButton(title: "Save", action: #selector(saveConfiguration))
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, conservative LLM refinement, or explicit translation."))
-        contentStack.addArrangedSubview(makeBodyLabel("Refinement always uses the LLM provider. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
+        contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, LLM refinement, external processors, or explicit translation."))
+        contentStack.addArrangedSubview(makeBodyLabel("Refinement can use either the built-in LLM provider or an external processor backend. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
         contentStack.addArrangedSubview(makeBodyLabel("Strict Mode controls whether app bindings can override the selected Active Prompt. Keep it on for automatic routing by app, or switch it off for manual prompt routing."))
         contentStack.addArrangedSubview(configurationSection)
         contentStack.addArrangedSubview(buttons)
@@ -2037,6 +2102,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         apiKeyField.stringValue = model.llmConfiguration.apiKey
         modelField.stringValue = model.llmConfiguration.model
         selectPopupItem(in: postProcessingModePopup, matching: model.postProcessingMode.rawValue)
+        selectPopupItem(in: refinementProviderPopup, matching: model.refinementProvider.rawValue)
         selectPopupItem(
             in: translationProviderPopup,
             matching: TranslationProvider.displayProvider(
@@ -2117,10 +2183,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshLLMSection() {
         let mode = currentPostProcessingMode()
         let provider = currentTranslationProvider()
+        let refinementProvider = currentRefinementProvider()
         let targetLanguage = currentTargetLanguage()
         let configuration = currentConfigurationFromFields()
-        let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
+        let usesLLM = (mode == .translation && provider == .llm)
+            || (mode == .refinement && refinementProvider == .llm)
 
+        selectPopupItem(
+            in: refinementProviderPopup,
+            matching: model.refinementProvider.rawValue
+        )
         selectPopupItem(
             in: translationProviderPopup,
             matching: TranslationProvider.displayProvider(
@@ -2130,15 +2202,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             ).rawValue
         )
 
+        refinementProviderPopup.isEnabled = mode == .refinement
         translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
         testButton.isEnabled = usesLLM
-        let shouldEnablePromptControls = mode == .refinement
+        externalProcessorManagerButton.isEnabled = mode == .refinement
+        let shouldEnablePromptControls = mode == .refinement && refinementProvider == .llm
         setPromptWorkspaceControlsEnabled(shouldEnablePromptControls)
 
         setLLMFeedback(.neutral(
             LLMSectionFeedback.message(
                 mode: mode,
                 provider: provider,
+                refinementProvider: refinementProvider,
+                externalProcessor: model.selectedExternalProcessorEntry(),
                 configuration: configuration,
                 selectedLanguage: model.selectedLanguage,
                 targetLanguage: targetLanguage,
@@ -2359,6 +2435,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return providers[min(index, providers.count - 1)]
     }
 
+    private func currentRefinementProvider() -> RefinementProvider {
+        let index = max(0, refinementProviderPopup.indexOfSelectedItem)
+        return RefinementProvider.allCases[index]
+    }
+
     private func currentTargetLanguage() -> SupportedLanguage {
         let index = max(0, targetLanguagePopup.indexOfSelectedItem)
         return SupportedLanguage.allCases[index]
@@ -2437,6 +2518,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func openLLMSection() {
         selectSection(.llm)
+    }
+
+    @objc
+    private func openExternalProcessorManager() {
+        presentExternalProcessorManagerSheet()
     }
 
     @objc
@@ -2612,6 +2698,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         delegate?.settingsWindowController(self, didSelectASRBackend: backend)
         refreshHomeSection()
         refreshASRSection()
+    }
+
+    @objc
+    private func refinementProviderChanged(_ sender: NSPopUpButton) {
+        model.setRefinementProvider(currentRefinementProvider())
+        refreshHomeSection()
+        refreshLLMSection()
     }
 
     @objc
@@ -3007,13 +3100,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func saveConfiguration() {
         var configuration = currentConfigurationFromFields()
         let mode = currentPostProcessingMode()
+        let refinementProvider = currentRefinementProvider()
         model.setPostProcessingMode(mode)
         if mode == .translation {
             model.setTranslationProvider(currentTranslationProvider())
         }
         model.setTargetLanguage(currentTargetLanguage())
         model.promptWorkspace = promptWorkspaceDraft
-        if mode == .refinement {
+        if mode == .refinement && refinementProvider == .llm {
             configuration.refinementPrompt = resolvedPromptTextFromControls() ?? ""
         } else {
             configuration.refinementPrompt = ""
@@ -3035,7 +3129,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         var configuration = currentConfigurationFromFields()
         let mode = currentPostProcessingMode()
         let provider = currentTranslationProvider()
-        let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
+        let refinementProvider = currentRefinementProvider()
+        let usesLLM = (mode == .refinement && refinementProvider == .llm)
+            || (mode == .translation && provider == .llm)
 
         guard usesLLM else {
             setLLMFeedback(.error("LLM testing is only available when refinement or LLM translation is selected."))
@@ -3050,7 +3146,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         setLLMButtonsEnabled(false)
         setLLMFeedback(.loading())
 
-        if mode == .refinement {
+        if mode == .refinement && refinementProvider == .llm {
             configuration.refinementPrompt = resolvedPromptTextFromControls() ?? ""
         } else {
             configuration.refinementPrompt = ""
@@ -3069,7 +3165,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func setLLMButtonsEnabled(_ enabled: Bool) {
         let mode = currentPostProcessingMode()
         let provider = currentTranslationProvider()
-        let usesLLM = mode == .refinement || (mode == .translation && provider == .llm)
+        let refinementProvider = currentRefinementProvider()
+        let usesLLM = (mode == .refinement && refinementProvider == .llm)
+            || (mode == .translation && provider == .llm)
         testButton.isEnabled = enabled && usesLLM
         saveButton.isEnabled = enabled
     }
@@ -3207,6 +3305,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window?.contentView?.layer?.backgroundColor = pageBackgroundColor.cgColor
         asrBackendPopup.syncTheme()
         postProcessingModePopup.syncTheme()
+        refinementProviderPopup.syncTheme()
         translationProviderPopup.syncTheme()
         targetLanguagePopup.syncTheme()
         activePromptPopup.syncTheme()
@@ -3219,6 +3318,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         postProcessingModePopup.addItems(withTitles: PostProcessingMode.allCases.map(\.title))
         postProcessingModePopup.target = self
         postProcessingModePopup.action = #selector(postProcessingModeChanged(_:))
+
+        refinementProviderPopup.removeAllItems()
+        refinementProviderPopup.addItems(withTitles: RefinementProvider.allCases.map(\.title))
+        refinementProviderPopup.target = self
+        refinementProviderPopup.action = #selector(refinementProviderChanged(_:))
 
         translationProviderPopup.removeAllItems()
         translationProviderPopup.addItems(withTitles: availableTranslationProviders().map(\.title))
@@ -3234,6 +3338,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func selectPopupItem(in popup: NSPopUpButton, matching rawValue: String) {
         if popup === postProcessingModePopup,
            let index = PostProcessingMode.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
+            popup.selectItem(at: index)
+            return
+        }
+
+        if popup === refinementProviderPopup,
+           let index = RefinementProvider.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
             popup.selectItem(at: index)
             return
         }
@@ -3908,6 +4018,589 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let sheet = window?.attachedSheet {
             window?.endSheet(sheet)
         }
+    }
+
+    private func presentExternalProcessorManagerSheet() {
+        captureExternalProcessorManagerEdits()
+
+        if externalProcessorManagerSheetWindow == nil {
+            externalProcessorManagerState = ExternalProcessorManagerState(
+                entries: model.externalProcessorEntries,
+                selectedEntryID: model.selectedExternalProcessorEntryID ?? model.externalProcessorEntries.first?.id
+            )
+            if externalProcessorManagerState.selectedEntryID == nil {
+                externalProcessorManagerState.selectedEntryID = externalProcessorManagerState.entries.first?.id
+                model.setSelectedExternalProcessorEntryID(externalProcessorManagerState.selectedEntryID)
+            }
+
+            let sheetSize = NSSize(width: 944, height: 700)
+            let sheet = PreviewSheetWindow(
+                contentRect: NSRect(origin: .zero, size: sheetSize),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            sheet.title = Self.externalProcessorManagerSheetTitle
+            sheet.setContentSize(sheetSize)
+            sheet.minSize = sheetSize
+            sheet.appearance = window?.effectiveAppearance ?? window?.appearance
+            sheet.onCloseRequest = { [weak self] in
+                self?.closeExternalProcessorManagerSheet()
+            }
+
+            externalProcessorManagerSheetWindow = sheet
+            reloadExternalProcessorManagerSheet()
+            window?.beginSheet(sheet)
+            sheet.makeKeyAndOrderFront(nil)
+        } else {
+            reloadExternalProcessorManagerSheet()
+            externalProcessorManagerSheetWindow?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    private func reloadExternalProcessorManagerSheet() {
+        guard let sheet = externalProcessorManagerSheetWindow else { return }
+        sheet.contentView = makeExternalProcessorManagerSheetContent(sheet: sheet)
+
+        if let selectedPopup = externalProcessorManagerSelectedEntryPopup,
+           selectedPopup.numberOfItems > 0 {
+            sheet.initialFirstResponder = selectedPopup
+            sheet.makeFirstResponder(selectedPopup)
+        }
+    }
+
+    @objc
+    private func closeExternalProcessorManagerSheet() {
+        captureExternalProcessorManagerEdits()
+
+        externalProcessorManagerState = ExternalProcessorManagerState(
+            entries: model.externalProcessorEntries,
+            selectedEntryID: model.selectedExternalProcessorEntryID
+        )
+
+        externalProcessorManagerSelectedEntryPopup = nil
+        externalProcessorManagerFeedbackLabel = nil
+        externalProcessorManagerEntriesContainer = nil
+        externalProcessorManagerNameFields = [:]
+        externalProcessorManagerKindPopups = [:]
+        externalProcessorManagerExecutablePathFields = [:]
+        externalProcessorManagerEnabledSwitches = [:]
+        externalProcessorManagerArgumentFields = [:]
+
+        if let sheet = externalProcessorManagerSheetWindow {
+            window?.endSheet(sheet)
+        }
+        externalProcessorManagerSheetWindow = nil
+    }
+
+    private func reloadExternalProcessorManagerSheetContent() {
+        reloadExternalProcessorManagerSheet()
+        refreshLLMSection()
+    }
+
+    private func captureExternalProcessorManagerEdits() {
+        guard externalProcessorManagerSheetWindow != nil else { return }
+
+        externalProcessorManagerSheetWindow?.makeFirstResponder(nil)
+
+        var updatedEntries: [ExternalProcessorEntry] = []
+        updatedEntries.reserveCapacity(externalProcessorManagerState.entries.count)
+
+        for entry in externalProcessorManagerState.entries {
+            var updatedEntry = entry
+
+            if let field = externalProcessorManagerNameFields[entry.id] {
+                updatedEntry.name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            if let popup = externalProcessorManagerKindPopups[entry.id] {
+                let index = max(0, popup.indexOfSelectedItem)
+                updatedEntry.kind = ExternalProcessorKind.allCases[min(index, ExternalProcessorKind.allCases.count - 1)]
+            }
+
+            if let field = externalProcessorManagerExecutablePathFields[entry.id] {
+                updatedEntry.executablePath = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            if let toggle = externalProcessorManagerEnabledSwitches[entry.id] {
+                updatedEntry.isEnabled = toggle.state == .on
+            }
+
+            if let argumentFields = externalProcessorManagerArgumentFields[entry.id] {
+                updatedEntry.additionalArguments = entry.additionalArguments.map { argument in
+                    ExternalProcessorArgument(
+                        id: argument.id,
+                        value: argumentFields[argument.id]?.stringValue ?? argument.value
+                    )
+                }
+            }
+
+            updatedEntries.append(updatedEntry)
+        }
+
+        externalProcessorManagerState.entries = updatedEntries
+        externalProcessorManagerState.selectedEntryID = selectedEntryIDFromPopup(externalProcessorManagerSelectedEntryPopup)
+            ?? externalProcessorManagerState.selectedEntryID
+    }
+
+    private func persistExternalProcessorManagerState() {
+        model.setExternalProcessorEntries(externalProcessorManagerState.entries)
+        model.setSelectedExternalProcessorEntryID(externalProcessorManagerState.selectedEntryID)
+        externalProcessorManagerFeedbackLabel?.stringValue = externalProcessorManagerFeedbackText()
+        refreshHomeSection()
+        refreshLLMSection()
+    }
+
+    private func makeExternalProcessorManagerSheetContent(sheet: PreviewSheetWindow) -> NSView {
+        let sheetSize = NSSize(width: 944, height: 700)
+        externalProcessorManagerNameFields = [:]
+        externalProcessorManagerKindPopups = [:]
+        externalProcessorManagerExecutablePathFields = [:]
+        externalProcessorManagerEnabledSwitches = [:]
+        externalProcessorManagerArgumentFields = [:]
+
+        let titleLabel = NSTextField(labelWithString: Self.externalProcessorManagerSheetTitle)
+        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
+        titleLabel.alignment = .left
+
+        let subtitleLabel = NSTextField(
+            wrappingLabelWithString: "Each processor entry behaves like a small app profile. Use the top + button to add a processor, then use the row + buttons to add command-line arguments."
+        )
+        subtitleLabel.font = .systemFont(ofSize: 12.5)
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.maximumNumberOfLines = 0
+        subtitleLabel.alignment = .left
+
+        let selectedPopup = ThemedPopUpButton()
+        selectedPopup.target = self
+        selectedPopup.action = #selector(externalProcessorManagerSelectedEntryChanged(_:))
+        selectedPopup.translatesAutoresizingMaskIntoConstraints = false
+        selectedPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        selectedPopup.removeAllItems()
+        if externalProcessorManagerState.entries.isEmpty {
+            selectedPopup.addItem(withTitle: "No processors configured")
+            selectedPopup.isEnabled = false
+        } else {
+            for entry in externalProcessorManagerState.entries {
+                selectedPopup.addItem(withTitle: externalProcessorManagerDisplayTitle(for: entry))
+                selectedPopup.lastItem?.representedObject = entry.id.uuidString
+            }
+
+            if let selectedID = externalProcessorManagerState.selectedEntryID {
+                let index = selectedPopup.indexOfItem(withRepresentedObject: selectedID.uuidString)
+                if index >= 0 {
+                    selectedPopup.selectItem(at: index)
+                } else {
+                    selectedPopup.selectItem(at: 0)
+                    externalProcessorManagerState.selectedEntryID = selectedEntryIDFromPopup(selectedPopup)
+                }
+            } else {
+                selectedPopup.selectItem(at: 0)
+                externalProcessorManagerState.selectedEntryID = selectedEntryIDFromPopup(selectedPopup)
+            }
+        }
+
+        let addProcessorButton = StyledSettingsButton(
+            title: Self.externalProcessorManagerAddProcessorButtonTitle,
+            role: .secondary,
+            target: self,
+            action: #selector(addExternalProcessorEntry)
+        )
+        addProcessorButton.translatesAutoresizingMaskIntoConstraints = false
+        addProcessorButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        let headerSelectionRow = makePreferenceRow(title: "Active Processor", control: selectedPopup)
+        let headerActionRow = makeButtonGroup([addProcessorButton, makePrimaryActionButton(title: "Done", action: #selector(closeExternalProcessorManagerSheet))])
+
+        let feedbackLabel = NSTextField(labelWithString: externalProcessorManagerFeedbackText())
+        feedbackLabel.font = .systemFont(ofSize: 12)
+        feedbackLabel.textColor = .secondaryLabelColor
+        feedbackLabel.lineBreakMode = .byWordWrapping
+        feedbackLabel.maximumNumberOfLines = 0
+        externalProcessorManagerFeedbackLabel = feedbackLabel
+        feedbackLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+
+        let headerStack = NSStackView(views: [titleLabel, subtitleLabel, headerSelectionRow, headerActionRow, feedbackLabel])
+        headerStack.orientation = .vertical
+        headerStack.alignment = .leading
+        headerStack.spacing = 8
+
+        let headerCard = makeCardView()
+        pinCardContent(headerStack, into: headerCard)
+
+        let entriesStack = NSStackView()
+        entriesStack.orientation = .vertical
+        entriesStack.spacing = 12
+        entriesStack.alignment = .leading
+        externalProcessorManagerEntriesContainer = entriesStack
+
+        if externalProcessorManagerState.entries.isEmpty {
+            entriesStack.addArrangedSubview(makeExternalProcessorManagerEmptyStateCard())
+        } else {
+            for entry in externalProcessorManagerState.entries {
+                entriesStack.addArrangedSubview(makeExternalProcessorEntryCard(for: entry))
+            }
+        }
+
+        let documentView = FlippedLayoutView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(entriesStack)
+
+        let scrollView = NSScrollView(frame: .zero)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = documentView
+
+        NSLayoutConstraint.activate([
+            entriesStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            entriesStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            entriesStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            entriesStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            entriesStack.widthAnchor.constraint(equalTo: documentView.widthAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+        ])
+
+        let footerButton = makeSecondaryActionButton(title: "Close", action: #selector(closeExternalProcessorManagerSheet))
+        footerButton.translatesAutoresizingMaskIntoConstraints = false
+        footerButton.keyEquivalent = "\u{1b}"
+
+        let footerRow = NSStackView(views: [NSView(), footerButton])
+        footerRow.orientation = .horizontal
+        footerRow.alignment = .centerY
+        footerRow.spacing = 8
+        footerRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentStack = NSStackView(views: [headerCard, scrollView, footerRow])
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = SettingsLayoutMetrics.pageSpacing
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        headerCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        footerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        scrollView.heightAnchor.constraint(equalToConstant: 470).isActive = true
+
+        let contentView = NSView()
+        contentView.addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            contentView.widthAnchor.constraint(equalToConstant: sheetSize.width),
+            contentView.heightAnchor.constraint(equalToConstant: sheetSize.height),
+            contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: SettingsLayoutMetrics.promptEditorOuterInset),
+            contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -SettingsLayoutMetrics.promptEditorOuterInset),
+            contentStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: SettingsLayoutMetrics.promptEditorOuterInset),
+            contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -SettingsLayoutMetrics.promptEditorOuterInset)
+        ])
+
+        externalProcessorManagerSelectedEntryPopup = selectedPopup
+        return contentView
+    }
+
+    private func makeExternalProcessorManagerEmptyStateCard() -> NSView {
+        let card = makeCardView()
+        let stack = NSStackView(views: [
+            makeSectionTitle("No processors yet"),
+            makeBodyLabel(Self.externalProcessorManagerEmptyStateText)
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeExternalProcessorEntryCard(for entry: ExternalProcessorEntry) -> NSView {
+        let card = makeCardView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: externalProcessorManagerDisplayTitle(for: entry))
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.textColor = .labelColor
+
+        let testButton = makeSecondaryActionButton(title: "Test", action: #selector(testExternalProcessorEntry(_:)))
+        testButton.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+
+        let removeButton = makeSecondaryActionButton(title: "Remove", action: #selector(removeExternalProcessorEntry(_:)))
+        removeButton.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+
+        let headerRow = NSStackView(views: [titleLabel, NSView(), testButton, removeButton])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 8
+
+        let nameField = NSTextField(string: entry.name)
+        nameField.placeholderString = "Processor name"
+        nameField.target = self
+        nameField.action = #selector(externalProcessorNameChanged(_:))
+        nameField.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        externalProcessorManagerNameFields[entry.id] = nameField
+
+        let kindPopup = ThemedPopUpButton()
+        kindPopup.addItems(withTitles: ExternalProcessorKind.allCases.map(\.title))
+        kindPopup.target = self
+        kindPopup.action = #selector(externalProcessorKindChanged(_:))
+        kindPopup.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        if let index = ExternalProcessorKind.allCases.firstIndex(of: entry.kind) {
+            kindPopup.selectItem(at: index)
+        }
+        externalProcessorManagerKindPopups[entry.id] = kindPopup
+
+        let executablePathField = NSTextField(string: entry.executablePath)
+        executablePathField.placeholderString = "alma"
+        executablePathField.target = self
+        executablePathField.action = #selector(externalProcessorExecutablePathChanged(_:))
+        executablePathField.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        externalProcessorManagerExecutablePathFields[entry.id] = executablePathField
+
+        let enabledSwitch = NSSwitch()
+        enabledSwitch.state = entry.isEnabled ? .on : .off
+        enabledSwitch.target = self
+        enabledSwitch.action = #selector(externalProcessorEnabledChanged(_:))
+        enabledSwitch.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        externalProcessorManagerEnabledSwitches[entry.id] = enabledSwitch
+
+        let nameRow = makePreferenceRow(title: "Name", control: nameField)
+        let kindRow = makePreferenceRow(title: "Kind", control: kindPopup)
+        let pathRow = makePreferenceRow(title: "Executable", control: executablePathField)
+        let enabledRow = makePreferenceRow(title: "Enabled", control: enabledSwitch)
+
+        let argumentsTitle = NSTextField(labelWithString: "Arguments")
+        argumentsTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        argumentsTitle.textColor = .labelColor
+
+        let addArgumentButton = StyledSettingsButton(
+            title: Self.externalProcessorManagerAddArgumentButtonTitle,
+            role: .secondary,
+            target: self,
+            action: #selector(addExternalProcessorArgument(_:))
+        )
+        addArgumentButton.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        addArgumentButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        let argumentsHeaderRow = NSStackView(views: [argumentsTitle, NSView(), addArgumentButton])
+        argumentsHeaderRow.orientation = .horizontal
+        argumentsHeaderRow.alignment = .centerY
+        argumentsHeaderRow.spacing = 8
+
+        let argumentStack = NSStackView()
+        argumentStack.orientation = .vertical
+        argumentStack.alignment = .leading
+        argumentStack.spacing = 8
+
+        var argumentFields: [UUID: NSTextField] = [:]
+        if entry.additionalArguments.isEmpty {
+            let placeholder = makeBodyLabel("No additional arguments yet. Use + to add a row.")
+            placeholder.textColor = .secondaryLabelColor
+            argumentStack.addArrangedSubview(placeholder)
+        } else {
+            for argument in entry.additionalArguments {
+                let row = makeExternalProcessorArgumentRow(entryID: entry.id, argument: argument, argumentFields: &argumentFields)
+                argumentStack.addArrangedSubview(row)
+            }
+        }
+        externalProcessorManagerArgumentFields[entry.id] = argumentFields
+
+        let entryStack = NSStackView(views: [
+            headerRow,
+            nameRow,
+            kindRow,
+            pathRow,
+            enabledRow,
+            argumentsHeaderRow,
+            argumentStack
+        ])
+        entryStack.orientation = .vertical
+        entryStack.spacing = 8
+        entryStack.alignment = .leading
+        pinCardContent(entryStack, into: card)
+        card.widthAnchor.constraint(equalTo: entryStack.widthAnchor).isActive = true
+        return card
+    }
+
+    private func makeExternalProcessorArgumentRow(
+        entryID: UUID,
+        argument: ExternalProcessorArgument,
+        argumentFields: inout [UUID: NSTextField]
+    ) -> NSView {
+        let argumentField = NSTextField(string: argument.value)
+        argumentField.placeholderString = "Argument"
+        argumentField.target = self
+        argumentField.action = #selector(externalProcessorArgumentChanged(_:))
+        argumentField.identifier = NSUserInterfaceItemIdentifier("\(entryID.uuidString)|\(argument.id.uuidString)")
+        argumentFields[argument.id] = argumentField
+
+        let removeButton = makeSecondaryActionButton(title: "−", action: #selector(removeExternalProcessorArgument(_:)))
+        removeButton.identifier = NSUserInterfaceItemIdentifier("\(entryID.uuidString)|\(argument.id.uuidString)")
+        removeButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        let row = NSStackView(views: [argumentField, removeButton])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        argumentField.widthAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
+        return row
+    }
+
+    private func externalProcessorManagerDisplayTitle(for entry: ExternalProcessorEntry) -> String {
+        let trimmedName = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            return trimmedName
+        }
+        return entry.kind.title
+    }
+
+    private func selectedEntryIDFromPopup(_ popup: NSPopUpButton?) -> UUID? {
+        guard let rawValue = popup?.selectedItem?.representedObject as? String else { return nil }
+        return UUID(uuidString: rawValue)
+    }
+
+    private func externalProcessorManagerFeedbackText() -> String {
+        if let selected = externalProcessorManagerState.entries.first(where: { $0.id == externalProcessorManagerState.selectedEntryID }) {
+            return "Selected: \(externalProcessorManagerDisplayTitle(for: selected))"
+        }
+        if externalProcessorManagerState.entries.isEmpty {
+            return Self.externalProcessorManagerEmptyStateText
+        }
+        return "Choose a processor to make it the active refinement backend."
+    }
+
+    @objc
+    private func externalProcessorManagerSelectedEntryChanged(_ sender: NSPopUpButton) {
+        captureExternalProcessorManagerEdits()
+        externalProcessorManagerState.selectedEntryID = selectedEntryIDFromPopup(sender)
+        persistExternalProcessorManagerState()
+    }
+
+    @objc
+    private func addExternalProcessorEntry() {
+        captureExternalProcessorManagerEdits()
+        externalProcessorManagerState = ExternalProcessorManagerActions.addEntry(to: externalProcessorManagerState)
+        persistExternalProcessorManagerState()
+        reloadExternalProcessorManagerSheetContent()
+    }
+
+    @objc
+    private func addExternalProcessorArgument(_ sender: NSButton) {
+        captureExternalProcessorManagerEdits()
+        guard let entryID = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }) else { return }
+        externalProcessorManagerState = ExternalProcessorManagerActions.addArgument(to: entryID, state: externalProcessorManagerState)
+        persistExternalProcessorManagerState()
+        reloadExternalProcessorManagerSheetContent()
+    }
+
+    @objc
+    private func removeExternalProcessorEntry(_ sender: NSButton) {
+        captureExternalProcessorManagerEdits()
+        guard let entryID = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }) else { return }
+        externalProcessorManagerState = ExternalProcessorManagerActions.removeEntry(entryID, from: externalProcessorManagerState)
+        persistExternalProcessorManagerState()
+        reloadExternalProcessorManagerSheetContent()
+    }
+
+    @objc
+    private func removeExternalProcessorArgument(_ sender: NSButton) {
+        captureExternalProcessorManagerEdits()
+        guard
+            let rawValue = sender.identifier?.rawValue,
+            let (entryID, argumentID) = externalProcessorArgumentIDs(from: rawValue)
+        else {
+            return
+        }
+
+        guard let entryIndex = externalProcessorManagerState.entries.firstIndex(where: { $0.id == entryID }) else {
+            return
+        }
+
+        externalProcessorManagerState.entries[entryIndex].additionalArguments.removeAll { $0.id == argumentID }
+        persistExternalProcessorManagerState()
+        reloadExternalProcessorManagerSheetContent()
+    }
+
+    @objc
+    private func externalProcessorNameChanged(_ sender: NSTextField) {
+        captureExternalProcessorManagerEdits()
+        persistExternalProcessorManagerState()
+    }
+
+    @objc
+    private func externalProcessorExecutablePathChanged(_ sender: NSTextField) {
+        captureExternalProcessorManagerEdits()
+        persistExternalProcessorManagerState()
+    }
+
+    @objc
+    private func externalProcessorKindChanged(_ sender: NSPopUpButton) {
+        captureExternalProcessorManagerEdits()
+        persistExternalProcessorManagerState()
+    }
+
+    @objc
+    private func externalProcessorEnabledChanged(_ sender: NSSwitch) {
+        captureExternalProcessorManagerEdits()
+        persistExternalProcessorManagerState()
+    }
+
+    @objc
+    private func externalProcessorArgumentChanged(_ sender: NSTextField) {
+        captureExternalProcessorManagerEdits()
+        persistExternalProcessorManagerState()
+    }
+
+    @objc
+    private func testExternalProcessorEntry(_ sender: NSButton) {
+        captureExternalProcessorManagerEdits()
+
+        guard
+            let rawValue = sender.identifier?.rawValue,
+            let entryID = UUID(uuidString: rawValue),
+            let entry = externalProcessorManagerState.entries.first(where: { $0.id == entryID })
+        else {
+            return
+        }
+
+        guard entry.isEnabled else {
+            externalProcessorManagerFeedbackLabel?.stringValue = "\(externalProcessorManagerDisplayTitle(for: entry)) is disabled."
+            return
+        }
+
+        guard !entry.executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            externalProcessorManagerFeedbackLabel?.stringValue = "Please provide an executable path before testing."
+            return
+        }
+
+        externalProcessorManagerFeedbackLabel?.stringValue = "Testing \(externalProcessorManagerDisplayTitle(for: entry))…"
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let invocation = try AlmaCLIInvocationBuilder().build(
+                    executablePath: entry.executablePath,
+                    prompt: "VoicePi external processor test",
+                    additionalArguments: entry.additionalArguments.map(\.value)
+                )
+                let runner = ExternalProcessorRunner()
+                let output = try await runner.run(invocation: invocation, stdin: "VoicePi test")
+                self.externalProcessorManagerFeedbackLabel?.stringValue = ExternalProcessorTestFeedback.message(
+                    forOutput: output,
+                    processorDisplayName: self.externalProcessorManagerDisplayTitle(for: entry)
+                )
+            } catch {
+                self.externalProcessorManagerFeedbackLabel?.stringValue = error.localizedDescription
+            }
+        }
+    }
+
+    private func externalProcessorArgumentIDs(from rawValue: String) -> (UUID, UUID)? {
+        let parts = rawValue.split(separator: "|", omittingEmptySubsequences: true)
+        guard parts.count == 2 else { return nil }
+        guard let entryID = UUID(uuidString: String(parts[0])),
+              let argumentID = UUID(uuidString: String(parts[1])) else {
+            return nil
+        }
+        return (entryID, argumentID)
     }
 
     private func presentResolvedPromptPreview(text: String) {

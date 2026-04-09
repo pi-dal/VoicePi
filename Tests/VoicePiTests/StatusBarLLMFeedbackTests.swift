@@ -47,4 +47,29 @@ struct StatusBarLLMFeedbackTests {
                 == "LLM translation is selected because Apple Translate is unavailable on this macOS version, but the LLM configuration is incomplete. Translation will not work until API Base URL, API Key, and Model are provided."
         )
     }
+
+    @Test
+    func refinementWithExternalProcessorMentionsSelectedProcessor() {
+        let processor = ExternalProcessorEntry(
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "alma"
+        )
+
+        let message = LLMSectionFeedback.message(
+            mode: .refinement,
+            provider: .llm,
+            refinementProvider: .externalProcessor,
+            externalProcessor: processor,
+            configuration: .init(),
+            selectedLanguage: .english,
+            targetLanguage: .japanese,
+            appleTranslateSupported: true
+        )
+
+        #expect(
+            message
+                == "Refinement is active and will use Alma CLI through the selected external processor."
+        )
+    }
 }

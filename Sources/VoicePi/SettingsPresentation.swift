@@ -127,18 +127,25 @@ enum SettingsPresentation {
         }
 
         let llmSummary: String
-        let effectiveTranslationProvider = model.effectiveTranslationProvider(
-            appleTranslateSupported: appleTranslateSupported
-        )
         switch model.postProcessingMode {
         case .disabled:
             llmSummary = "Text processing: Disabled"
         case .refinement:
             let target = model.targetLanguage.recognitionDisplayName
             let promptTitle = model.resolvedPromptPreset().title
-            let suffix = model.llmConfiguration.isConfigured ? "LLM configured" : "LLM not configured"
-            llmSummary = "Text processing: Refinement via LLM • Target \(target) • Prompt \(promptTitle) • \(suffix)"
+            switch model.refinementProvider {
+            case .llm:
+                let suffix = model.llmConfiguration.isConfigured ? "LLM configured" : "LLM not configured"
+                llmSummary = "Text processing: Refinement via LLM • Target \(target) • Prompt \(promptTitle) • \(suffix)"
+            case .externalProcessor:
+                let backendTitle = model.selectedExternalProcessorEntry()?.kind.title ?? "No processor configured"
+                let status = model.selectedExternalProcessorEntry()?.isEnabled == true ? "Enabled" : "Disabled"
+                llmSummary = "Text processing: Refinement via External Processor • Backend \(backendTitle) • Target \(target) • Prompt \(promptTitle) • \(status)"
+            }
         case .translation:
+            let effectiveTranslationProvider = model.effectiveTranslationProvider(
+                appleTranslateSupported: appleTranslateSupported
+            )
             llmSummary = "Text processing: Translate via \(effectiveTranslationProvider.title) • Target \(model.targetLanguage.recognitionDisplayName)"
         }
 

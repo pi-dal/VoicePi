@@ -267,6 +267,29 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func externalProcessorRefinementUsesResultReviewPanelWhileStandardModesDoNot() {
+        #expect(
+            AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .externalProcessor,
+                postProcessingMode: .refinement
+            )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .refinement
+            )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .externalProcessor,
+                postProcessingMode: .disabled
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func modeCycleRepeatStartsOnlyWhenShortcutIsConfiguredAndAppIsIdle() {
         #expect(
             AppController.shouldStartModeCycleRepeat(

@@ -759,6 +759,272 @@ enum TranslationProvider: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum RefinementProvider: String, CaseIterable, Identifiable, Codable {
+    case llm
+    case externalProcessor
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .llm:
+            return "LLM"
+        case .externalProcessor:
+            return "External Processor"
+        }
+    }
+}
+
+enum ExternalProcessorKind: String, CaseIterable, Identifiable, Codable {
+    case almaCLI
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .almaCLI:
+            return "Alma CLI"
+        }
+    }
+}
+
+struct ExternalProcessorArgument: Identifiable, Codable, Equatable {
+    var id: UUID
+    var value: String
+
+    init(
+        id: UUID = UUID(),
+        value: String
+    ) {
+        self.id = id
+        self.value = value
+    }
+}
+
+struct ExternalProcessorEntry: Identifiable, Codable, Equatable {
+    var id: UUID
+    var name: String
+    var kind: ExternalProcessorKind
+    var executablePath: String
+    var additionalArguments: [ExternalProcessorArgument]
+    var isEnabled: Bool
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        kind: ExternalProcessorKind,
+        executablePath: String,
+        additionalArguments: [ExternalProcessorArgument] = [],
+        isEnabled: Bool = true
+    ) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.executablePath = executablePath
+        self.additionalArguments = additionalArguments
+        self.isEnabled = isEnabled
+    }
+}
+
+enum ExternalProcessorValidationError: Error, Equatable, LocalizedError {
+    case incompatibleArgument(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .incompatibleArgument(let argument):
+            return "Incompatible external processor argument: \(argument)"
+        }
+    }
+}
+
+struct ExternalProcessorInvocation: Equatable {
+    var executablePath: String
+    var arguments: [String]
+    var timeout: Duration
+
+    init(
+        executablePath: String,
+        arguments: [String],
+        timeout: Duration
+    ) {
+        self.executablePath = executablePath
+        self.arguments = arguments
+        self.timeout = timeout
+    }
+}
+
+protocol ExternalProcessorProcess: AnyObject, Sendable {
+    var executableURL: URL? { get set }
+    var arguments: [String]? { get set }
+    var standardInput: Any? { get set }
+    var standardOutput: Any? { get set }
+    var standardError: Any? { get set }
+    var terminationStatus: Int32 { get }
+    var isRunning: Bool { get }
+
+    func run() throws
+    func waitUntilExit()
+    func terminate()
+}
+
+enum ExternalProcessorRunnerError: Error, Equatable, LocalizedError {
+    case launchFailed(String)
+    case timeout
+
+    var errorDescription: String? {
+        switch self {
+        case .launchFailed(let message):
+            return "External processor launch failed: \(message)"
+        case .timeout:
+            return "External processor timed out."
+        }
+    }
+}
+
+struct AlmaCLIInvocationBuilder {
+    private static let incompatibleArguments: Set<String> = [
+        "--help",
+        "--list-models",
+        "-h",
+        "-l",
+        "-v",
+        "--verbose"
+    ]
+
+    func build(
+        executablePath: String,
+        prompt: String,
+        additionalArguments: [String] = []
+    ) throws -> ExternalProcessorInvocation {
+        if let incompatibleArgument = additionalArguments.first(where: { Self.incompatibleArguments.contains($0) }) {
+            throw ExternalProcessorValidationError.incompatibleArgument(incompatibleArgument)
+        }
+
+        return ExternalProcessorInvocation(
+            executablePath: executablePath,
+            arguments: ["run", "--raw", "--no-stream"] + additionalArguments + [prompt],
+            timeout: .seconds(30)
+        )
+    }
+}
+
+final class ExternalProcessorRunner {
+    private let processFactory: @Sendable () -> any ExternalProcessorProcess
+    private let inputPipeFactory: @Sendable () -> Pipe
+    private let environment: [String: String]
+
+    init(
+        processFactory: @escaping @Sendable () -> any ExternalProcessorProcess = { Process() },
+        inputPipeFactory: @escaping @Sendable () -> Pipe = { Pipe() },
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+        self.processFactory = processFactory
+        self.inputPipeFactory = inputPipeFactory
+        self.environment = environment
+    }
+
+    func run(
+        invocation: ExternalProcessorInvocation,
+        stdin: String
+    ) async throws -> String {
+        let process = processFactory()
+        let inputPipe = inputPipeFactory()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+
+        guard let executableURL = resolvedExecutableURL(for: invocation.executablePath) else {
+            throw ExternalProcessorRunnerError.launchFailed("No such file or directory")
+        }
+
+        process.executableURL = executableURL
+        process.arguments = invocation.arguments
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+        } catch let runnerError as ExternalProcessorRunnerError {
+            throw runnerError
+        } catch {
+            throw ExternalProcessorRunnerError.launchFailed(error.localizedDescription)
+        }
+
+        let inputData = Data(stdin.utf8)
+        let stdinWriter = Task {
+            inputPipe.fileHandleForWriting.write(inputData)
+            try? inputPipe.fileHandleForWriting.close()
+        }
+
+        try await waitForProcess(process, timeout: invocation.timeout)
+        _ = await stdinWriter.result
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func resolvedExecutableURL(for executablePath: String) -> URL? {
+        let expandedPath = (executablePath as NSString).expandingTildeInPath
+        if expandedPath.contains("/") {
+            return URL(fileURLWithPath: expandedPath)
+        }
+
+        let searchPaths = environment["PATH"]?
+            .split(separator: ":")
+            .map(String.init) ?? []
+
+        for directory in searchPaths where !directory.isEmpty {
+            let candidatePath = (directory as NSString).appendingPathComponent(expandedPath)
+            if FileManager.default.isExecutableFile(atPath: candidatePath) {
+                return URL(fileURLWithPath: candidatePath)
+            }
+        }
+
+        return nil
+    }
+
+    private func waitForProcess(
+        _ process: any ExternalProcessorProcess,
+        timeout: Duration
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                process.waitUntilExit()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                process.terminate()
+                throw ExternalProcessorRunnerError.timeout
+            }
+
+            do {
+                _ = try await group.next()
+                group.cancelAll()
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+        }
+
+        if process.terminationStatus != 0 {
+            throw ExternalProcessorRunnerError.launchFailed("Process exited with status \(process.terminationStatus).")
+        }
+    }
+}
+
+protocol ExternalProcessorRefining: Sendable {
+    func refine(
+        text: String,
+        prompt: String,
+        processor: ExternalProcessorEntry
+    ) async throws -> String
+}
+
+protocol ExternalProcessorRunning: ExternalProcessorRefining {}
+
+extension Process: ExternalProcessorProcess, @unchecked Sendable {}
+
 struct RemoteASRConfiguration: Codable, Equatable {
     var baseURL: String
     var apiKey: String
@@ -1053,6 +1319,9 @@ final class AppModel: ObservableObject {
         static let promptWorkspace = "promptWorkspace"
         static let postProcessingMode = "postProcessingMode"
         static let translationProvider = "translationProvider"
+        static let refinementProvider = "refinementProvider"
+        static let externalProcessorEntries = "externalProcessorEntries"
+        static let selectedExternalProcessorEntryID = "selectedExternalProcessorEntryID"
         static let targetLanguage = "targetLanguage"
         static let activationShortcut = "activationShortcut"
         static let modeCycleShortcut = "modeCycleShortcut"
@@ -1088,6 +1357,24 @@ final class AppModel: ObservableObject {
     @Published var translationProvider: TranslationProvider {
         didSet {
             defaults.set(translationProvider.rawValue, forKey: Keys.translationProvider)
+        }
+    }
+
+    @Published var refinementProvider: RefinementProvider {
+        didSet {
+            defaults.set(refinementProvider.rawValue, forKey: Keys.refinementProvider)
+        }
+    }
+
+    @Published var externalProcessorEntries: [ExternalProcessorEntry] {
+        didSet {
+            persistExternalProcessorEntries()
+        }
+    }
+
+    @Published var selectedExternalProcessorEntryID: UUID? {
+        didSet {
+            persistSelectedExternalProcessorEntryID()
         }
     }
 
@@ -1213,6 +1500,33 @@ final class AppModel: ObservableObject {
             self.translationProvider = provider
         } else {
             self.translationProvider = .appleTranslate
+        }
+
+        if
+            let storedRefinementProvider = defaults.string(forKey: Keys.refinementProvider),
+            let provider = RefinementProvider(rawValue: storedRefinementProvider)
+        {
+            self.refinementProvider = provider
+        } else {
+            self.refinementProvider = .llm
+        }
+
+        if
+            let data = defaults.data(forKey: Keys.externalProcessorEntries),
+            let decoded = try? decoder.decode([ExternalProcessorEntry].self, from: data)
+        {
+            self.externalProcessorEntries = decoded
+        } else {
+            self.externalProcessorEntries = []
+        }
+
+        if
+            let storedSelectedExternalProcessorEntryID = defaults.string(forKey: Keys.selectedExternalProcessorEntryID),
+            let uuid = UUID(uuidString: storedSelectedExternalProcessorEntryID)
+        {
+            self.selectedExternalProcessorEntryID = uuid
+        } else {
+            self.selectedExternalProcessorEntryID = nil
         }
 
         if
@@ -1480,6 +1794,29 @@ final class AppModel: ObservableObject {
 
     func setTranslationProvider(_ provider: TranslationProvider) {
         translationProvider = provider
+    }
+
+    func setRefinementProvider(_ provider: RefinementProvider) {
+        refinementProvider = provider
+    }
+
+    func setExternalProcessorEntries(_ entries: [ExternalProcessorEntry]) {
+        externalProcessorEntries = entries
+    }
+
+    func setSelectedExternalProcessorEntryID(_ id: UUID?) {
+        selectedExternalProcessorEntryID = id
+    }
+
+    func selectedExternalProcessorEntry() -> ExternalProcessorEntry? {
+        if let selectedExternalProcessorEntryID,
+           let selected = externalProcessorEntries.first(where: {
+               $0.id == selectedExternalProcessorEntryID && $0.isEnabled
+           }) {
+            return selected
+        }
+
+        return externalProcessorEntries.first(where: \.isEnabled)
     }
 
     func setTargetLanguage(_ language: SupportedLanguage) {
@@ -1765,6 +2102,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func persistExternalProcessorEntries() {
+        if let data = try? encoder.encode(externalProcessorEntries) {
+            defaults.set(data, forKey: Keys.externalProcessorEntries)
+        }
+    }
+
+    private func persistSelectedExternalProcessorEntryID() {
+        if let selectedExternalProcessorEntryID {
+            defaults.set(selectedExternalProcessorEntryID.uuidString, forKey: Keys.selectedExternalProcessorEntryID)
+        } else {
+            defaults.removeObject(forKey: Keys.selectedExternalProcessorEntryID)
+        }
+    }
+
     private func persistActivationShortcut() {
         if let data = try? encoder.encode(activationShortcut) {
             defaults.set(data, forKey: Keys.activationShortcut)
@@ -1898,6 +2249,9 @@ final class AppModel: ObservableObject {
             Keys.promptWorkspace,
             Keys.postProcessingMode,
             Keys.translationProvider,
+            Keys.refinementProvider,
+            Keys.externalProcessorEntries,
+            Keys.selectedExternalProcessorEntryID,
             Keys.targetLanguage,
             Keys.modeCycleShortcut,
             Keys.asrBackend,
@@ -1906,5 +2260,127 @@ final class AppModel: ObservableObject {
         ]
 
         return legacyAndCurrentKeys.contains { defaults.object(forKey: $0) != nil }
+    }
+}
+
+extension AppWorkflowSupport {
+    static func postProcessIfNeeded(
+        _ text: String,
+        mode: PostProcessingMode,
+        refinementProvider: RefinementProvider,
+        externalProcessor: ExternalProcessorEntry?,
+        externalProcessorRefiner: ExternalProcessorRefining?,
+        translationProvider: TranslationProvider,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage,
+        configuration: LLMConfiguration,
+        refinementPromptTitle: String? = nil,
+        resolvedRefinementPrompt: String?,
+        dictionaryEntries: [DictionaryEntry] = [],
+        refiner: TranscriptRefining,
+        translator: TranscriptTranslating,
+        onPresentation: (AppWorkflowPresentation) -> Void,
+        onError: (String) -> Void
+    ) async -> String {
+        switch mode {
+        case .disabled:
+            return text
+        case .refinement:
+            if refinementProvider == .externalProcessor {
+                guard
+                    let externalProcessor,
+                    externalProcessor.isEnabled,
+                    let externalProcessorRefiner
+                else {
+                    return text
+                }
+
+                let refinementStatusText = "Refining with \(externalProcessor.name)"
+
+                await MainActor.run {
+                    onPresentation(
+                        .refining(
+                            overlayTranscript: refinementStatusText,
+                            statusText: refinementStatusText
+                        )
+                    )
+                }
+
+                do {
+                    let refined = try await externalProcessorRefiner.refine(
+                        text: text,
+                        prompt: Self.externalProcessorRefinementPrompt(
+                            resolvedRefinementPrompt: resolvedRefinementPrompt,
+                            sourceLanguage: sourceLanguage,
+                            targetLanguage: targetLanguage
+                        ),
+                        processor: externalProcessor
+                    )
+                    let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? text : trimmed
+                } catch {
+                    await MainActor.run {
+                        onError("External processor refinement failed: \(error.localizedDescription)")
+                    }
+                    return text
+                }
+            }
+
+            return await postProcessIfNeeded(
+                text,
+                mode: mode,
+                translationProvider: translationProvider,
+                sourceLanguage: sourceLanguage,
+                targetLanguage: targetLanguage,
+                configuration: configuration,
+                refinementPromptTitle: refinementPromptTitle,
+                resolvedRefinementPrompt: resolvedRefinementPrompt,
+                dictionaryEntries: dictionaryEntries,
+                refiner: refiner,
+                translator: translator,
+                onPresentation: onPresentation,
+                onError: onError
+            )
+        case .translation:
+            return await postProcessIfNeeded(
+                text,
+                mode: mode,
+                translationProvider: translationProvider,
+                sourceLanguage: sourceLanguage,
+                targetLanguage: targetLanguage,
+                configuration: configuration,
+                refinementPromptTitle: refinementPromptTitle,
+                resolvedRefinementPrompt: resolvedRefinementPrompt,
+                dictionaryEntries: dictionaryEntries,
+                refiner: refiner,
+                translator: translator,
+                onPresentation: onPresentation,
+                onError: onError
+            )
+        }
+    }
+
+    private static func externalProcessorRefinementPrompt(
+        resolvedRefinementPrompt: String?,
+        sourceLanguage: SupportedLanguage,
+        targetLanguage: SupportedLanguage
+    ) -> String {
+        let fallbackPrompt = """
+        Rewrite the transcript into polished text.
+        Preserve intent, remove filler, and output only the final text.
+        """
+
+        let trimmedPrompt = resolvedRefinementPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let basePrompt = trimmedPrompt.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackPrompt
+
+        guard targetLanguage != sourceLanguage else {
+            return basePrompt
+        }
+
+        return """
+        \(basePrompt)
+
+        Return the final result in \(targetLanguage.recognitionDisplayName).
+        """
     }
 }

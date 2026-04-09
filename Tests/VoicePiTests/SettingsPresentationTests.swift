@@ -6,6 +6,36 @@ import Testing
 struct SettingsPresentationTests {
     @Test
     @MainActor
+    func homePresentationReflectsExternalProcessorBackend() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationReflectsExternalProcessorBackend.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setPostProcessingMode(.refinement)
+        model.refinementProvider = .externalProcessor
+        model.selectedLanguage = .english
+        model.setTargetLanguage(.english)
+        model.promptWorkspace = .init(activeSelection: .preset("meeting_notes"))
+
+        let processorEntry = ExternalProcessorEntry(
+            id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/Users/pi-dal/.local/bin/alma",
+            additionalArguments: [],
+            isEnabled: true
+        )
+        model.externalProcessorEntries = [processorEntry]
+        model.selectedExternalProcessorEntryID = processorEntry.id
+
+        let presentation = SettingsPresentation.homeSectionPresentation(model: model)
+
+        #expect(
+            presentation.llmSummary
+                == "Text processing: Refinement via External Processor • Backend Alma CLI • Target English • Prompt Meeting Notes • Enabled"
+        )
+    }
+
+    @Test
+    @MainActor
     func homePresentationReflectsModelStateWhenAppleTranslateIsAvailable() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationReflectsModelStateWhenAppleTranslateIsAvailable.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)

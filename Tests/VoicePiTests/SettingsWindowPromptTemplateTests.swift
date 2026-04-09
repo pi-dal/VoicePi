@@ -46,6 +46,19 @@ struct SettingsWindowPromptTemplateTests {
 
     @Test
     @MainActor
+    func externalProcessorManagerCopyMatchesDesign() {
+        #expect(SettingsWindowController.refinementProviderLabel == "Refinement Provider")
+        #expect(SettingsWindowController.externalProcessorManagerSheetTitle == "External Processor Manager")
+        #expect(SettingsWindowController.externalProcessorManagerAddProcessorButtonTitle == "+")
+        #expect(SettingsWindowController.externalProcessorManagerAddArgumentButtonTitle == "+")
+        #expect(
+            SettingsWindowController.externalProcessorManagerEmptyStateText
+                == "No external processors configured yet. Click + to add one."
+        )
+    }
+
+    @Test
+    @MainActor
     func strictModeCopyMatchesDesign() {
         #expect(SettingsWindowController.strictModeToggleLabel == "Strict Mode")
         #expect(

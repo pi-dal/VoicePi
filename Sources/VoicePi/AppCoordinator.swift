@@ -104,8 +104,10 @@ final class AppController: NSObject {
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
+    private let resultReviewPanelController = ResultReviewPanelController()
     private let dictionarySuggestionToastController = DictionarySuggestionToastController()
     private let llmRefiner = LLMRefiner()
+    private let externalProcessorRefiner = AppControllerExternalProcessorRefiner()
     private let appleTranslateService = AppleTranslateService()
     private let remoteASRClient = RemoteASRClient()
     private let realtimeASRSessionCoordinator = RealtimeASRSessionCoordinator()
@@ -127,6 +129,7 @@ final class AppController: NSObject {
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
     private var inputMonitoringAuthorizationFollowUpTask: Task<Void, Never>?
     private var postInjectionLearningTask: Task<Void, Never>?
+    private var resultReviewRetryTask: Task<Void, Never>?
     private var modeCycleRepeatTask: Task<Void, Never>?
     private var startupHotkeyBootstrapTask: Task<Void, Never>?
     private var modeCycleSessionActive = false
@@ -134,6 +137,7 @@ final class AppController: NSObject {
     private var activeDirectUpdateInstaller: AppUpdater?
     private var installationSource: AppInstallationSource = .unknown
     private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
+    private var pendingResultReviewSourceText: String?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -257,6 +261,13 @@ final class AppController: NSObject {
         targetInspection: EditableTextTargetInspection
     ) -> TranscriptDelivery.Route {
         TranscriptDelivery.route(for: text, targetInspection: targetInspection)
+    }
+
+    static func shouldPresentResultReviewPanel(
+        refinementProvider: RefinementProvider,
+        postProcessingMode: PostProcessingMode
+    ) -> Bool {
+        refinementProvider == .externalProcessor && postProcessingMode == .refinement
     }
 
     static func shouldPromptAccessibilityOnLaunch(
@@ -550,9 +561,26 @@ final class AppController: NSObject {
     func start() {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.applyInterfaceTheme(model.interfaceTheme)
+        resultReviewPanelController.applyInterfaceTheme(model.interfaceTheme)
         dictionarySuggestionToastController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.onCopySuccess = { [weak self] in
             self?.statusBarController?.setTransientStatus("Copied")
+        }
+        resultReviewPanelController.onInsertRequested = { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.insertReviewedText(text)
+            }
+        }
+        resultReviewPanelController.onCopyRequested = { [weak self] _ in
+            self?.statusBarController?.setTransientStatus("Copied")
+        }
+        resultReviewPanelController.onRetryRequested = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.retryReviewedText()
+            }
+        }
+        resultReviewPanelController.onDismissRequested = { [weak self] in
+            self?.clearResultReviewState()
         }
         dictionarySuggestionToastController.onApprove = { [weak self] suggestion in
             guard let self else { return }
@@ -572,6 +600,7 @@ final class AppController: NSObject {
             .sink { [weak self] theme in
                 self?.floatingPanelController.applyInterfaceTheme(theme)
                 self?.inputFallbackPanelController.applyInterfaceTheme(theme)
+                self?.resultReviewPanelController.applyInterfaceTheme(theme)
                 self?.dictionarySuggestionToastController.applyInterfaceTheme(theme)
             }
             .store(in: &cancellables)
@@ -623,9 +652,12 @@ final class AppController: NSObject {
         inputMonitoringAuthorizationFollowUpTask?.cancel()
         pendingErrorHideTask?.cancel()
         postInjectionLearningTask?.cancel()
+        resultReviewRetryTask?.cancel()
         postInjectionLearningTask = nil
+        resultReviewRetryTask = nil
         postInjectionLearningCoordinator.cancelTracking()
         dictionarySuggestionToastController.hide()
+        resultReviewPanelController.hide()
         modeCycleRepeatTask?.cancel()
         startupHotkeyBootstrapTask?.cancel()
         modeCycleRepeatTask = nil
@@ -785,6 +817,7 @@ final class AppController: NSObject {
         isStartingRecording = true
         latestTranscript = ""
         cancelPostInjectionLearning()
+        clearResultReviewState()
         statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
 
@@ -877,29 +910,39 @@ final class AppController: NSObject {
             let finalText = await self.refineIfNeeded(captured)
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
-            let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
-            switch Self.transcriptDeliveryRoute(
-                for: finalText,
-                targetInspection: targetSnapshot.inspection
-            ) {
-            case .emptyResult:
-                self.statusBarController?.setTransientStatus(nil)
-                self.floatingPanelController.hide()
-            case .injectableTarget:
-                do {
-                    let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
-                    self.statusBarController?.setTransientStatus("Injected")
-                    self.beginPostInjectionLearning(
-                        targetSnapshot: targetSnapshot,
-                        injectionRecord: injectionRecord
-                    )
-                } catch {
-                    self.presentTransientError(error.localizedDescription)
-                }
-                self.floatingPanelController.hide()
-            case .fallbackPanel:
-                if let payload = InputFallbackPanelPayload(text: finalText) {
-                    self.presentInputFallbackPanel(payload)
+            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
+                refinementProvider: self.model.refinementProvider,
+                postProcessingMode: self.model.postProcessingMode
+            )
+            let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+
+            if shouldPresentResultReviewPanel && didSucceed {
+                self.presentResultReviewPanel(text: finalText, sourceText: captured)
+            } else {
+                let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
+                switch Self.transcriptDeliveryRoute(
+                    for: finalText,
+                    targetInspection: targetSnapshot.inspection
+                ) {
+                case .emptyResult:
+                    self.statusBarController?.setTransientStatus(nil)
+                    self.floatingPanelController.hide()
+                case .injectableTarget:
+                    do {
+                        let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
+                        self.statusBarController?.setTransientStatus("Injected")
+                        self.beginPostInjectionLearning(
+                            targetSnapshot: targetSnapshot,
+                            injectionRecord: injectionRecord
+                        )
+                    } catch {
+                        self.presentTransientError(error.localizedDescription)
+                    }
+                    self.floatingPanelController.hide()
+                case .fallbackPanel:
+                    if let payload = InputFallbackPanelPayload(text: finalText) {
+                        self.presentInputFallbackPanel(payload)
+                    }
                 }
             }
 
@@ -914,6 +957,7 @@ final class AppController: NSObject {
         processingTask?.cancel()
         processingTask = nil
         cancelPostInjectionLearning()
+        clearResultReviewState()
         isProcessingRelease = false
         latestTranscript = ""
         statusBarController?.setRecording(false)
@@ -926,6 +970,88 @@ final class AppController: NSObject {
         floatingPanelController.hide(immediately: true) { [weak self] in
             guard let self else { return }
             self.inputFallbackPanelController.show(payload: payload)
+        }
+    }
+
+    private func presentResultReviewPanel(
+        text: String,
+        sourceText: String
+    ) {
+        guard let payload = ResultReviewPanelPayload(text: text) else {
+            return
+        }
+
+        resultReviewRetryTask?.cancel()
+        resultReviewRetryTask = nil
+        pendingResultReviewSourceText = sourceText
+        floatingPanelController.hide(immediately: true)
+        inputFallbackPanelController.hide()
+        resultReviewPanelController.show(payload: payload)
+    }
+
+    private func clearResultReviewState() {
+        resultReviewRetryTask?.cancel()
+        resultReviewRetryTask = nil
+        pendingResultReviewSourceText = nil
+        resultReviewPanelController.hide()
+    }
+
+    private func retryReviewedText() {
+        guard let sourceText = pendingResultReviewSourceText else {
+            return
+        }
+
+        resultReviewRetryTask?.cancel()
+        resultReviewRetryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.resultReviewRetryTask = nil
+            }
+
+            let refinedText = await self.refineIfNeeded(sourceText)
+            guard !Task.isCancelled, self.pendingResultReviewSourceText == sourceText else { return }
+
+            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
+                refinementProvider: self.model.refinementProvider,
+                postProcessingMode: self.model.postProcessingMode
+            )
+            let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+
+            if shouldPresentResultReviewPanel && didSucceed {
+                self.presentResultReviewPanel(text: refinedText, sourceText: sourceText)
+            }
+        }
+    }
+
+    private func insertReviewedText(_ text: String) {
+        let targetSnapshot = editableTextTargetInspector.currentSnapshot()
+        switch Self.transcriptDeliveryRoute(
+            for: text,
+            targetInspection: targetSnapshot.inspection
+        ) {
+        case .emptyResult:
+            clearResultReviewState()
+            statusBarController?.setTransientStatus(nil)
+        case .injectableTarget:
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let injectionRecord = try await self.textInjector.injectAndRecord(text: text)
+                    self.clearResultReviewState()
+                    self.statusBarController?.setTransientStatus("Injected")
+                    self.beginPostInjectionLearning(
+                        targetSnapshot: targetSnapshot,
+                        injectionRecord: injectionRecord
+                    )
+                } catch {
+                    self.presentTransientError(error.localizedDescription)
+                }
+            }
+        case .fallbackPanel:
+            clearResultReviewState()
+            if let payload = InputFallbackPanelPayload(text: text) {
+                presentInputFallbackPanel(payload)
+            }
         }
     }
 
@@ -1088,10 +1214,16 @@ final class AppController: NSObject {
     private func refineIfNeeded(_ text: String) async -> String {
         let destination = promptDestinationInspector.currentDestinationContext()
         let resolvedPrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
+        if model.refinementProvider == .externalProcessor {
+            await externalProcessorRefiner.resetLastInvocation()
+        }
 
         return await AppWorkflowSupport.postProcessIfNeeded(
             text,
             mode: model.postProcessingMode,
+            refinementProvider: model.refinementProvider,
+            externalProcessor: model.selectedExternalProcessorEntry(),
+            externalProcessorRefiner: externalProcessorRefiner,
             translationProvider: model.effectiveTranslationProvider(
                 appleTranslateSupported: AppleTranslateService.isSupported
             ),
@@ -2025,6 +2157,49 @@ extension AppController: StatusBarControllerDelegate {
         if alert.runModal() == .alertFirstButtonReturn {
             beforeOpen?()
             openSystemSettingsPane(prompt.settingsURL)
+        }
+    }
+}
+
+private actor AppControllerExternalProcessorRefiner: ExternalProcessorRefining {
+    private var lastInvocationSucceeded = false
+
+    var didSucceedOnLastInvocation: Bool {
+        return lastInvocationSucceeded
+    }
+
+    func resetLastInvocation() {
+        lastInvocationSucceeded = false
+    }
+
+    func refine(
+        text: String,
+        prompt: String,
+        processor: ExternalProcessorEntry
+    ) async throws -> String {
+        let additionalArguments = processor.additionalArguments
+            .map(\.value)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        switch processor.kind {
+        case .almaCLI:
+            do {
+                let invocation = try AlmaCLIInvocationBuilder().build(
+                    executablePath: processor.executablePath,
+                    prompt: prompt,
+                    additionalArguments: additionalArguments
+                )
+                let refinedText = try await ExternalProcessorRunner().run(
+                    invocation: invocation,
+                    stdin: text
+                )
+                lastInvocationSucceeded = true
+                return refinedText
+            } catch {
+                lastInvocationSucceeded = false
+                throw error
+            }
         }
     }
 }

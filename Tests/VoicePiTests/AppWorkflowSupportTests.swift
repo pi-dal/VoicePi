@@ -253,6 +253,109 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
+    func externalProcessorPathUsesProvidedRunnerAndComposesPromptWithTargetLanguage() async throws {
+        let refiner = RefinerStub(result: .success("llm"))
+        let translator = TranslatorStub(result: .success("apple"))
+        let externalProcessor = ExternalProcessorEntry(
+            id: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/opt/homebrew/bin/alma",
+            additionalArguments: [
+                ExternalProcessorArgument(
+                    id: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!,
+                    value: "--temperature"
+                ),
+                ExternalProcessorArgument(
+                    id: UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!,
+                    value: "0.2"
+                )
+            ],
+            isEnabled: true
+        )
+        let externalProcessorRefiner = ExternalProcessorRefinerStub(result: .success("alma refined"))
+        var presentations: [AppWorkflowPresentation] = []
+        var errors: [String] = []
+
+        let text = try await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .refinement,
+            refinementProvider: .externalProcessor,
+            externalProcessor: externalProcessor,
+            externalProcessorRefiner: externalProcessorRefiner,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .japanese,
+            configuration: .init(),
+            resolvedRefinementPrompt: "Refine this into a concise message.",
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { presentations.append($0) },
+            onError: { errors.append($0) }
+        )
+
+        #expect(text == "alma refined")
+        #expect(refiner.calls == 0)
+        #expect(translator.calls == 0)
+        #expect(externalProcessorRefiner.calls == 1)
+        #expect(externalProcessorRefiner.lastText == "original")
+        #expect(externalProcessorRefiner.lastProcessor == externalProcessor)
+        #expect(
+            externalProcessorRefiner.lastPrompt == """
+            Refine this into a concise message.
+
+            Return the final result in Japanese.
+            """
+        )
+        #expect(errors.isEmpty)
+        #expect(
+            presentations == [.refining(
+                overlayTranscript: "Refining with Alma CLI",
+                statusText: "Refining with Alma CLI"
+            )]
+        )
+    }
+
+    @Test
+    func externalProcessorFallsBackToBuiltInPromptWhenResolvedPromptIsEmpty() async throws {
+        let refiner = RefinerStub(result: .success("llm"))
+        let translator = TranslatorStub(result: .success("apple"))
+        let externalProcessor = ExternalProcessorEntry(
+            id: UUID(uuidString: "dddddddd-dddd-dddd-dddd-dddddddddddd")!,
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/opt/homebrew/bin/alma",
+            isEnabled: true
+        )
+        let externalProcessorRefiner = ExternalProcessorRefinerStub(result: .success("alma refined"))
+
+        let text = try await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .refinement,
+            refinementProvider: .externalProcessor,
+            externalProcessor: externalProcessor,
+            externalProcessorRefiner: externalProcessorRefiner,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(),
+            resolvedRefinementPrompt: " \n ",
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(text == "alma refined")
+        #expect(
+            externalProcessorRefiner.lastPrompt == """
+            Rewrite the transcript into polished text.
+            Preserve intent, remove filler, and output only the final text.
+            """
+        )
+    }
+
+    @Test
     func refinementReturnsOriginalTextWhenRefinerFails() async {
         let refiner = RefinerStub(result: .failure(AppWorkflowTestError.sample))
         let translator = TranslatorStub(result: .success("translated"))
@@ -384,6 +487,30 @@ private final class TranslatorStub: TranscriptTranslating, @unchecked Sendable {
         calls += 1
         lastSourceLanguage = sourceLanguage
         lastTargetLanguage = targetLanguage
+        return try result.get()
+    }
+}
+
+private final class ExternalProcessorRefinerStub: ExternalProcessorRefining, @unchecked Sendable {
+    var result: Result<String, Error>
+    private(set) var calls = 0
+    private(set) var lastText: String?
+    private(set) var lastProcessor: ExternalProcessorEntry?
+    private(set) var lastPrompt: String?
+
+    init(result: Result<String, Error>) {
+        self.result = result
+    }
+
+    func refine(
+        text: String,
+        prompt: String,
+        processor: ExternalProcessorEntry
+    ) async throws -> String {
+        calls += 1
+        lastText = text
+        lastProcessor = processor
+        lastPrompt = prompt
         return try result.get()
     }
 }
