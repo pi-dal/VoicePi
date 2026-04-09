@@ -4319,18 +4319,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
             ])
 
+            contentStack.addArrangedSubview(controlsCard)
+            contentStack.addArrangedSubview(scrollView)
             controlsCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             scrollView.heightAnchor.constraint(equalToConstant: 360).isActive = true
-
-            contentStack.addArrangedSubview(controlsCard)
-            contentStack.addArrangedSubview(scrollView)
             externalProcessorManagerSelectedEntryPopup = selectedPopup
             externalProcessorManagerFeedbackLabel = feedbackLabel
         }
 
-        footerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         contentStack.addArrangedSubview(footerRow)
+        footerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
         let contentView = NSView()
         contentView.addSubview(contentStack)
