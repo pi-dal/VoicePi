@@ -1054,8 +1054,8 @@ enum SettingsLayoutMetrics {
     static let formRowVerticalInset: CGFloat = 9
     static let twoColumnSpacing: CGFloat = 12
     static let actionButtonHeight: CGFloat = 32
-    static let navigationButtonHeight: CGFloat = 34
-    static let navigationButtonMinWidth: CGFloat = 88
+    static let navigationButtonHeight: CGFloat = 52
+    static let navigationButtonMinWidth: CGFloat = 72
     static let contentMinWidth: CGFloat = 660
     static let contentMaxWidth: CGFloat = 792
     static let contentMinHeight: CGFloat = 360
@@ -1379,7 +1379,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         self.delegate = delegate
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 872, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -1387,7 +1387,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         window.title = "VoicePi Settings"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 780, height: 520)
+        window.minSize = NSSize(width: 720, height: 520)
         window.titlebarAppearsTransparent = true
         if #available(macOS 11.0, *) {
             window.toolbarStyle = .preference
@@ -1466,28 +1466,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = pageBackgroundColor.cgColor
 
-        let titleLabel = NSTextField(labelWithString: "VoicePi Settings")
-        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
-        titleLabel.alignment = .left
-
-        let subtitleLabel = NSTextField(labelWithString: "Quick controls for permissions, dictation, dictionary, and processor settings.")
-        subtitleLabel.font = .systemFont(ofSize: 12.5)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.alignment = .left
-
-        let titleStack = NSStackView(views: [titleLabel, subtitleLabel])
-        titleStack.orientation = .vertical
-        titleStack.spacing = 3
-        titleStack.alignment = .leading
-
         let navigation = makeSectionNavigation()
         navigation.translatesAutoresizingMaskIntoConstraints = false
-
-        let headerRow = NSStackView(views: [titleStack, NSView(), navigation])
-        headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
-        headerRow.spacing = 14
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
 
         let separator = NSBox()
         separator.boxType = .separator
@@ -1495,25 +1475,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(headerRow)
+        contentView.addSubview(navigation)
         contentView.addSubview(separator)
         contentView.addSubview(contentContainer)
 
         NSLayoutConstraint.activate([
-            headerRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            headerRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            headerRow.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            navigation.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            navigation.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 18),
+            navigation.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -18),
+            navigation.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
 
             separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 14),
+            separator.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 12),
 
             contentContainer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             contentContainer.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 24),
             contentContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
             contentContainer.widthAnchor.constraint(lessThanOrEqualToConstant: SettingsLayoutMetrics.contentMaxWidth),
             contentContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.contentMinWidth),
-            contentContainer.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 18),
+            contentContainer.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 16),
             contentContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
             contentContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.contentMinHeight)
         ])
@@ -4237,16 +4218,40 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         subtitleLabel.maximumNumberOfLines = 0
         subtitleLabel.alignment = .left
 
-        let selectedPopup = ThemedPopUpButton()
-        selectedPopup.target = self
-        selectedPopup.action = #selector(externalProcessorManagerSelectedEntryChanged(_:))
-        selectedPopup.translatesAutoresizingMaskIntoConstraints = false
-        selectedPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
-        selectedPopup.removeAllItems()
+        let addProcessorButton = StyledSettingsButton(
+            title: Self.externalProcessorManagerAddProcessorButtonTitle,
+            role: .secondary,
+            target: self,
+            action: #selector(addExternalProcessorEntry)
+        )
+        addProcessorButton.translatesAutoresizingMaskIntoConstraints = false
+        addProcessorButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        let doneButton = makePrimaryActionButton(title: "Done", action: #selector(closeExternalProcessorManagerSheet))
+
+        let headerStack = NSStackView(views: [titleLabel, subtitleLabel])
+        headerStack.orientation = .vertical
+        headerStack.alignment = .leading
+        headerStack.spacing = 6
+
+        let controlsContainer: NSView
         if externalProcessorManagerState.entries.isEmpty {
-            selectedPopup.addItem(withTitle: "No processors configured")
-            selectedPopup.isEnabled = false
+            externalProcessorManagerSelectedEntryPopup = nil
+            externalProcessorManagerFeedbackLabel = nil
+
+            let actionRow = NSStackView(views: [addProcessorButton, NSView(), doneButton])
+            actionRow.orientation = .horizontal
+            actionRow.alignment = .centerY
+            actionRow.spacing = 8
+            controlsContainer = actionRow
         } else {
+            let selectedPopup = ThemedPopUpButton()
+            selectedPopup.target = self
+            selectedPopup.action = #selector(externalProcessorManagerSelectedEntryChanged(_:))
+            selectedPopup.translatesAutoresizingMaskIntoConstraints = false
+            selectedPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+            selectedPopup.removeAllItems()
+
             for entry in externalProcessorManagerState.entries {
                 selectedPopup.addItem(withTitle: externalProcessorManagerDisplayTitle(for: entry))
                 selectedPopup.lastItem?.representedObject = entry.id.uuidString
@@ -4264,35 +4269,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 selectedPopup.selectItem(at: 0)
                 externalProcessorManagerState.selectedEntryID = selectedEntryIDFromPopup(selectedPopup)
             }
+
+            let feedbackLabel = NSTextField(labelWithString: externalProcessorManagerFeedbackText())
+            feedbackLabel.font = .systemFont(ofSize: 12)
+            feedbackLabel.textColor = .secondaryLabelColor
+            feedbackLabel.lineBreakMode = .byWordWrapping
+            feedbackLabel.maximumNumberOfLines = 0
+            feedbackLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+
+            let selectionRow = makePreferenceRow(title: "Active Processor", control: selectedPopup)
+            let actionRow = NSStackView(views: [addProcessorButton, NSView(), doneButton])
+            actionRow.orientation = .horizontal
+            actionRow.alignment = .centerY
+            actionRow.spacing = 8
+
+            let controlsStack = NSStackView(views: [selectionRow, feedbackLabel, actionRow])
+            controlsStack.orientation = .vertical
+            controlsStack.alignment = .leading
+            controlsStack.spacing = 10
+
+            let controlsCard = makeCardView()
+            pinCardContent(controlsStack, into: controlsCard)
+
+            externalProcessorManagerSelectedEntryPopup = selectedPopup
+            externalProcessorManagerFeedbackLabel = feedbackLabel
+            controlsContainer = controlsCard
         }
-
-        let addProcessorButton = StyledSettingsButton(
-            title: Self.externalProcessorManagerAddProcessorButtonTitle,
-            role: .secondary,
-            target: self,
-            action: #selector(addExternalProcessorEntry)
-        )
-        addProcessorButton.translatesAutoresizingMaskIntoConstraints = false
-        addProcessorButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
-
-        let headerSelectionRow = makePreferenceRow(title: "Active Processor", control: selectedPopup)
-        let headerActionRow = makeButtonGroup([addProcessorButton, makePrimaryActionButton(title: "Done", action: #selector(closeExternalProcessorManagerSheet))])
-
-        let feedbackLabel = NSTextField(labelWithString: externalProcessorManagerFeedbackText())
-        feedbackLabel.font = .systemFont(ofSize: 12)
-        feedbackLabel.textColor = .secondaryLabelColor
-        feedbackLabel.lineBreakMode = .byWordWrapping
-        feedbackLabel.maximumNumberOfLines = 0
-        externalProcessorManagerFeedbackLabel = feedbackLabel
-        feedbackLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
-
-        let headerStack = NSStackView(views: [titleLabel, subtitleLabel, headerSelectionRow, headerActionRow, feedbackLabel])
-        headerStack.orientation = .vertical
-        headerStack.alignment = .leading
-        headerStack.spacing = 8
-
-        let headerCard = makeCardView()
-        pinCardContent(headerStack, into: headerCard)
 
         let entriesStack = NSStackView()
         entriesStack.orientation = .vertical
@@ -4340,12 +4342,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         footerRow.spacing = 8
         footerRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let contentStack = NSStackView(views: [headerCard, scrollView, footerRow])
+        let headerContainer = NSStackView(views: [headerStack, controlsContainer])
+        headerContainer.orientation = .vertical
+        headerContainer.alignment = .leading
+        headerContainer.spacing = 12
+        headerContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentStack = NSStackView(views: [headerContainer, scrollView, footerRow])
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = SettingsLayoutMetrics.pageSpacing
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        headerCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        headerContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        controlsContainer.widthAnchor.constraint(equalTo: headerContainer.widthAnchor).isActive = true
         scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         footerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         scrollView.heightAnchor.constraint(equalToConstant: 470).isActive = true
@@ -4360,8 +4369,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             contentStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: SettingsLayoutMetrics.promptEditorOuterInset),
             contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -SettingsLayoutMetrics.promptEditorOuterInset)
         ])
-
-        externalProcessorManagerSelectedEntryPopup = selectedPopup
         return contentView
     }
 
@@ -4948,7 +4955,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func makeSectionNavigation() -> NSStackView {
         let stack = NSStackView()
         stack.orientation = .horizontal
-        stack.spacing = 10
+        stack.spacing = 6
         stack.alignment = .centerY
 
         sectionButtons.removeAll()
@@ -4961,7 +4968,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 systemSymbolName: iconName(for: section),
                 accessibilityDescription: section.title
             )?.withSymbolConfiguration(.init(pointSize: 12.5, weight: .medium))
-            button.imagePosition = .imageLeading
+            button.imagePosition = .imageAbove
             button.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 button.heightAnchor.constraint(equalToConstant: SettingsLayoutMetrics.navigationButtonHeight)
@@ -6028,8 +6035,8 @@ final class StyledSettingsButton: NSButton {
     }
 
     private let role: Role
-    private let navigationHorizontalPadding: CGFloat = 16
-    private let navigationIconSpacing: CGFloat = 8
+    private let navigationHorizontalPadding: CGFloat = 12
+    private let navigationVerticalPadding: CGFloat = 8
     private var hoverTrackingArea: NSTrackingArea?
     private var isHovered = false
 
@@ -6044,14 +6051,14 @@ final class StyledSettingsButton: NSButton {
         controlSize = .regular
         wantsLayer = true
         focusRingType = .none
-        font = .systemFont(ofSize: role == .navigation ? 12.5 : 13.5, weight: role == .navigation ? .medium : .semibold)
-        imagePosition = .imageLeading
+        font = .systemFont(ofSize: role == .navigation ? 11.5 : 13.5, weight: role == .navigation ? .medium : .semibold)
+        imagePosition = role == .navigation ? .imageAbove : .imageLeading
         layer?.masksToBounds = false
         layer?.cornerRadius = role == .navigation ? 11 : 10
         setButtonType(role == .navigation ? .toggle : .momentaryPushIn)
         if role == .navigation {
             imageScaling = .scaleProportionallyDown
-            imageHugsTitle = true
+            imageHugsTitle = false
         }
         applyAppearance(isSelected: false)
     }
@@ -6215,11 +6222,10 @@ final class StyledSettingsButton: NSButton {
         case .navigation:
             let titleWidth = ceil((attributedTitle.length > 0 ? attributedTitle : NSAttributedString(string: title)).size().width)
             let imageWidth = image.map { ceil($0.size.width) } ?? 0
-            let contentWidth = titleWidth + (imageWidth > 0 ? imageWidth + navigationIconSpacing : 0)
-            let paddedWidth = contentWidth + navigationHorizontalPadding * 2
+            let paddedWidth = max(titleWidth, imageWidth) + navigationHorizontalPadding * 2
             return NSSize(
                 width: max(SettingsLayoutMetrics.navigationButtonMinWidth, paddedWidth),
-                height: SettingsLayoutMetrics.navigationButtonHeight
+                height: max(SettingsLayoutMetrics.navigationButtonHeight, base.height + navigationVerticalPadding * 2)
             )
         }
     }
