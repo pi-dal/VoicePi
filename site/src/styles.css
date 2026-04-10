@@ -628,7 +628,6 @@ h3 {
 .install-tab,
 .copy-button,
 .link-button,
-.release-toggle,
 .hero-button {
   border-radius: var(--radius-pill);
   border: 1px solid var(--line);
@@ -1366,7 +1365,6 @@ body[data-theme="moon"] .install-followup {
 .install-tab:hover,
 .copy-button:hover,
 .link-button:hover,
-.release-toggle:hover,
 .release-select:hover,
 .hero-button:hover,
 .footprint-item a:hover {
@@ -1670,21 +1668,17 @@ body[data-theme="moon"] .footprint {
   font-size: 1.34rem;
 }
 
-.release-title,
-.release-pill-preview {
+.release-title {
   color: var(--text-soft);
   line-height: 1.52;
-}
-
-.release-toggle {
-  justify-self: start;
-  padding: 8px 12px;
 }
 
 .release-pill-preview {
   display: grid;
   gap: 8px;
   font-size: 0.94rem;
+  color: var(--text-soft);
+  line-height: 1.52;
 }
 
 .release-pill-preview p,

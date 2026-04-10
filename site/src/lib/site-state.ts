@@ -12,8 +12,7 @@ export function createSiteState(
     installTab: "homebrew",
     installDialogStage: "prompt",
     activeHighlight: "mode-cycle",
-    activeVersion: latestVersion,
-    expandedVersions: new Set(latestVersion ? [latestVersion] : [])
+    activeVersion: latestVersion
   };
 }
 
@@ -40,31 +39,8 @@ export function selectHighlight(state: SiteState, highlight: HighlightId): SiteS
 }
 
 export function selectVersion(state: SiteState, version: string): SiteState {
-  const expandedVersions = new Set(state.expandedVersions);
-  expandedVersions.add(version);
-
   return {
     ...state,
-    activeVersion: version,
-    expandedVersions
-  };
-}
-
-export function toggleExpandedVersion(state: SiteState, version: string): SiteState {
-  if (version === state.activeVersion) {
-    return state;
-  }
-
-  const expandedVersions = new Set(state.expandedVersions);
-
-  if (expandedVersions.has(version)) {
-    expandedVersions.delete(version);
-  } else {
-    expandedVersions.add(version);
-  }
-
-  return {
-    ...state,
-    expandedVersions
+    activeVersion: version
   };
 }

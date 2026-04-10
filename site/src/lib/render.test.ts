@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createSiteState, selectHighlight } from "./site-state";
+import { createSiteState, selectHighlight, selectVersion } from "./site-state";
 import { renderApp } from "./render";
 import type { ChangelogEntry } from "../types";
 
@@ -67,13 +67,26 @@ describe("renderApp", () => {
     expect(html).toContain(">Repository<");
   });
 
-  test("opens the latest version by default and keeps its expanded state in the timeline rail", () => {
+  test("shows the latest version by default without rendering expand or collapse controls", () => {
     const state = createSiteState(entries, "moon");
     const html = renderApp(state);
 
     expect(html).toContain('data-version="1.3.2"');
-    expect(html).toContain('data-toggle-version="1.3.2" aria-expanded="true"');
     expect(html).toContain("Latest release summary.");
+    expect(html).toContain('class="release-pill-preview"');
+    expect(html).not.toContain('data-toggle-version="1.3.2"');
+    expect(html).not.toContain(">Expand<");
+    expect(html).not.toContain(">Collapse<");
+  });
+
+  test("moves the inline release preview with the active version", () => {
+    const state = selectVersion(createSiteState(entries, "sunny"), "1.3.1");
+    const html = renderApp(state);
+
+    expect(html.match(/class="release-pill-preview"/g)?.length).toBe(1);
+    expect(html).toContain('<article class="release-pill is-active">');
+    expect(html).toContain("Previous release summary.");
+    expect(html).toContain("<strong>Highlights:</strong> Previous release summary.");
   });
 
   test("marks the first highlight button and frame as active by default", () => {

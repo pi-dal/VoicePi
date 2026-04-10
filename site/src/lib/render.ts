@@ -400,8 +400,11 @@ export function renderApp(state: SiteState): string {
             <div class="release-rail-list">
               ${state.entries.map((entry) => {
                 const isActive = entry.version === state.activeVersion;
-                const isExpanded = state.expandedVersions.has(entry.version);
                 const summary = entry.sections.find((section) => section.title === "Highlights")?.body ?? entry.title;
+                const preview = entry.sections
+                  .slice(0, 2)
+                  .map((section) => `<p><strong>${escapeHtml(section.title)}:</strong> ${escapeHtml(section.body.replace(/^- /gm, "").split("\n")[0] ?? "")}</p>`)
+                  .join("");
 
                 return `
                   <article class="release-pill${isActive ? " is-active" : ""}">
@@ -409,10 +412,7 @@ export function renderApp(state: SiteState): string {
                       <span class="release-version">${entry.version}</span>
                       <span class="release-title">${escapeHtml(summary)}</span>
                     </button>
-                    <button class="release-toggle" data-toggle-version="${entry.version}" aria-expanded="${isExpanded}">
-                      ${isExpanded ? "Collapse" : "Expand"}
-                    </button>
-                    ${isExpanded ? `<div class="release-pill-preview">${entry.sections.slice(0, 2).map((section) => `<p><strong>${escapeHtml(section.title)}:</strong> ${escapeHtml(section.body.replace(/^- /gm, "").split("\n")[0] ?? "")}</p>`).join("")}</div>` : ""}
+                    ${isActive && preview ? `<div class="release-pill-preview">${preview}</div>` : ""}
                   </article>
                 `;
               }).join("")}

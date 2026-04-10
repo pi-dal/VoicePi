@@ -24,5 +24,4 @@ export interface SiteState {
   installDialogStage: InstallDialogStage;
   activeHighlight: HighlightId;
   activeVersion: string;
-  expandedVersions: Set<string>;
 }

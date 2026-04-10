@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import type { ChangelogEntry } from "../types";
 import {
   createSiteState,
-  toggleExpandedVersion,
   selectInstallTab,
   selectHighlight,
   selectTheme,
@@ -34,7 +33,7 @@ describe("createSiteState", () => {
     expect(state.theme).toBe("sunny");
     expect(state.activeHighlight).toBe("mode-cycle");
     expect(state.activeVersion).toBe("1.3.2");
-    expect([...state.expandedVersions]).toEqual(["1.3.2"]);
+    expect("expandedVersions" in state).toBe(false);
   });
 });
 
@@ -54,20 +53,11 @@ describe("site state transitions", () => {
     expect(selectHighlight(state, "recording-overlay").activeHighlight).toBe("recording-overlay");
   });
 
-  test("selecting a version activates and expands it", () => {
+  test("selecting a version only changes the active release", () => {
     const state = createSiteState(entries, "moon");
     const next = selectVersion(state, "1.3.1");
 
     expect(next.activeVersion).toBe("1.3.1");
-    expect(next.expandedVersions.has("1.3.1")).toBe(true);
-  });
-
-  test("toggleExpandedVersion collapses inactive versions and preserves the active one", () => {
-    const state = createSiteState(entries, "moon");
-    const expanded = toggleExpandedVersion(state, "1.3.1");
-    const collapsed = toggleExpandedVersion(expanded, "1.3.1");
-
-    expect(collapsed.expandedVersions.has("1.3.1")).toBe(false);
-    expect(toggleExpandedVersion(state, "1.3.2").expandedVersions.has("1.3.2")).toBe(true);
+    expect("expandedVersions" in next).toBe(false);
   });
 });

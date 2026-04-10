@@ -1,7 +1,7 @@
 import "./styles.css";
 
 import { resolveHeroMaskVars } from "./lib/hero-mask";
-import { selectHighlight, selectInstallTab, selectTheme, selectVersion, toggleExpandedVersion, createSiteState } from "./lib/site-state";
+import { selectHighlight, selectInstallTab, selectTheme, selectVersion, createSiteState } from "./lib/site-state";
 import { renderApp } from "./lib/render";
 import type { HighlightId, InstallTab, SiteTheme } from "./types";
 
@@ -232,13 +232,6 @@ function render(): void {
   root.querySelectorAll<HTMLButtonElement>("[data-version]").forEach((button) => {
     button.addEventListener("click", () => {
       state = selectVersion(state, button.dataset.version ?? "");
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLButtonElement>("[data-toggle-version]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state = toggleExpandedVersion(state, button.dataset.toggleVersion ?? "");
       render();
     });
   });
