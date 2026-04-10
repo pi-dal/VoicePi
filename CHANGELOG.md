@@ -8,6 +8,7 @@ All notable changes to VoicePi are tracked in versioned release notes under `doc
 
 ## Versions
 
+- [v1.6.0](docs/changelogs/v1.6.0.md) — External processor refinement workflow and review panel
 - [v1.5.1](docs/changelogs/v1.5.1.md) — Prompt binding strict mode and immediate prompt saves
 - [v1.5.0](docs/changelogs/v1.5.0.md) — Fallback delivery, automatic prompt bindings, and dictionary learning
 - [v1.4.0](docs/changelogs/v1.4.0.md) — Realtime Aliyun/Volcengine ASR and smoother live transcript streaming
