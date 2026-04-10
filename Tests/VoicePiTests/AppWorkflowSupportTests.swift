@@ -349,8 +349,17 @@ struct AppWorkflowSupportTests {
         #expect(text == "alma refined")
         #expect(
             externalProcessorRefiner.lastPrompt == """
+            You are VoicePi's external transcript refiner.
+            The transcript is provided via stdin.
+
             Rewrite the transcript into polished text.
             Preserve intent, remove filler, and output only the final text.
+
+            Rules:
+            - Return only the final rewritten text.
+            - Do not add explanations, notes, labels, markdown, bullet points, or quality scores.
+            - Do not describe what you changed.
+            - If the transcript is already clean, return the cleaned final text only.
             """
         )
     }

@@ -83,6 +83,41 @@ final class AppController: NSObject {
         case holdRepeat
     }
 
+    enum RecordingWorkflowOverride: Equatable {
+        case externalProcessorShortcut
+
+        var postProcessingMode: PostProcessingMode {
+            switch self {
+            case .externalProcessorShortcut:
+                return .refinement
+            }
+        }
+
+        var refinementProvider: RefinementProvider {
+            switch self {
+            case .externalProcessorShortcut:
+                return .externalProcessor
+            }
+        }
+    }
+
+    enum ProcessorShortcutPressAction: Equatable {
+        case startProcessorCapture(RecordingWorkflowOverride)
+        case stopRecording
+        case cancelProcessing
+        case ignore
+    }
+
+    struct ProcessingWorkflowSelection: Equatable {
+        let postProcessingMode: PostProcessingMode
+        let refinementProvider: RefinementProvider
+    }
+
+    enum PostProcessingFailureAction: Equatable {
+        case continueTranscriptDelivery
+        case surfaceProcessorFailure
+    }
+
     enum ReleaseAction: Equatable {
         case ignore
     }
@@ -101,6 +136,7 @@ final class AppController: NSObject {
     private let model = AppModel()
     private let recordingShortcutAction = ShortcutActionController()
     private let modeCycleShortcutAction = ShortcutActionController()
+    private let processorShortcutAction = ShortcutActionController()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
@@ -138,6 +174,9 @@ final class AppController: NSObject {
     private var installationSource: AppInstallationSource = .unknown
     private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
     private var pendingResultReviewSourceText: String?
+    private var pendingResultReviewPayload: ResultReviewPanelPayload?
+    private var pendingResultReviewWorkflowOverride: RecordingWorkflowOverride?
+    private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -159,6 +198,15 @@ final class AppController: NSObject {
 
     static let modeCycleShortcutRegistrationFailureMessage =
         "Mode-switch shortcut registration is unavailable. Choose a different shortcut."
+
+    static let processorShortcutMonitoringFailureMessage =
+        "Processor shortcut listening is unavailable. Input Monitoring is required to listen for this shortcut."
+
+    static let processorShortcutSuppressionWarningMessage =
+        "Processor shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
+
+    static let processorShortcutRegistrationFailureMessage =
+        "Processor shortcut registration is unavailable. Choose a different shortcut."
 
     static let startupHotkeyBootstrapRetryNanoseconds: UInt64 = 500_000_000
     static let startupHotkeyBootstrapMaxAttempts = 6
@@ -256,6 +304,58 @@ final class AppController: NSObject {
         return .holdRepeat
     }
 
+    static func processorShortcutPressAction(
+        isRecording: Bool,
+        isStartingRecording: Bool,
+        isProcessingRelease: Bool
+    ) -> ProcessorShortcutPressAction {
+        if isProcessingRelease {
+            return .ignore
+        }
+
+        if isRecording {
+            return .stopRecording
+        }
+
+        if isStartingRecording {
+            return .ignore
+        }
+
+        return .startProcessorCapture(.externalProcessorShortcut)
+    }
+
+    static func effectiveProcessingWorkflow(
+        postProcessingMode: PostProcessingMode,
+        refinementProvider: RefinementProvider,
+        override: RecordingWorkflowOverride?
+    ) -> ProcessingWorkflowSelection {
+        if let override {
+            return ProcessingWorkflowSelection(
+                postProcessingMode: override.postProcessingMode,
+                refinementProvider: override.refinementProvider
+            )
+        }
+
+        return ProcessingWorkflowSelection(
+            postProcessingMode: postProcessingMode,
+            refinementProvider: refinementProvider
+        )
+    }
+
+    static func postProcessingFailureAction(
+        workflowOverride: RecordingWorkflowOverride?,
+        didExternalProcessorSucceed: Bool
+    ) -> PostProcessingFailureAction {
+        guard let workflowOverride else {
+            return .continueTranscriptDelivery
+        }
+
+        switch workflowOverride {
+        case .externalProcessorShortcut:
+            return didExternalProcessorSucceed ? .continueTranscriptDelivery : .surfaceProcessorFailure
+        }
+    }
+
     static func transcriptDeliveryRoute(
         for text: String,
         targetInspection: EditableTextTargetInspection
@@ -296,6 +396,7 @@ final class AppController: NSObject {
         launchPermissionPlan(
             activationShortcut: shortcut,
             modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
     }
@@ -303,6 +404,20 @@ final class AppController: NSObject {
     static func launchPermissionPlan(
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState
+    ) -> LaunchPermissionPlan {
+        launchPermissionPlan(
+            activationShortcut: activationShortcut,
+            modeCycleShortcut: modeCycleShortcut,
+            processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            inputMonitoringState: inputMonitoringState
+        )
+    }
+
+    static func launchPermissionPlan(
+        activationShortcut: ActivationShortcut,
+        modeCycleShortcut: ActivationShortcut,
+        processorShortcut: ActivationShortcut,
         inputMonitoringState: AuthorizationState
     ) -> LaunchPermissionPlan {
         LaunchPermissionPlan(
@@ -314,7 +429,8 @@ final class AppController: NSObject {
             ),
             requestInputMonitoringPermission: shortcutsRequireInputMonitoring(
                 activationShortcut: activationShortcut,
-                modeCycleShortcut: modeCycleShortcut
+                modeCycleShortcut: modeCycleShortcut,
+                processorShortcut: processorShortcut
             ),
             useSystemAccessibilityPrompt: true
         )
@@ -324,7 +440,21 @@ final class AppController: NSObject {
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut
     ) -> Bool {
-        activationShortcut.requiresInputMonitoring || modeCycleShortcut.requiresInputMonitoring
+        shortcutsRequireInputMonitoring(
+            activationShortcut: activationShortcut,
+            modeCycleShortcut: modeCycleShortcut,
+            processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+        )
+    }
+
+    static func shortcutsRequireInputMonitoring(
+        activationShortcut: ActivationShortcut,
+        modeCycleShortcut: ActivationShortcut,
+        processorShortcut: ActivationShortcut
+    ) -> Bool {
+        activationShortcut.requiresInputMonitoring
+            || modeCycleShortcut.requiresInputMonitoring
+            || processorShortcut.requiresInputMonitoring
     }
 
     static func shouldOfferInputMonitoringSettingsOnLaunch(
@@ -407,6 +537,21 @@ final class AppController: NSObject {
             registeredHotkeyAccessibilityWarning: nil,
             eventTapAccessibilityWarning: modeCycleShortcutSuppressionWarningMessage,
             inputMonitoringFailureMessage: modeCycleShortcutMonitoringFailureMessage
+        )
+    }
+
+    static func processorShortcutMonitorPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: nil,
+            eventTapAccessibilityWarning: processorShortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: processorShortcutMonitoringFailureMessage
         )
     }
 
@@ -580,7 +725,7 @@ final class AppController: NSObject {
             }
         }
         resultReviewPanelController.onDismissRequested = { [weak self] in
-            self?.clearResultReviewState()
+            self?.dismissResultReviewPanel()
         }
         dictionarySuggestionToastController.onApprove = { [weak self] suggestion in
             guard let self else { return }
@@ -620,6 +765,13 @@ final class AppController: NSObject {
         }
         modeCycleShortcutAction.shortcut = model.modeCycleShortcut
 
+        processorShortcutAction.onPress = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleProcessorShortcutPress()
+            }
+        }
+        processorShortcutAction.shortcut = model.processorShortcut
+
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
         statusBarController.start()
@@ -634,6 +786,7 @@ final class AppController: NSObject {
             let launchPermissionPlan = Self.launchPermissionPlan(
                 activationShortcut: self.model.activationShortcut,
                 modeCycleShortcut: self.model.modeCycleShortcut,
+                processorShortcut: self.model.processorShortcut,
                 inputMonitoringState: self.currentInputMonitoringAuthorizationState()
             )
             await self.refreshPermissionStates(
@@ -664,6 +817,7 @@ final class AppController: NSObject {
         startupHotkeyBootstrapTask = nil
         recordingShortcutAction.stop()
         modeCycleShortcutAction.stop()
+        processorShortcutAction.stop()
 
         if speechRecorder.isRecording {
             Task { @MainActor [weak self] in
@@ -699,7 +853,8 @@ final class AppController: NSObject {
         startupHotkeyBootstrapTask?.cancel()
         let initialStatus = ensureHotkeyMonitorRunning()
         guard initialStatus == Self.shortcutRegistrationFailureMessage
-            || initialStatus == Self.modeCycleShortcutRegistrationFailureMessage else {
+            || initialStatus == Self.modeCycleShortcutRegistrationFailureMessage
+            || initialStatus == Self.processorShortcutRegistrationFailureMessage else {
             return
         }
 
@@ -715,7 +870,8 @@ final class AppController: NSObject {
 
                 let status = self.ensureHotkeyMonitorRunning()
                 guard status == Self.shortcutRegistrationFailureMessage
-                    || status == Self.modeCycleShortcutRegistrationFailureMessage else {
+                    || status == Self.modeCycleShortcutRegistrationFailureMessage
+                    || status == Self.processorShortcutRegistrationFailureMessage else {
                     return
                 }
             }
@@ -792,7 +948,26 @@ final class AppController: NSObject {
         }
     }
 
-    private func beginRecording() {
+    private func handleProcessorShortcutPress() {
+        switch Self.processorShortcutPressAction(
+            isRecording: speechRecorder.isRecording,
+            isStartingRecording: isStartingRecording,
+            isProcessingRelease: isProcessingRelease
+        ) {
+        case .ignore:
+            return
+        case .stopRecording:
+            endRecordingAndInject()
+        case .cancelProcessing:
+            cancelProcessingAndHideOverlay()
+        case .startProcessorCapture(let override):
+            beginRecording(workflowOverride: override)
+        }
+    }
+
+    private func beginRecording(
+        workflowOverride: RecordingWorkflowOverride? = nil
+    ) {
         if isAwaitingRealtimeFinalization {
             return
         }
@@ -815,6 +990,7 @@ final class AppController: NSObject {
         }
 
         isStartingRecording = true
+        activeRecordingWorkflowOverride = workflowOverride
         latestTranscript = ""
         cancelPostInjectionLearning()
         clearResultReviewState()
@@ -826,6 +1002,7 @@ final class AppController: NSObject {
 
             let permissionsReady = await self.prepareForRecording()
             guard permissionsReady else {
+                self.activeRecordingWorkflowOverride = nil
                 self.isStartingRecording = false
                 return
             }
@@ -846,9 +1023,11 @@ final class AppController: NSObject {
                 self.floatingPanelController.hide()
                 self.model.hideOverlay()
                 if case let asrError as RemoteASRStreamingError = error, asrError == .cancelled {
+                    self.activeRecordingWorkflowOverride = nil
                     self.isStartingRecording = false
                     return
                 }
+                self.activeRecordingWorkflowOverride = nil
                 self.presentTransientError(error.localizedDescription)
             }
 
@@ -904,20 +1083,40 @@ final class AppController: NSObject {
                 self.model.hideOverlay()
                 self.statusBarController?.setTransientStatus(nil)
                 self.isProcessingRelease = false
+                self.activeRecordingWorkflowOverride = nil
                 return
             }
 
             let finalText = await self.refineIfNeeded(captured)
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
-            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
+            let workflow = Self.effectiveProcessingWorkflow(
+                postProcessingMode: self.model.postProcessingMode,
                 refinementProvider: self.model.refinementProvider,
-                postProcessingMode: self.model.postProcessingMode
+                override: self.activeRecordingWorkflowOverride
+            )
+
+            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
+                refinementProvider: workflow.refinementProvider,
+                postProcessingMode: workflow.postProcessingMode
             )
             let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+            let failureAction = Self.postProcessingFailureAction(
+                workflowOverride: self.activeRecordingWorkflowOverride,
+                didExternalProcessorSucceed: didSucceed
+            )
 
             if shouldPresentResultReviewPanel && didSucceed {
                 self.presentResultReviewPanel(text: finalText, sourceText: captured)
+            } else if failureAction == .surfaceProcessorFailure {
+                let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
+                let trimmedFailureMessage = processorFailureMessage?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let failureMessage = trimmedFailureMessage.isEmpty
+                    ? "Processor shortcut requires a working external processor. Check Processors settings."
+                    : trimmedFailureMessage
+                self.presentTransientError(failureMessage)
+                self.floatingPanelController.hide()
             } else {
                 let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
                 switch Self.transcriptDeliveryRoute(
@@ -948,6 +1147,7 @@ final class AppController: NSObject {
 
             self.model.hideOverlay()
             self.isProcessingRelease = false
+            self.activeRecordingWorkflowOverride = nil
         }
     }
 
@@ -959,6 +1159,7 @@ final class AppController: NSObject {
         cancelPostInjectionLearning()
         clearResultReviewState()
         isProcessingRelease = false
+        activeRecordingWorkflowOverride = nil
         latestTranscript = ""
         statusBarController?.setRecording(false)
         statusBarController?.setTransientStatus(nil)
@@ -977,13 +1178,16 @@ final class AppController: NSObject {
         text: String,
         sourceText: String
     ) {
-        guard let payload = ResultReviewPanelPayload(text: text) else {
+        guard let payload = ResultReviewPanelPayload(text: text, sourceText: sourceText) else {
+            presentTransientError("External processor returned unreadable output.")
             return
         }
 
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
         pendingResultReviewSourceText = sourceText
+        pendingResultReviewPayload = payload
+        pendingResultReviewWorkflowOverride = activeRecordingWorkflowOverride
         floatingPanelController.hide(immediately: true)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
@@ -993,6 +1197,14 @@ final class AppController: NSObject {
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
         pendingResultReviewSourceText = nil
+        pendingResultReviewPayload = nil
+        pendingResultReviewWorkflowOverride = nil
+        resultReviewPanelController.hide()
+    }
+
+    private func dismissResultReviewPanel() {
+        resultReviewRetryTask?.cancel()
+        resultReviewRetryTask = nil
         resultReviewPanelController.hide()
     }
 
@@ -1011,9 +1223,15 @@ final class AppController: NSObject {
             let refinedText = await self.refineIfNeeded(sourceText)
             guard !Task.isCancelled, self.pendingResultReviewSourceText == sourceText else { return }
 
-            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
+            let workflow = Self.effectiveProcessingWorkflow(
+                postProcessingMode: self.model.postProcessingMode,
                 refinementProvider: self.model.refinementProvider,
-                postProcessingMode: self.model.postProcessingMode
+                override: self.pendingResultReviewWorkflowOverride
+            )
+
+            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
+                refinementProvider: workflow.refinementProvider,
+                postProcessingMode: workflow.postProcessingMode
             )
             let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
 
@@ -1212,16 +1430,21 @@ final class AppController: NSObject {
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
+        let workflow = Self.effectiveProcessingWorkflow(
+            postProcessingMode: model.postProcessingMode,
+            refinementProvider: model.refinementProvider,
+            override: activeRecordingWorkflowOverride ?? pendingResultReviewWorkflowOverride
+        )
         let destination = promptDestinationInspector.currentDestinationContext()
         let resolvedPrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
-        if model.refinementProvider == .externalProcessor {
+        if workflow.refinementProvider == .externalProcessor {
             await externalProcessorRefiner.resetLastInvocation()
         }
 
         return await AppWorkflowSupport.postProcessIfNeeded(
             text,
-            mode: model.postProcessingMode,
-            refinementProvider: model.refinementProvider,
+            mode: workflow.postProcessingMode,
+            refinementProvider: workflow.refinementProvider,
             externalProcessor: model.selectedExternalProcessorEntry(),
             externalProcessorRefiner: externalProcessorRefiner,
             translationProvider: model.effectiveTranslationProvider(
@@ -1230,8 +1453,8 @@ final class AppController: NSObject {
             sourceLanguage: model.selectedLanguage,
             targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
-            refinementPromptTitle: model.postProcessingMode == .refinement ? resolvedPrompt.title : nil,
-            resolvedRefinementPrompt: model.postProcessingMode == .refinement
+            refinementPromptTitle: workflow.postProcessingMode == .refinement ? resolvedPrompt.title : nil,
+            resolvedRefinementPrompt: workflow.postProcessingMode == .refinement
                 ? resolvedPrompt.middleSection
                 : nil,
             dictionaryEntries: model.enabledDictionaryEntries,
@@ -1445,6 +1668,11 @@ final class AppController: NSObject {
             inputMonitoringState: inputMonitoringState,
             accessibilityState: accessibilityState
         )
+        let processorPlan = Self.processorShortcutMonitorPlan(
+            shortcut: model.processorShortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState
+        )
 
         let activationStatus = applyHotkeyMonitorPlan(
             activationPlan,
@@ -1465,8 +1693,14 @@ final class AppController: NSObject {
             registrationFailureMessage: Self.modeCycleShortcutRegistrationFailureMessage,
             monitoringFailureMessage: Self.modeCycleShortcutMonitoringFailureMessage
         )
+        let processorStatus = applyHotkeyMonitorPlan(
+            processorPlan,
+            actionController: processorShortcutAction,
+            registrationFailureMessage: Self.processorShortcutRegistrationFailureMessage,
+            monitoringFailureMessage: Self.processorShortcutMonitoringFailureMessage
+        )
 
-        let statusMessage = activationStatus ?? cycleStatus
+        let statusMessage = activationStatus ?? cycleStatus ?? processorStatus
         if let statusMessage, statusBarController != nil {
             statusBarController?.setTransientStatus(statusMessage)
         } else if statusBarController != nil, model.errorState == nil {
@@ -1518,7 +1752,8 @@ final class AppController: NSObject {
     private func currentShortcutsRequireInputMonitoring() -> Bool {
         Self.shortcutsRequireInputMonitoring(
             activationShortcut: model.activationShortcut,
-            modeCycleShortcut: model.modeCycleShortcut
+            modeCycleShortcut: model.modeCycleShortcut,
+            processorShortcut: model.processorShortcut
         )
     }
 
@@ -2026,6 +2261,13 @@ extension AppController: StatusBarControllerDelegate {
         ensureHotkeyMonitorRunning()
     }
 
+    func statusBarController(_ controller: StatusBarController, didUpdateProcessorShortcut shortcut: ActivationShortcut) {
+        model.setProcessorShortcut(shortcut)
+        processorShortcutAction.shortcut = shortcut
+        controller.refreshAll()
+        ensureHotkeyMonitorRunning()
+    }
+
     func statusBarController(_ controller: StatusBarController, didSave configuration: LLMConfiguration) {
         model.saveLLMConfiguration(
             baseURL: configuration.baseURL,
@@ -2163,13 +2405,19 @@ extension AppController: StatusBarControllerDelegate {
 
 private actor AppControllerExternalProcessorRefiner: ExternalProcessorRefining {
     private var lastInvocationSucceeded = false
+    private var lastFailureMessage: String?
 
     var didSucceedOnLastInvocation: Bool {
         return lastInvocationSucceeded
     }
 
+    var lastFailureMessageOnLastInvocation: String? {
+        return lastFailureMessage
+    }
+
     func resetLastInvocation() {
         lastInvocationSucceeded = false
+        lastFailureMessage = nil
     }
 
     func refine(
@@ -2190,14 +2438,20 @@ private actor AppControllerExternalProcessorRefiner: ExternalProcessorRefining {
                     prompt: prompt,
                     additionalArguments: additionalArguments
                 )
-                let refinedText = try await ExternalProcessorRunner().run(
+                let rawOutput = try await ExternalProcessorRunner().run(
                     invocation: invocation,
                     stdin: text
                 )
+                let refinedText = try ExternalProcessorOutputValidator.validate(
+                    rawOutput,
+                    againstInput: text
+                )
                 lastInvocationSucceeded = true
+                lastFailureMessage = nil
                 return refinedText
             } catch {
                 lastInvocationSucceeded = false
+                lastFailureMessage = error.localizedDescription
                 throw error
             }
         }

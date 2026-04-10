@@ -54,6 +54,43 @@ struct ExternalProcessorRunnerTests {
     }
 
     @Test
+    func runnerResolvesBareExecutableNamesThroughFallbackHomeLocalBinPath() async throws {
+        let process = ExternalProcessorProcessStub(
+            stdoutData: Data("refined transcript".utf8),
+            exitStatus: 0
+        )
+        let homeDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let localBinDirectory = homeDirectory
+            .appendingPathComponent(".local", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: localBinDirectory, withIntermediateDirectories: true)
+        let executableURL = localBinDirectory.appendingPathComponent("alma")
+        FileManager.default.createFile(
+            atPath: executableURL.path,
+            contents: Data(),
+            attributes: [.posixPermissions: 0o755]
+        )
+
+        let runner = ExternalProcessorRunner(
+            processFactory: { process },
+            environment: [
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "HOME": homeDirectory.path
+            ]
+        )
+        let invocation = ExternalProcessorInvocation(
+            executablePath: "alma",
+            arguments: ["run", "--raw", "--no-stream", "Prompt"],
+            timeout: .seconds(1)
+        )
+
+        _ = try await runner.run(invocation: invocation, stdin: "input transcript")
+
+        #expect(process.executableURL?.path == executableURL.path)
+    }
+
+    @Test
     func runnerReturnsTrimmedStdout() async throws {
         let process = ExternalProcessorProcessStub(
             stdoutData: Data("  refined transcript  \n".utf8),
@@ -78,9 +115,10 @@ struct ExternalProcessorRunnerTests {
     }
 
     @Test
-    func runnerFallsBackOnEmptyStdout() async throws {
+    func runnerFallsBackToStderrWhenStdoutIsEmpty() async throws {
         let process = ExternalProcessorProcessStub(
             stdoutData: Data("   \n".utf8),
+            stderrData: Data("refined from stderr".utf8),
             exitStatus: 0,
             shouldHang: true
         )
@@ -96,7 +134,7 @@ struct ExternalProcessorRunnerTests {
 
         let output = try await runner.run(invocation: invocation, stdin: "input transcript")
 
-        #expect(output == "")
+        #expect(output == "refined from stderr")
     }
 
     @Test
@@ -143,11 +181,55 @@ struct ExternalProcessorRunnerTests {
             _ = try await runner.run(invocation: invocation, stdin: "input transcript")
         }
     }
+
+    @Test
+    func runnerReportsStderrMessageForNonZeroExitStatus() async {
+        let process = ExternalProcessorProcessStub(
+            stdoutData: Data(),
+            stderrData: Data("alma command failed".utf8),
+            exitStatus: 2
+        )
+        let runner = ExternalProcessorRunner(
+            processFactory: { process },
+            inputPipeFactory: { RecordingPipe() }
+        )
+        let invocation = ExternalProcessorInvocation(
+            executablePath: "/opt/homebrew/bin/alma",
+            arguments: ["run", "--raw", "--no-stream", "Prompt"],
+            timeout: .seconds(1)
+        )
+
+        let output = try? await runner.run(invocation: invocation, stdin: "input transcript")
+        #expect(output == "alma command failed")
+    }
+
+    @Test
+    func runnerReportsExitStatusWhenFailedProcessEmitsNoOutput() async {
+        let process = ExternalProcessorProcessStub(
+            stdoutData: Data(),
+            stderrData: Data(),
+            exitStatus: 2
+        )
+        let runner = ExternalProcessorRunner(
+            processFactory: { process },
+            inputPipeFactory: { RecordingPipe() }
+        )
+        let invocation = ExternalProcessorInvocation(
+            executablePath: "/opt/homebrew/bin/alma",
+            arguments: ["run", "--raw", "--no-stream", "Prompt"],
+            timeout: .seconds(1)
+        )
+
+        await #expect(throws: ExternalProcessorRunnerError.launchFailed("Process exited with status 2.")) {
+            _ = try await runner.run(invocation: invocation, stdin: "input transcript")
+        }
+    }
 }
 
 private final class ExternalProcessorProcessStub: ExternalProcessorProcess, @unchecked Sendable {
     private let lock = NSLock()
     private let stdoutData: Data
+    private let stderrData: Data
     private let exitStatus: Int32
     private let shouldHang: Bool
     private let finishOnWrite: Bool
@@ -188,12 +270,14 @@ private final class ExternalProcessorProcessStub: ExternalProcessorProcess, @unc
 
     init(
         stdoutData: Data,
+        stderrData: Data = Data(),
         exitStatus: Int32,
         shouldHang: Bool = false,
         finishOnWrite: Bool = true,
         launchError: Error? = nil
     ) {
         self.stdoutData = stdoutData
+        self.stderrData = stderrData
         self.exitStatus = exitStatus
         self.shouldHang = shouldHang
         self.finishOnWrite = finishOnWrite
@@ -207,8 +291,16 @@ private final class ExternalProcessorProcessStub: ExternalProcessorProcess, @unc
 
         isRunning = true
 
-        if let pipe = standardOutput as? Pipe, !stdoutData.isEmpty {
-            pipe.fileHandleForWriting.write(stdoutData)
+        if let pipe = standardOutput as? Pipe {
+            if !stdoutData.isEmpty {
+                pipe.fileHandleForWriting.write(stdoutData)
+            }
+            try? pipe.fileHandleForWriting.close()
+        }
+        if let pipe = standardError as? Pipe {
+            if !stderrData.isEmpty {
+                pipe.fileHandleForWriting.write(stderrData)
+            }
             try? pipe.fileHandleForWriting.close()
         }
 

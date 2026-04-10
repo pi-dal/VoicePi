@@ -3,46 +3,63 @@ import Foundation
 
 struct ResultReviewPanelPayload: Equatable {
     let resultText: String
+    let promptText: String
     let displayText: String
+    let isLikelyUnchangedFromSource: Bool
 
-    init?(text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+    init?(text: String, sourceText: String? = nil) {
+        let sanitizedResult = ExternalProcessorOutputSanitizer.sanitize(text)
+        guard !sanitizedResult.isEmpty else {
             return nil
         }
 
-        self.resultText = trimmed
-        self.displayText = trimmed
+        let sanitizedPrompt = sourceText.map(ExternalProcessorOutputSanitizer.sanitize) ?? ""
+        self.resultText = sanitizedResult
+        self.promptText = sanitizedPrompt
+        self.displayText = sanitizedResult
+        self.isLikelyUnchangedFromSource = !sanitizedPrompt.isEmpty
+            && ExternalProcessorOutputSanitizer.isSemanticallyUnchanged(
+                sanitizedResult,
+                comparedTo: sanitizedPrompt
+            )
     }
 }
 
 enum ResultReviewPanelLayout {
     static func frame(for visibleFrame: NSRect) -> NSRect {
-        NSRect(
-            x: visibleFrame.origin.x + (visibleFrame.size.width / 3.0),
-            y: visibleFrame.origin.y + (visibleFrame.size.height / 3.0),
-            width: visibleFrame.size.width / 3.0,
-            height: visibleFrame.size.height / 3.0
+        let width = max(420, min(visibleFrame.width / 3.0, 680))
+        let minHeight = visibleFrame.height / 3.0
+        let maxHeight = visibleFrame.height / 2.0
+        let height = min(max(visibleFrame.height * 0.42, minHeight), maxHeight)
+        return NSRect(
+            x: round(visibleFrame.midX - width / 2),
+            y: round(visibleFrame.midY - height / 2),
+            width: width,
+            height: height
         )
     }
 }
 
 struct ResultReviewPanelPresentationState: Equatable {
     let titleText: String
-    let descriptionText: String
-    let insertButtonTitle: String
-    let copyButtonTitle: String
-    let retryButtonTitle: String
-    let dismissButtonTitle: String
-    let displayText: String
+    let promptSectionTitle: String
+    let outputSectionTitle: String
+    let promptCopyButtonTitle: String
+    let outputCopyButtonTitle: String
+    let promptCopyText: String
+    let outputCopyText: String
+    let promptDisplayText: String
+    let outputDisplayText: String
 
     init(payload: ResultReviewPanelPayload) {
-        self.titleText = "Review Result"
-        self.descriptionText = "Review the output before inserting it back into the target."
-        self.insertButtonTitle = "Insert"
-        self.copyButtonTitle = "Copy"
-        self.retryButtonTitle = "Retry"
-        self.dismissButtonTitle = "Dismiss"
-        self.displayText = payload.displayText
+        self.titleText = "VoicePi"
+        self.promptSectionTitle = "Prompt"
+        self.outputSectionTitle = "Answer"
+        self.promptCopyButtonTitle = "Copy"
+        self.outputCopyButtonTitle = "Copy"
+        self.promptCopyText = payload.promptText
+        self.outputCopyText = payload.resultText
+        self.promptDisplayText = payload.promptText.isEmpty ? "No prompt captured." : payload.promptText
+        self.outputDisplayText = payload.displayText
     }
 }

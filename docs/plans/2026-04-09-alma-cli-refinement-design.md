@@ -30,6 +30,17 @@ That contract is a better fit for VoicePi than a desktop-window automation path 
 
 The same shape is likely useful for other backends later, including other CLI-based agents or text processors.
 
+## Validation Update
+
+Local verification on 2026-04-10 refined the Alma CLI constraint:
+
+- `alma run` is a one-shot CLI entrypoint
+- each `alma run` invocation creates a temporary internal thread
+- that temporary thread is deleted after the invocation completes
+- persistent multi-turn context is available through Alma's local thread APIs and WebSocket protocol, but not through the documented pure CLI `alma run` contract
+
+That means this design can support Alma only as a stateless CLI-backed processor. A pure CLI integration cannot rely on persistent Alma thread reuse across multiple refinement calls.
+
 ## Decision
 
 VoicePi should introduce a generic external processing layer instead of a one-off Alma-only integration.
@@ -58,6 +69,8 @@ When the user selects `External Processor` and the configured processor is `Alma
 7. present the centered result review panel
 8. insert the reviewed result into the original destination only if the user confirms
 
+VoicePi should implement this backend strictly through the documented CLI contract. It should not call Alma's local HTTP thread APIs or WebSocket endpoints directly.
+
 ## Non-Goals
 
 This spec does not include:
@@ -68,6 +81,8 @@ This spec does not include:
 - Alma Prompt App window automation
 - support for `alma run` as a translation provider
 - support for Alma thread/session management
+- support for multi-turn context across multiple `alma run` invocations
+- direct use of Alma local HTTP or WebSocket APIs from VoicePi
 - support for interactive or streaming Alma CLI sessions
 
 Those can be layered later if this first integration proves stable.
@@ -193,6 +208,8 @@ For Alma CLI, examples of incompatible flags include:
 - `-v`
 - flags that intentionally turn the command into a non-completion mode
 
+Undocumented or session-oriented flags should also be treated as unsupported for this backend contract. The Alma integration in this design intentionally stays inside the documented one-shot CLI path.
+
 The exact allowlist/denylist can evolve, but the first version should explicitly protect the one-shot refinement contract.
 
 ### Result Presentation
@@ -286,6 +303,8 @@ alma run --raw --no-stream "<resolved prompt>"
 Transcript text is written to `stdin`.
 
 The command result is taken from `stdout`, trimmed, and used as the refined text. If the output is empty after trimming, VoicePi should fall back to the original transcript.
+
+VoicePi should treat every `alma run` call as stateless. Even if Alma internally uses a thread during execution, that behavior is not part of the reusable CLI contract for this feature.
 
 ### Model Override
 
@@ -457,6 +476,7 @@ Minimum expected test coverage:
 - surfaces missing-command and non-zero-exit failures
 - rejects incompatible backend args
 - applies timeout behavior
+- does not assume persistent Alma thread reuse between separate invocations
 
 ### Result review presentation
 
@@ -508,7 +528,7 @@ Add a dedicated settings tab for managing external processors. That tab can late
 
 ### Phase 1
 
-Add the generic external-processor refinement path with `Alma CLI` as the first backend.
+Add the generic external-processor refinement path with `Alma CLI` as the first backend, using only the documented one-shot `alma run` contract.
 
 ### Phase 2
 

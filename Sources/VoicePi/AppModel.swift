@@ -837,6 +837,136 @@ enum ExternalProcessorValidationError: Error, Equatable, LocalizedError {
     }
 }
 
+enum ExternalProcessorOutputValidationError: Error, Equatable, LocalizedError {
+    case emptyOutput
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyOutput:
+            return "External processor returned an empty response."
+        }
+    }
+}
+
+enum ExternalProcessorOutputSanitizer {
+    static func sanitize(_ text: String) -> String {
+        let strippedEscapes = stripEscapeSequences(from: text)
+        let normalizedLineEndings = strippedEscapes
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        let cleanedScalars = normalizedLineEndings.unicodeScalars.filter { scalar in
+            scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7F)
+        }
+
+        return String(String.UnicodeScalarView(cleanedScalars))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func isSemanticallyUnchanged(
+        _ output: String,
+        comparedTo input: String
+    ) -> Bool {
+        normalizedComparisonText(output) == normalizedComparisonText(input)
+    }
+
+    private static func normalizedComparisonText(_ text: String) -> String {
+        sanitize(text)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    private static func stripEscapeSequences(from text: String) -> String {
+        var output = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if text[index] == "\u{001B}" {
+                let next = text.index(after: index)
+                guard next < text.endIndex else { break }
+                let marker = text[next]
+                if marker == "[" {
+                    index = advancePastCSISequence(in: text, startingAt: next)
+                    continue
+                }
+                if marker == "]" {
+                    index = advancePastOSCSequence(in: text, startingAt: next)
+                    continue
+                }
+
+                index = text.index(after: index)
+                continue
+            }
+
+            output.append(text[index])
+            index = text.index(after: index)
+        }
+
+        return output
+    }
+
+    private static func advancePastCSISequence(
+        in text: String,
+        startingAt markerIndex: String.Index
+    ) -> String.Index {
+        var index = text.index(after: markerIndex)
+        while index < text.endIndex {
+            guard let scalar = text[index].unicodeScalars.first else {
+                index = text.index(after: index)
+                continue
+            }
+
+            if (0x40...0x7E).contains(scalar.value) {
+                return text.index(after: index)
+            }
+
+            index = text.index(after: index)
+        }
+
+        return text.endIndex
+    }
+
+    private static func advancePastOSCSequence(
+        in text: String,
+        startingAt markerIndex: String.Index
+    ) -> String.Index {
+        var index = text.index(after: markerIndex)
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "\u{0007}" {
+                return text.index(after: index)
+            }
+
+            if character == "\u{001B}" {
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next] == "\\" {
+                    return text.index(after: next)
+                }
+            }
+
+            index = text.index(after: index)
+        }
+
+        return text.endIndex
+    }
+}
+
+struct ExternalProcessorOutputValidator {
+    static func validate(
+        _ output: String,
+        againstInput _: String
+    ) throws -> String {
+        let sanitizedOutput = ExternalProcessorOutputSanitizer.sanitize(output)
+        guard !sanitizedOutput.isEmpty else {
+            throw ExternalProcessorOutputValidationError.emptyOutput
+        }
+
+        return sanitizedOutput
+    }
+}
+
 struct ExternalProcessorInvocation: Equatable {
     var executablePath: String
     var arguments: [String]
@@ -903,7 +1033,7 @@ struct AlmaCLIInvocationBuilder {
         return ExternalProcessorInvocation(
             executablePath: executablePath,
             arguments: ["run", "--raw", "--no-stream"] + additionalArguments + [prompt],
-            timeout: .seconds(30)
+            timeout: .seconds(120)
         )
     }
 }
@@ -951,17 +1081,48 @@ final class ExternalProcessorRunner {
         }
 
         let inputData = Data(stdin.utf8)
-        let stdinWriter = Task {
+        async let stdinWriteCompleted: Void = {
             inputPipe.fileHandleForWriting.write(inputData)
             try? inputPipe.fileHandleForWriting.close()
+        }()
+        async let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        async let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+        do {
+            try await waitForProcess(process, timeout: invocation.timeout)
+        } catch {
+            _ = await stdinWriteCompleted
+            _ = await outputData
+            _ = await errorData
+            throw error
         }
 
-        try await waitForProcess(process, timeout: invocation.timeout)
-        _ = await stdinWriter.result
+        _ = await stdinWriteCompleted
 
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: outputData, encoding: .utf8) ?? ""
-        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputDataValue = await outputData
+        let errorDataValue = await errorData
+        let output = (String(data: outputDataValue, encoding: .utf8) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let errorOutput = (String(data: errorDataValue, encoding: .utf8) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if process.terminationStatus != 0 {
+            if !output.isEmpty {
+                return output
+            }
+
+            if !errorOutput.isEmpty {
+                return errorOutput
+            }
+
+            throw ExternalProcessorRunnerError.launchFailed("Process exited with status \(process.terminationStatus).")
+        }
+
+        if output.isEmpty, !errorOutput.isEmpty {
+            return errorOutput
+        }
+
+        return output
     }
 
     private func resolvedExecutableURL(for executablePath: String) -> URL? {
@@ -970,9 +1131,7 @@ final class ExternalProcessorRunner {
             return URL(fileURLWithPath: expandedPath)
         }
 
-        let searchPaths = environment["PATH"]?
-            .split(separator: ":")
-            .map(String.init) ?? []
+        let searchPaths = bareExecutableSearchPaths()
 
         for directory in searchPaths where !directory.isEmpty {
             let candidatePath = (directory as NSString).appendingPathComponent(expandedPath)
@@ -982,6 +1141,33 @@ final class ExternalProcessorRunner {
         }
 
         return nil
+    }
+
+    private func bareExecutableSearchPaths() -> [String] {
+        var paths = environment["PATH"]?
+            .split(separator: ":")
+            .map(String.init) ?? []
+
+        let fallbackHomeDirectory =
+            environment["HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let homeDirectory = fallbackHomeDirectory.isEmpty ? FileManager.default.homeDirectoryForCurrentUser.path : fallbackHomeDirectory
+
+        let fallbackPaths = [
+            (homeDirectory as NSString).appendingPathComponent(".local/bin"),
+            (homeDirectory as NSString).appendingPathComponent("bin"),
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/opt/local/bin",
+            "/usr/bin",
+            "/bin"
+        ]
+
+        for path in fallbackPaths where !paths.contains(path) {
+            paths.append(path)
+        }
+
+        return paths
     }
 
     private func waitForProcess(
@@ -1005,10 +1191,6 @@ final class ExternalProcessorRunner {
                 group.cancelAll()
                 throw error
             }
-        }
-
-        if process.terminationStatus != 0 {
-            throw ExternalProcessorRunnerError.launchFailed("Process exited with status \(process.terminationStatus).")
         }
     }
 }
@@ -1325,6 +1507,7 @@ final class AppModel: ObservableObject {
         static let targetLanguage = "targetLanguage"
         static let activationShortcut = "activationShortcut"
         static let modeCycleShortcut = "modeCycleShortcut"
+        static let processorShortcut = "processorShortcut"
         static let asrBackend = "asrBackend"
         static let remoteASRConfig = "remoteASRConfig"
         static let interfaceTheme = "interfaceTheme"
@@ -1393,6 +1576,12 @@ final class AppModel: ObservableObject {
     @Published var modeCycleShortcut: ActivationShortcut {
         didSet {
             persistModeCycleShortcut()
+        }
+    }
+
+    @Published var processorShortcut: ActivationShortcut {
+        didSet {
+            persistProcessorShortcut()
         }
     }
 
@@ -1563,6 +1752,18 @@ final class AppModel: ObservableObject {
             shouldPersistModeCycleShortcut = true
         }
 
+        let shouldPersistProcessorShortcut: Bool
+        if
+            let data = defaults.data(forKey: Keys.processorShortcut),
+            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
+        {
+            self.processorShortcut = decoded
+            shouldPersistProcessorShortcut = false
+        } else {
+            self.processorShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+            shouldPersistProcessorShortcut = true
+        }
+
         if
             let storedBackend = defaults.string(forKey: Keys.asrBackend),
             let backend = ASRBackend(rawValue: storedBackend)
@@ -1598,6 +1799,9 @@ final class AppModel: ObservableObject {
         }
         if shouldPersistModeCycleShortcut {
             persistModeCycleShortcut()
+        }
+        if shouldPersistProcessorShortcut {
+            persistProcessorShortcut()
         }
 
         refreshDictionaryState()
@@ -1860,6 +2064,10 @@ final class AppModel: ObservableObject {
 
     func setModeCycleShortcut(_ shortcut: ActivationShortcut) {
         modeCycleShortcut = shortcut
+    }
+
+    func setProcessorShortcut(_ shortcut: ActivationShortcut) {
+        processorShortcut = shortcut
     }
 
     func cyclePostProcessingMode() {
@@ -2128,6 +2336,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func persistProcessorShortcut() {
+        if let data = try? encoder.encode(processorShortcut) {
+            defaults.set(data, forKey: Keys.processorShortcut)
+        }
+    }
+
     private func persistRemoteASRConfiguration() {
         if let data = try? encoder.encode(remoteASRConfiguration) {
             defaults.set(data, forKey: Keys.remoteASRConfig)
@@ -2254,6 +2468,7 @@ final class AppModel: ObservableObject {
             Keys.selectedExternalProcessorEntryID,
             Keys.targetLanguage,
             Keys.modeCycleShortcut,
+            Keys.processorShortcut,
             Keys.asrBackend,
             Keys.remoteASRConfig,
             Keys.interfaceTheme
@@ -2366,8 +2581,17 @@ extension AppWorkflowSupport {
         targetLanguage: SupportedLanguage
     ) -> String {
         let fallbackPrompt = """
+        You are VoicePi's external transcript refiner.
+        The transcript is provided via stdin.
+
         Rewrite the transcript into polished text.
         Preserve intent, remove filler, and output only the final text.
+
+        Rules:
+        - Return only the final rewritten text.
+        - Do not add explanations, notes, labels, markdown, bullet points, or quality scores.
+        - Do not describe what you changed.
+        - If the transcript is already clean, return the cleaned final text only.
         """
 
         let trimmedPrompt = resolvedRefinementPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)

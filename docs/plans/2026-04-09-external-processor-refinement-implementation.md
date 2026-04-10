@@ -8,6 +8,17 @@
 
 **Tech Stack:** Swift 5.9, AppKit, Foundation `Process`, Swift Testing, SwiftPM
 
+## Confirmed Constraint
+
+Local verification on 2026-04-10 confirmed that the Alma backend in this plan must stay pure CLI and one-shot:
+
+- `alma run` is the supported Alma integration contract for Phase 1
+- `alma run` does not provide a documented reusable multi-turn session contract for this feature
+- Alma's persistent thread behavior exists behind local APIs and WebSocket flows, but this implementation must not depend on them
+- VoicePi must not call Alma local HTTP APIs or WebSocket endpoints directly for the Alma CLI backend
+
+As a result, this plan does not include persistent conversation state, thread reuse, or session resurrection across refinement calls.
+
 ### Task 1: Add pure models and persistence for external processors
 
 **Files:**
@@ -106,6 +117,7 @@ Add pure tests for:
 - Alma CLI command merge order
 - incompatible Alma flags being rejected
 - required prompt and stdin wiring metadata
+- session-oriented or undocumented flags being rejected for the Alma CLI backend
 
 Suggested test names:
 
@@ -150,6 +162,8 @@ Reject flags such as:
 - `-v`
 - `--verbose`
 
+Also reject session-oriented or undocumented flags for this backend contract. The Alma integration in this plan is intentionally limited to documented one-shot CLI refinement.
+
 Do not use a shell string. Build argv arrays only.
 
 **Step 4: Run test to verify it passes**
@@ -181,6 +195,7 @@ Add tests that prove:
 - empty stdout falls back to original text
 - non-zero exit, missing executable, and timeout return failure
 - settings-level test action uses the same validation and runner path
+- repeated Alma runner invocations are treated as independent one-shot executions
 
 Suggested test names:
 
@@ -414,3 +429,4 @@ Verify manually:
 6. confirm the centered result review panel appears
 7. confirm `Insert` writes reviewed text back to the original input target
 8. confirm `Copy`, `Retry`, and `Dismiss` behave correctly
+9. confirm repeated runs behave as independent one-shot refinements rather than a shared Alma conversation

@@ -11,6 +11,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarController(_ controller: StatusBarController, didSaveRemoteASRConfiguration configuration: RemoteASRConfiguration)
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut)
+    func statusBarController(_ controller: StatusBarController, didUpdateProcessorShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didRequestTest configuration: LLMConfiguration) async -> Result<String, Error>
     func statusBarController(_ controller: StatusBarController, didRequestRemoteASRTest configuration: RemoteASRConfiguration) async -> Result<String, Error>
     func statusBarControllerDidRequestOpenAccessibilitySettings(_ controller: StatusBarController)
@@ -263,6 +264,7 @@ final class StatusBarController: NSObject {
     static let primaryMenuActionTitles = [
         "Language",
         "Text Processing",
+        "Processors…",
         "Refinement Prompt",
         "Check for Updates…",
         "Settings…",
@@ -389,6 +391,11 @@ final class StatusBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func openExternalProcessorManagerFromShortcut() {
+        showSettingsWindow(section: .externalProcessors)
+        settingsWindowController?.openExternalProcessorManagerSheetFromShortcut()
+    }
+
     private func configureStatusItem() {
         guard let button = statusItem.button else { return }
         button.imagePosition = .imageOnly
@@ -471,6 +478,14 @@ final class StatusBarController: NSObject {
         menu.addItem(llmRoot)
         self.llmMenu = llmMenu
         rebuildLLMMenu()
+
+        let processorsItem = NSMenuItem(
+            title: "Processors…",
+            action: #selector(openExternalProcessorManagerFromMenu),
+            keyEquivalent: ""
+        )
+        processorsItem.target = self
+        menu.addItem(processorsItem)
 
         menu.addItem(.separator())
 
@@ -1001,6 +1016,11 @@ final class StatusBarController: NSObject {
     }
 
     @objc
+    private func openExternalProcessorManagerFromMenu() {
+        openExternalProcessorManagerFromShortcut()
+    }
+
+    @objc
     private func checkForUpdatesFromMenu() {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1115,6 +1135,11 @@ protocol SettingsWindowControllerDelegate: AnyObject {
 
     func settingsWindowController(
         _ controller: SettingsWindowController,
+        didUpdateProcessorShortcut shortcut: ActivationShortcut
+    )
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
         didRequestTest configuration: LLMConfiguration
     ) async -> Result<String, Error>
 
@@ -1151,6 +1176,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let externalProcessorManagerAddArgumentButtonTitle = "+"
     static let externalProcessorManagerEmptyStateText = "No processors configured yet. Click + to add one."
     static let externalProcessorManagerManageButtonTitle = "Processors"
+    static let navigationIconTopPadding: CGFloat = 4
     static let strictModeHelpText = "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
     static let promptEditorBodyHintText = "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
     static let promptEditorBodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -1244,6 +1270,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let shortcutHintLabel = NSTextField(labelWithString: "")
     private let modeShortcutRecorderField = ShortcutRecorderField()
     private let modeShortcutHintLabel = NSTextField(labelWithString: "")
+    private let processorShortcutRecorderField = ShortcutRecorderField()
+    private let processorShortcutHintLabel = NSTextField(labelWithString: "")
 
     private let microphoneStatusLabel = NSTextField(labelWithString: "")
     private let speechStatusLabel = NSTextField(labelWithString: "")
@@ -1417,6 +1445,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         selectSection(section)
     }
 
+    func openExternalProcessorManagerSheetFromShortcut() {
+        show(section: .externalProcessors)
+        presentExternalProcessorManagerSheet()
+    }
+
     func setAboutUpdatePresentation(
         _ presentation: AppUpdateCardPresentation,
         primaryAction: (() -> Void)? = nil,
@@ -1466,8 +1499,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = pageBackgroundColor.cgColor
 
+        let titleLabel = NSTextField(labelWithString: "VoicePi Settings")
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.alignment = .left
+
+        let subtitleLabel = NSTextField(labelWithString: "Quick controls for permissions, dictation, dictionary, and processor settings.")
+        subtitleLabel.font = .systemFont(ofSize: 11)
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.alignment = .left
+
+        let titleStack = NSStackView(views: [titleLabel, subtitleLabel])
+        titleStack.orientation = .vertical
+        titleStack.spacing = 2
+        titleStack.alignment = .leading
+
         let navigation = makeSectionNavigation()
         navigation.translatesAutoresizingMaskIntoConstraints = false
+
+        let headerRow = NSStackView(views: [titleStack, NSView(), navigation])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 12
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
 
         let separator = NSBox()
         separator.boxType = .separator
@@ -1475,19 +1528,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(navigation)
+        contentView.addSubview(headerRow)
         contentView.addSubview(separator)
         contentView.addSubview(contentContainer)
 
         NSLayoutConstraint.activate([
-            navigation.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            navigation.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 18),
-            navigation.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -18),
-            navigation.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            headerRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            headerRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            headerRow.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
 
             separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 12),
+            separator.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 12),
 
             contentContainer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             contentContainer.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 24),
@@ -1569,6 +1621,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         modeShortcutHintLabel.maximumNumberOfLines = 0
         modeShortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use for quick mode switching."
 
+        processorShortcutRecorderField.target = self
+        processorShortcutRecorderField.action = #selector(processorShortcutRecorderChanged(_:))
+        processorShortcutHintLabel.font = .systemFont(ofSize: 12)
+        processorShortcutHintLabel.textColor = .secondaryLabelColor
+        processorShortcutHintLabel.alignment = .left
+        processorShortcutHintLabel.lineBreakMode = .byWordWrapping
+        processorShortcutHintLabel.maximumNumberOfLines = 0
+        processorShortcutHintLabel.stringValue = processorShortcutHintText(for: model.processorShortcut)
+
         configureAppearanceControl()
 
         let shortcutControl = NSStackView(views: [shortcutRecorderField, shortcutHintLabel])
@@ -1581,9 +1642,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         modeShortcutControl.spacing = 8
         modeShortcutControl.alignment = .leading
 
+        let processorShortcutControl = NSStackView(views: [processorShortcutRecorderField, processorShortcutHintLabel])
+        processorShortcutControl.orientation = .vertical
+        processorShortcutControl.spacing = 8
+        processorShortcutControl.alignment = .leading
+
         let overviewSection = makeGroupedSection(rows: [
             makePreferenceRow(title: "Activation Shortcut", control: shortcutControl),
             makePreferenceRow(title: "Mode Switch Shortcut", control: modeShortcutControl),
+            makePreferenceRow(title: "Processor Shortcut", control: processorShortcutControl),
             makePreferenceRow(title: "Appearance", control: interfaceThemeControl),
             makePreferenceRow(title: "Recognition Language", control: homeLanguageLabel),
             makePreferenceRow(title: "Mode Switching", control: homeModeShortcutLabel),
@@ -1597,7 +1664,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 icon: "waveform.and.mic",
                 eyebrow: "General",
                 title: "A tighter control center for dictation, translation, and post-processing.",
-                description: "VoicePi stays in the menu bar, lets you keep a dedicated record shortcut, and can also cycle text-processing modes from a separate global shortcut."
+                description: "VoicePi stays in the menu bar, lets you keep dedicated shortcuts for recording and mode switching, and can reopen processor output from a third global shortcut."
             ),
             overviewSection,
             homeSummaryLabel
@@ -2149,6 +2216,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if !modeShortcutRecorderField.isRecordingShortcut {
             modeShortcutRecorderField.shortcut = model.modeCycleShortcut
         }
+        if !processorShortcutRecorderField.isRecordingShortcut {
+            processorShortcutRecorderField.shortcut = model.processorShortcut
+        }
 
         interfaceThemeControl.selectedSegment = SettingsPresentation.selectedThemeIndex(for: model.interfaceTheme)
 
@@ -2173,8 +2243,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         homeLLMLabel.stringValue = presentation.llmSummary
         shortcutHintLabel.stringValue = presentation.shortcutHint
         modeShortcutHintLabel.stringValue = presentation.modeShortcutHint
+        processorShortcutHintLabel.stringValue = processorShortcutHintText(for: model.processorShortcut)
         homeSummaryLabel.stringValue = presentation.statusSummary
         homeSummaryLabel.textColor = presentation.statusTone == .error ? .systemRed : .secondaryLabelColor
+    }
+
+    private func processorShortcutHintText(for shortcut: ActivationShortcut) -> String {
+        if shortcut.isEmpty {
+            return "Set a processor shortcut to start a dedicated voice capture that always runs through the selected processor."
+        }
+
+        if shortcut.isRegisteredHotkeyCompatible {
+            return "Current shortcut: \(shortcut.displayString). It starts a dedicated processor capture, and standard shortcuts work without Input Monitoring."
+        }
+
+        return "Current shortcut: \(shortcut.displayString). It starts a dedicated processor capture. Advanced shortcuts require Input Monitoring, and Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
     }
 
     private func refreshASRSection() {
@@ -2780,6 +2863,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         model.setModeCycleShortcut(shortcut)
         delegate?.settingsWindowController(self, didUpdateModeCycleShortcut: shortcut)
+        reloadFromModel()
+        window?.makeFirstResponder(nil)
+    }
+
+    @objc
+    private func processorShortcutRecorderChanged(_ sender: ShortcutRecorderField) {
+        let shortcut = sender.shortcut
+
+        guard !shortcut.isEmpty else {
+            sender.shortcut = model.processorShortcut
+            return
+        }
+
+        model.setProcessorShortcut(shortcut)
+        delegate?.settingsWindowController(self, didUpdateProcessorShortcut: shortcut)
         reloadFromModel()
         window?.makeFirstResponder(nil)
     }
@@ -4119,6 +4217,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func closeExternalProcessorManagerSheet() {
         captureExternalProcessorManagerEdits()
+        persistExternalProcessorManagerState()
 
         externalProcessorManagerState = ExternalProcessorManagerState(
             entries: model.externalProcessorEntries,
@@ -4945,10 +5044,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let button = StyledSettingsButton(title: section.title, role: .navigation, target: self, action: #selector(sectionChanged(_:)))
             button.tag = section.rawValue
             button.setButtonType(.toggle)
-            button.image = NSImage(
-                systemSymbolName: iconName(for: section),
-                accessibilityDescription: section.title
-            )?.withSymbolConfiguration(.init(pointSize: 12.5, weight: .medium))
+            button.image = navigationSectionIcon(for: section)
             button.imagePosition = .imageAbove
             button.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
@@ -4979,6 +5075,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .dictionary:
             return "book.closed"
         }
+    }
+
+    private func navigationSectionIcon(for section: SettingsSection) -> NSImage? {
+        guard let symbolImage = NSImage(
+            systemSymbolName: iconName(for: section),
+            accessibilityDescription: section.title
+        )?.withSymbolConfiguration(.init(pointSize: 12.5, weight: .medium)) else {
+            return nil
+        }
+
+        let paddedSize = NSSize(
+            width: symbolImage.size.width,
+            height: symbolImage.size.height + Self.navigationIconTopPadding
+        )
+        let paddedImage = NSImage(size: paddedSize)
+        paddedImage.lockFocus()
+        symbolImage.draw(
+            in: NSRect(origin: .zero, size: symbolImage.size),
+            from: NSRect(origin: .zero, size: symbolImage.size),
+            operation: .sourceOver,
+            fraction: 1
+        )
+        paddedImage.unlockFocus()
+        paddedImage.isTemplate = true
+        return paddedImage
     }
 
     private func makeFeatureHeader(icon: String, eyebrow: String, title: String, description: String) -> NSView {
@@ -5581,6 +5702,14 @@ extension StatusBarController: SettingsWindowControllerDelegate {
 
     func settingsWindowController(
         _ controller: SettingsWindowController,
+        didUpdateProcessorShortcut shortcut: ActivationShortcut
+    ) {
+        refreshAll()
+        delegate?.statusBarController(self, didUpdateProcessorShortcut: shortcut)
+    }
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
         didSaveRemoteASRConfiguration configuration: RemoteASRConfiguration
     ) {
         refreshAll()
@@ -6039,7 +6168,7 @@ final class StyledSettingsButton: NSButton {
         setButtonType(role == .navigation ? .toggle : .momentaryPushIn)
         if role == .navigation {
             imageScaling = .scaleProportionallyDown
-            imageHugsTitle = false
+            imageHugsTitle = true
         }
         applyAppearance(isSelected: false)
     }

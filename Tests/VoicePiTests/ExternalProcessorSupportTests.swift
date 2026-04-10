@@ -23,6 +23,7 @@ struct ExternalProcessorSupportTests {
             "0.2",
             "Refine this transcript"
         ])
+        #expect(invocation.timeout == .seconds(120))
     }
 
     @Test
@@ -64,5 +65,63 @@ struct ExternalProcessorSupportTests {
                 )
             }
         }
+    }
+
+    @Test
+    func externalProcessorOutputValidatorAcceptsUnchangedOutput() throws {
+        let output = try ExternalProcessorOutputValidator.validate(
+            "hello world",
+            againstInput: "hello world"
+        )
+
+        #expect(output == "hello world")
+    }
+
+    @Test
+    func externalProcessorOutputValidatorAcceptsMetaCommentary() throws {
+        let output = try ExternalProcessorOutputValidator.validate(
+            """
+            如果 QA 测试通过，我们明天就可以发布。
+
+            改写说明：
+            - 去除了口语化填充词
+
+            质量评估：
+            - 总分：43/50
+            """,
+            againstInput: "um I think we should probably ship it tomorrow"
+        )
+
+        #expect(output.contains("改写说明"))
+    }
+
+    @Test
+    func externalProcessorOutputValidatorAcceptsCleanFinalText() throws {
+        let output = try ExternalProcessorOutputValidator.validate(
+            "If QA passes, we can ship tomorrow.",
+            againstInput: "um I think we should probably ship it tomorrow"
+        )
+
+        #expect(output == "If QA passes, we can ship tomorrow.")
+    }
+
+    @Test
+    func externalProcessorOutputValidatorStripsAnsiAndControlSequences() throws {
+        let output = try ExternalProcessorOutputValidator.validate(
+            "\u{001B}[2K\u{001B}[1G\r\u{001B}[32mPolished result\u{001B}[0m",
+            againstInput: "raw input"
+        )
+
+        #expect(output == "Polished result")
+    }
+
+    @Test
+    func externalProcessorOutputSanitizerDetectsSemanticallyUnchangedText() {
+        #expect(
+            ExternalProcessorOutputSanitizer.isSemanticallyUnchanged(
+                "  This   is \n a test ",
+                comparedTo: "this is a test"
+            )
+        )
     }
 }
