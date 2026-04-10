@@ -30,6 +30,7 @@ struct PostInjectionLearningSession: Equatable {
 final class PostInjectionLearningCoordinator {
     private struct ActiveState {
         let session: PostInjectionLearningSession
+        var referenceText: String
         var pendingSuggestion: DictionarySuggestion?
         var pendingSince: Date?
     }
@@ -56,7 +57,10 @@ final class PostInjectionLearningCoordinator {
             return
         }
 
-        activeState = ActiveState(session: session)
+        activeState = ActiveState(
+            session: session,
+            referenceText: session.insertedText
+        )
     }
 
     func cancelTracking() {
@@ -99,7 +103,7 @@ final class PostInjectionLearningCoordinator {
         }
 
         guard let suggestion = extractor.extractSuggestion(
-            injectedText: state.session.insertedText,
+            injectedText: state.referenceText,
             editedText: value,
             sourceApplication: state.session.sourceApplication,
             capturedAt: now
@@ -115,7 +119,10 @@ final class PostInjectionLearningCoordinator {
            let pendingSince = state.pendingSince
         {
             if now.timeIntervalSince(pendingSince) >= configuration.stabilizationInterval {
-                activeState = nil
+                state.referenceText = value
+                state.pendingSuggestion = nil
+                state.pendingSince = nil
+                activeState = state
                 return suggestion
             }
 

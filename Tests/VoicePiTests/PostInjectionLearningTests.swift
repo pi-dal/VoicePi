@@ -52,13 +52,13 @@ struct PostInjectionLearningTests {
     }
 
     @Test
-    func emitsAtMostOneSuggestionPerSession() throws {
+    func capturesMultipleStableSuggestionsWithinOneSession() throws {
         let coordinator = PostInjectionLearningCoordinator()
         let baseTime = Date(timeIntervalSince1970: 1_700_003_020)
 
         coordinator.startTracking(
             .init(
-                insertedText: "Use postgre in production",
+                insertedText: "Use postgre with cloud flare in production",
                 targetIdentifier: "target-3",
                 sourceApplication: "com.example.editor",
                 startedAt: baseTime
@@ -67,26 +67,35 @@ struct PostInjectionLearningTests {
 
         #expect(
             coordinator.processSnapshot(
-                snapshot(target: "target-3", text: "Use PostgreSQL in production"),
+                snapshot(target: "target-3", text: "Use PostgreSQL with cloud flare in production"),
                 now: baseTime.addingTimeInterval(0.2)
             ) == nil
         )
 
         let firstSuggestion = try #require(
             coordinator.processSnapshot(
-                snapshot(target: "target-3", text: "Use PostgreSQL in production"),
+                snapshot(target: "target-3", text: "Use PostgreSQL with cloud flare in production"),
                 now: baseTime.addingTimeInterval(1.5)
             )
         )
 
         #expect(firstSuggestion.proposedCanonical == "PostgreSQL")
-        #expect(coordinator.isTracking == false)
-
-        let secondSuggestion = coordinator.processSnapshot(
-            snapshot(target: "target-3", text: "Use PostgreSQL in production"),
-            now: baseTime.addingTimeInterval(2.2)
+        #expect(coordinator.isTracking == true)
+        #expect(
+            coordinator.processSnapshot(
+                snapshot(target: "target-3", text: "Use PostgreSQL with Cloudflare in production"),
+                now: baseTime.addingTimeInterval(1.8)
+            ) == nil
         )
-        #expect(secondSuggestion == nil)
+
+        let secondSuggestion = try #require(
+            coordinator.processSnapshot(
+                snapshot(target: "target-3", text: "Use PostgreSQL with Cloudflare in production"),
+                now: baseTime.addingTimeInterval(3.1)
+            )
+        )
+        #expect(secondSuggestion.proposedCanonical == "Cloudflare")
+        #expect(secondSuggestion.proposedAliases == ["cloud flare"])
     }
 
     @Test

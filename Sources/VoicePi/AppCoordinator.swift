@@ -1310,7 +1310,10 @@ final class AppController: NSObject {
                 ) {
                     let queued = self.model.enqueueDictionarySuggestion(suggestion)
                     self.statusBarController?.refreshAll()
-                    guard queued else { return }
+                    guard queued else {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        continue
+                    }
 
                     self.dictionarySuggestionToastController.show(
                         payload: DictionarySuggestionToastPayload(
@@ -1320,7 +1323,8 @@ final class AppController: NSObject {
                         )
                     )
                     self.statusBarController?.setTransientStatus("Dictionary suggestion captured")
-                    return
+                    try? await Task.sleep(for: .milliseconds(250))
+                    continue
                 }
 
                 try? await Task.sleep(for: .milliseconds(250))

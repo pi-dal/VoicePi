@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a structured user dictionary to VoicePi, surface low-friction dictionary management in Settings, and learn candidate terms from post-injection user edits with a one-time review toast and suggestion queue.
+**Goal:** Add a structured user dictionary to VoicePi, surface low-friction dictionary management in Settings, and learn candidate terms from post-injection user edits with a review toast and suggestion queue that can accumulate multiple stabilized corrections within one learning window.
 
 **Architecture:** Keep the dictionary out of `UserDefaults` and store it as versioned JSON under `~/Library/Application Support/VoicePi/Dictionary.json`, with a separate suggestion queue file beside it. Build the feature in layers: pure dictionary models and stores first, then pure diff/suggestion extraction, then a short-lived post-injection learning coordinator, then Settings UI, then LLM prompt integration and runtime approval/review wiring.
 
@@ -149,7 +149,7 @@ Add tests for a pure coordinator/state machine that:
 
 - starts tracking only after a successful injection
 - ignores edits after the watch window expires
-- emits at most one toast-worthy suggestion per recording
+- can emit multiple stabilized suggestions within one recording's watch window
 - waits for 1.2 seconds of stable text before reporting a suggestion
 - ignores target changes and empty/unreadable snapshots
 
@@ -163,6 +163,7 @@ Expected: FAIL because the learning coordinator and richer target snapshot types
 Implement:
 
 - a short-lived learning coordinator with a 15 second watch window and 1.2 second stabilization timer
+- a rolling text baseline so each accepted suggestion becomes the reference for subsequent edits in the same watch window
 - a richer editable target snapshot API that can identify the focused element and read its text value when available
 - a small injection session payload returned by `TextInjector` or assembled around injection so the coordinator knows what was inserted and where
 
@@ -193,7 +194,7 @@ git commit -m "feat: add post-injection dictionary learning tracking"
 Add tests that:
 
 - load the toast with summary text and three actions: `Approve`, `Review`, `Dismiss`
-- verify the toast exposes only one suggestion per session
+- verify the toast presents the latest captured suggestion without ending the learning session
 - verify `Dismiss` closes the toast without deleting the queued suggestion
 - verify `Approve` calls into a supplied handler
 - verify `Review` calls into a supplied handler
@@ -447,9 +448,10 @@ Verify manually:
 - add a canonical term plus aliases in Settings
 - refine speech containing that term and confirm the LLM keeps the preferred spelling
 - inject text into a normal editable target
-- edit the injected term in place
+- edit one injected term in place
 - wait for the 1.2 second stabilization period
-- confirm the toast appears once with `Approve`, `Review`, and `Dismiss`
+- edit a second injected term before the 15 second watch window expires
+- confirm each stabilized correction is queued as its own suggestion and the toast updates with `Approve`, `Review`, and `Dismiss`
 - confirm `Approve` writes directly into the formal dictionary
 - confirm `Review` opens `Dictionary > Suggestions`
 - confirm `Dismiss` keeps the suggestion queued

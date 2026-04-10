@@ -565,6 +565,7 @@ In **Settings → Dictionary**:
 - **Edit** is scoped to the selected row only and exposes:
   - one canonical field
   - one comma-separated aliases field
+- After VoicePi injects text into an editable field, it watches that field briefly and can queue multiple stabilized term corrections from the same editing session.
 - **Export Text** and **Export JSON** copy the current dictionary snapshot.
 
 ## Prompt Workspace
