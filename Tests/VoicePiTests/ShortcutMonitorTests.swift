@@ -167,6 +167,31 @@ struct ShortcutMonitorTests {
     }
 
     @Test
+    @MainActor
+    func registeredHotkeyMonitorDeduplicatesRepeatedPressUntilRelease() {
+        let monitor = RegisteredHotkeyMonitor()
+        var pressCount = 0
+        var releaseCount = 0
+        monitor.onPress = {
+            pressCount += 1
+        }
+        monitor.onRelease = {
+            releaseCount += 1
+        }
+
+        #expect(monitor.processHotKeyEventKind(UInt32(kEventHotKeyPressed)))
+        #expect(monitor.processHotKeyEventKind(UInt32(kEventHotKeyPressed)))
+        #expect(monitor.processHotKeyEventKind(UInt32(kEventHotKeyReleased)))
+        #expect(monitor.processHotKeyEventKind(UInt32(kEventHotKeyReleased)))
+
+        #expect(pressCount == 1)
+        #expect(releaseCount == 1)
+
+        #expect(monitor.processHotKeyEventKind(UInt32(kEventHotKeyPressed)))
+        #expect(pressCount == 2)
+    }
+
+    @Test
     func multiModifierShortcutDoesNotSuppressPartialModifierPress() {
         let shortcut = ActivationShortcut(
             keyCodes: [],

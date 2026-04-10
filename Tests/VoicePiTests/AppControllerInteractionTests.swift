@@ -75,6 +75,27 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func currentShortcutsRequireInputMonitoringWhenProcessorShortcutIsAdvanced() {
+        #expect(
+            AppController.shortcutsRequireInputMonitoring(
+                activationShortcut: ActivationShortcut(
+                    keyCodes: [35],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                modeCycleShortcut: ActivationShortcut(
+                    keyCodes: [17],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                processorShortcut: ActivationShortcut(
+                    keyCodes: [],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+                )
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func hotkeyMonitorPlanFallsBackToListenOnlyWhenAccessibilityIsMissing() {
         #expect(
             AppController.hotkeyMonitorPlan(
@@ -267,6 +288,92 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func externalProcessorRefinementUsesResultReviewPanelWhileStandardModesDoNot() {
+        #expect(
+            AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .externalProcessor,
+                postProcessingMode: .refinement
+            )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .refinement
+            )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .externalProcessor,
+                postProcessingMode: .disabled
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func processorShortcutStartsDedicatedProcessorCaptureWhenIdle() {
+        #expect(
+            AppController.processorShortcutPressAction(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false
+            ) == .startProcessorCapture(.externalProcessorShortcut)
+        )
+    }
+
+    @Test
+    @MainActor
+    func processorShortcutIsIgnoredWhileProcessingRelease() {
+        #expect(
+            AppController.processorShortcutPressAction(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: true
+            ) == .ignore
+        )
+    }
+
+    @Test
+    @MainActor
+    func processorShortcutForcesExternalProcessorRefinementWorkflow() {
+        let selection = AppController.effectiveProcessingWorkflow(
+            postProcessingMode: .translation,
+            refinementProvider: .llm,
+            override: .externalProcessorShortcut
+        )
+
+        #expect(
+            selection == .init(
+                postProcessingMode: .refinement,
+                refinementProvider: .externalProcessor
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func processorShortcutDoesNotSilentlyDeliverRawTranscriptWhenProcessorFails() {
+        #expect(
+            AppController.postProcessingFailureAction(
+                workflowOverride: .externalProcessorShortcut,
+                didExternalProcessorSucceed: false
+            ) == .surfaceProcessorFailure
+        )
+    }
+
+    @Test
+    @MainActor
+    func standardWorkflowStillDeliversTranscriptWhenNoProcessorOverrideExists() {
+        #expect(
+            AppController.postProcessingFailureAction(
+                workflowOverride: nil,
+                didExternalProcessorSucceed: false
+            ) == .continueTranscriptDelivery
+        )
+    }
+
+    @Test
+    @MainActor
     func modeCycleRepeatStartsOnlyWhenShortcutIsConfiguredAndAppIsIdle() {
         #expect(
             AppController.shouldStartModeCycleRepeat(
@@ -421,6 +528,33 @@ struct AppControllerInteractionTests {
             AppController.launchPermissionPlan(
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: cycleShortcut,
+                inputMonitoringState: .unknown
+            ) == .init(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                useSystemAccessibilityPrompt: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func launchPermissionPlanAlsoRequestsInputMonitoringWhenProcessorShortcutIsAdvanced() {
+        let activationShortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        let processorShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.launchPermissionPlan(
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                processorShortcut: processorShortcut,
                 inputMonitoringState: .unknown
             ) == .init(
                 requestMediaPermissions: true,
@@ -674,6 +808,24 @@ struct AppControllerInteractionTests {
             ) == AppController.HotkeyMonitorPlan(
                 strategy: .eventTap(.listenOnly),
                 statusMessage: "Mode-switch shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func processorShortcutCanListenWithoutAccessibilityButWarnsThatSuppressionIsUnavailable() {
+        #expect(
+            AppController.processorShortcutMonitorPlan(
+                shortcut: ActivationShortcut(
+                    keyCodes: [],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                inputMonitoringState: .granted,
+                accessibilityState: .denied
+            ) == AppController.HotkeyMonitorPlan(
+                strategy: .eventTap(.listenOnly),
+                statusMessage: "Processor shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
             )
         )
     }

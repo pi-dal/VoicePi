@@ -6,6 +6,95 @@ import Testing
 struct AppModelPersistenceTests {
     @Test
     @MainActor
+    func legacyDefaultsFallBackToLLMRefinementProvider() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.legacyDefaultsFallBackToLLMRefinementProvider.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        #expect(model.refinementProvider == .llm)
+        #expect(model.selectedExternalProcessorEntryID == nil)
+        #expect(model.externalProcessorEntries.isEmpty)
+        #expect(model.processorShortcut.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func externalProcessorSettingsPersistAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.externalProcessorSettingsPersistAcrossReloads.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let primaryEntry = ExternalProcessorEntry(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/Users/pi-dal/.local/bin/alma",
+            additionalArguments: [
+                ExternalProcessorArgument(
+                    id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+                    value: "--raw"
+                ),
+                ExternalProcessorArgument(
+                    id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+                    value: "--no-stream"
+                )
+            ],
+            isEnabled: true
+        )
+        let secondaryEntry = ExternalProcessorEntry(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            name: "Alma CLI Backup",
+            kind: .almaCLI,
+            executablePath: "/opt/homebrew/bin/alma",
+            additionalArguments: [
+                ExternalProcessorArgument(
+                    id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+                    value: "-m"
+                ),
+                ExternalProcessorArgument(
+                    id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!,
+                    value: "anthropic:claude"
+                )
+            ],
+            isEnabled: false
+        )
+
+        model.refinementProvider = .externalProcessor
+        model.externalProcessorEntries = [primaryEntry, secondaryEntry]
+        model.selectedExternalProcessorEntryID = secondaryEntry.id
+
+        let reloaded = AppModel(defaults: defaults)
+
+        #expect(reloaded.refinementProvider == .externalProcessor)
+        #expect(reloaded.selectedExternalProcessorEntryID == secondaryEntry.id)
+        #expect(reloaded.externalProcessorEntries == [primaryEntry, secondaryEntry])
+    }
+
+    @Test
+    @MainActor
+    func selectedExternalProcessorSkipsDisabledEntries() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.selectedExternalProcessorSkipsDisabledEntries.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        let disabledEntry = ExternalProcessorEntry(
+            id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+            name: "Disabled Alma",
+            kind: .almaCLI,
+            executablePath: "alma",
+            isEnabled: false
+        )
+        let enabledEntry = ExternalProcessorEntry(
+            id: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!,
+            name: "Enabled Alma",
+            kind: .almaCLI,
+            executablePath: "alma",
+            isEnabled: true
+        )
+
+        model.externalProcessorEntries = [disabledEntry, enabledEntry]
+        model.selectedExternalProcessorEntryID = disabledEntry.id
+
+        #expect(model.selectedExternalProcessorEntry() == enabledEntry)
+    }
+
+    @Test
+    @MainActor
     func postProcessingRemoteConfigurationAndPromptWorkspacePersistAcrossReloads() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.postProcessingAndRemoteConfigurationsPersistAcrossReloads.\(UUID().uuidString)")!
         let model = AppModel(defaults: defaults)
@@ -38,6 +127,12 @@ struct AppModelPersistenceTests {
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
             )
         )
+        model.setProcessorShortcut(
+            ActivationShortcut(
+                keyCodes: [35],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
 
         let reloaded = AppModel(defaults: defaults)
 
@@ -62,6 +157,12 @@ struct AppModelPersistenceTests {
         #expect(
             reloaded.modeCycleShortcut == ActivationShortcut(
                 keyCodes: [49],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
+        #expect(
+            reloaded.processorShortcut == ActivationShortcut(
+                keyCodes: [35],
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
             )
         )

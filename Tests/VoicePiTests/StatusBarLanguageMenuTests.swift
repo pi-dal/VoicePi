@@ -11,6 +11,7 @@ struct StatusBarLanguageMenuTests {
             StatusBarController.primaryMenuActionTitles == [
                 "Language",
                 "Text Processing",
+                "Processors…",
                 "Refinement Prompt",
                 "Check for Updates…",
                 "Settings…",

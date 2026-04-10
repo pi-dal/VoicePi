@@ -22,6 +22,7 @@ final class RegisteredHotkeyMonitor {
 
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
+    private var isHotKeyPressed = false
     private let hotKeyBootstrapper: ((RegisteredHotkeyMonitor) -> Bool)?
     private let hotKeyDisabler: ((RegisteredHotkeyMonitor) -> Void)?
 
@@ -61,6 +62,7 @@ final class RegisteredHotkeyMonitor {
         }
 
         isMonitoring = false
+        isHotKeyPressed = false
     }
 
     deinit {
@@ -163,18 +165,31 @@ final class RegisteredHotkeyMonitor {
             return Self.eventDispatchStatus(shouldHandleEvent: false)
         }
 
-        switch GetEventKind(event) {
-        case UInt32(kEventHotKeyPressed):
-            delegate?.shortcutMonitorDidPress()
-            onPress?()
-        case UInt32(kEventHotKeyReleased):
-            delegate?.shortcutMonitorDidRelease()
-            onRelease?()
-        default:
+        guard processHotKeyEventKind(GetEventKind(event)) else {
             return Self.eventDispatchStatus(shouldHandleEvent: false)
         }
 
         return Self.eventDispatchStatus(shouldHandleEvent: true)
+    }
+
+    @discardableResult
+    func processHotKeyEventKind(_ eventKind: UInt32) -> Bool {
+        switch eventKind {
+        case UInt32(kEventHotKeyPressed):
+            guard !isHotKeyPressed else { return true }
+            isHotKeyPressed = true
+            delegate?.shortcutMonitorDidPress()
+            onPress?()
+            return true
+        case UInt32(kEventHotKeyReleased):
+            guard isHotKeyPressed else { return true }
+            isHotKeyPressed = false
+            delegate?.shortcutMonitorDidRelease()
+            onRelease?()
+            return true
+        default:
+            return false
+        }
     }
 
     private static func allocateHotKeyIdentifier() -> UInt32 {
