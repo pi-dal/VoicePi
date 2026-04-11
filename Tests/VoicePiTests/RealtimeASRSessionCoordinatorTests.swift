@@ -6,8 +6,9 @@ import Testing
 @Suite(.serialized)
 struct RealtimeASRSessionCoordinatorTests {
     @Test
-    func partialEventsUpdateCallbackAndFramesForwardToClient() async throws {
+    func preconnectFramesBufferUntilConnectSucceedsThenFlushInOrder() async throws {
         let client = StreamingClientStub()
+        client.suspendConnect = true
         let coordinator = RealtimeASRSessionCoordinator(clientFactory: { _ in client })
 
         let sink = CallbackSink()
@@ -18,12 +19,18 @@ struct RealtimeASRSessionCoordinatorTests {
             callbacks: sink.callbacks
         )
 
-        client.emit(.partial(text: "hello"))
         await coordinator.handleCapturedFrame(Data([1, 2, 3]))
+        await coordinator.handleCapturedFrame(Data([4, 5, 6]))
+        #expect(client.sentFrames.isEmpty)
+
+        await waitUntilConnectSuspended(client)
+        client.resumeConnectSuccess()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        client.emit(.partial(text: "hello"))
         try? await Task.sleep(nanoseconds: 20_000_000)
 
         #expect(sink.partialTexts == ["hello"])
-        #expect(client.sentFrames == [Data([1, 2, 3])])
+        #expect(client.sentFrames == [Data([1, 2, 3]), Data([4, 5, 6])])
     }
 
     @Test
@@ -33,22 +40,18 @@ struct RealtimeASRSessionCoordinatorTests {
         let coordinator = RealtimeASRSessionCoordinator(clientFactory: { _ in client })
         let sink = CallbackSink()
 
-        let startTask = Task {
-            try await coordinator.start(
-                configuration: .fixtureAliyunRealtime(),
-                backend: .remoteAliyunASR,
-                language: .english,
-                callbacks: sink.callbacks
-            )
-        }
+        try await coordinator.start(
+            configuration: .fixtureAliyunRealtime(),
+            backend: .remoteAliyunASR,
+            language: .english,
+            callbacks: sink.callbacks
+        )
 
         try? await Task.sleep(nanoseconds: 20_000_000)
         await coordinator.cancelConnecting()
 
-        await #expect(throws: RemoteASRStreamingError.cancelled) {
-            _ = try await startTask.value
-        }
         #expect(sink.errors.isEmpty)
+        #expect(client.closeCalls == 1)
     }
 
     @Test
@@ -64,6 +67,7 @@ struct RealtimeASRSessionCoordinatorTests {
             language: .english,
             callbacks: sink.callbacks
         )
+        await waitUntilStreamingReady(coordinator)
 
         let final = try await coordinator.stopAndResolveFinal()
 
@@ -72,22 +76,25 @@ struct RealtimeASRSessionCoordinatorTests {
     }
 
     @Test
-    func connectFailureReportsTerminalError() async {
+    func connectFailureAfterCaptureBeginsDegradesToBatchFallbackWithoutTerminalError() async throws {
         let client = StreamingClientStub()
-        client.connectResult = .failure(RemoteASRStreamingError.connectFailed("timeout"))
+        client.suspendConnect = true
         let coordinator = RealtimeASRSessionCoordinator(clientFactory: { _ in client })
         let sink = CallbackSink()
 
-        await #expect(throws: RemoteASRStreamingError.connectFailed("timeout")) {
-            try await coordinator.start(
-                configuration: .fixtureAliyunRealtime(),
-                backend: .remoteAliyunASR,
-                language: .english,
-                callbacks: sink.callbacks
-            )
-        }
+        try await coordinator.start(
+            configuration: .fixtureAliyunRealtime(),
+            backend: .remoteAliyunASR,
+            language: .english,
+            callbacks: sink.callbacks
+        )
+        await coordinator.handleCapturedFrame(Data([1, 2, 3]))
+        await waitUntilConnectSuspended(client)
+        client.resumeConnectFailure(RemoteASRStreamingError.connectFailed("timeout"))
+        try? await Task.sleep(nanoseconds: 20_000_000)
 
-        #expect(sink.errors == ["timeout"])
+        #expect(coordinator.degradedToBatchFallback)
+        #expect(sink.errors.isEmpty)
     }
 
     @Test
@@ -103,6 +110,7 @@ struct RealtimeASRSessionCoordinatorTests {
             language: .english,
             callbacks: sink.callbacks
         )
+        await waitUntilStreamingReady(coordinator)
 
         await #expect(throws: RemoteASRStreamingError.finalTimeout) {
             _ = try await coordinator.stopAndResolveFinal()
@@ -112,7 +120,7 @@ struct RealtimeASRSessionCoordinatorTests {
     }
 
     @Test
-    func sendFailureReportsTerminalErrorAndClosesSession() async throws {
+    func sendFailureDegradesToBatchFallback() async throws {
         let client = StreamingClientStub()
         client.sendError = RemoteASRStreamingError.streamSendFailed("send failed")
         let coordinator = RealtimeASRSessionCoordinator(clientFactory: { _ in client })
@@ -124,12 +132,32 @@ struct RealtimeASRSessionCoordinatorTests {
             language: .english,
             callbacks: sink.callbacks
         )
+        await waitUntilStreamingReady(coordinator)
 
         await coordinator.handleCapturedFrame(Data([1, 2, 3]))
         try? await Task.sleep(nanoseconds: 20_000_000)
 
-        #expect(sink.errors.contains { $0.contains("send failed") })
+        #expect(coordinator.degradedToBatchFallback)
+        #expect(sink.errors.isEmpty)
         #expect(client.closeCalls == 1)
+    }
+
+    private func waitUntilStreamingReady(_ coordinator: RealtimeASRSessionCoordinator) async {
+        for _ in 0..<50 {
+            if coordinator.isRealtimeStreamingReady {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    private func waitUntilConnectSuspended(_ client: StreamingClientStub) async {
+        for _ in 0..<50 {
+            if client.isConnectSuspended {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 }
 
@@ -198,6 +226,10 @@ private final class StreamingClientStub: RemoteASRStreamingClient, @unchecked Se
     private(set) var finishCalls = 0
     private(set) var closeCalls = 0
 
+    var isConnectSuspended: Bool {
+        connectContinuation != nil
+    }
+
     init() {
         var continuation: AsyncStream<RemoteASRStreamEvent>.Continuation!
         self.events = AsyncStream { continuation = $0 }
@@ -249,6 +281,16 @@ private final class StreamingClientStub: RemoteASRStreamingClient, @unchecked Se
     func close() async {
         closeCalls += 1
         connectContinuation?.resume(throwing: RemoteASRStreamingError.cancelled)
+        connectContinuation = nil
+    }
+
+    func resumeConnectSuccess() {
+        connectContinuation?.resume()
+        connectContinuation = nil
+    }
+
+    func resumeConnectFailure(_ error: Error) {
+        connectContinuation?.resume(throwing: error)
         connectContinuation = nil
     }
 

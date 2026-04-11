@@ -118,6 +118,12 @@ final class AppController: NSObject {
         case surfaceProcessorFailure
     }
 
+    enum RealtimeStopResolution: Equatable {
+        case realtimeFinalization
+        case batchFallback
+        case silentCancel
+    }
+
     enum ReleaseAction: Equatable {
         case ignore
     }
@@ -368,6 +374,32 @@ final class AppController: NSObject {
         postProcessingMode: PostProcessingMode
     ) -> Bool {
         refinementProvider == .externalProcessor && postProcessingMode == .refinement
+    }
+
+    static func realtimeStopResolution(
+        backend: ASRBackend,
+        isRealtimeStreamingReady: Bool,
+        degradedToBatchFallback: Bool,
+        hasRecordedAudio: Bool,
+        localFallback: String
+    ) -> RealtimeStopResolution {
+        guard backend.usesRealtimeStreaming else {
+            return .batchFallback
+        }
+
+        if degradedToBatchFallback {
+            return hasRecordedAudio || !localFallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .batchFallback
+                : .silentCancel
+        }
+
+        if isRealtimeStreamingReady {
+            return .realtimeFinalization
+        }
+
+        return hasRecordedAudio || !localFallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .batchFallback
+            : .silentCancel
     }
 
     static func shouldPromptAccessibilityOnLaunch(
@@ -1043,6 +1075,7 @@ final class AppController: NSObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     await self.realtimeASRSessionCoordinator.cancelConnecting()
+                    self.speechRecorder.cancelImmediately()
                     self.isStartingRecording = false
                     self.statusBarController?.setRecording(false)
                     self.floatingPanelController.hide()
@@ -1334,20 +1367,41 @@ final class AppController: NSObject {
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {
         if model.asrBackend.usesRealtimeStreaming {
-            isAwaitingRealtimeFinalization = true
-            defer { isAwaitingRealtimeFinalization = false }
+            let resolution = Self.realtimeStopResolution(
+                backend: model.asrBackend,
+                isRealtimeStreamingReady: realtimeASRSessionCoordinator.isRealtimeStreamingReady,
+                degradedToBatchFallback: realtimeASRSessionCoordinator.degradedToBatchFallback,
+                hasRecordedAudio: realtimeASRSessionCoordinator.hasCapturedAudio,
+                localFallback: localFallback
+            )
 
-            do {
-                let transcript = try await realtimeASRSessionCoordinator.stopAndResolveFinal()
-                return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            } catch let error as RemoteASRStreamingError where error == .cancelled {
+            switch resolution {
+            case .silentCancel:
+                await realtimeASRSessionCoordinator.close()
                 return ""
-            } catch {
-                presentTransientError("Realtime ASR failed: \(error.localizedDescription)")
-                return ""
+            case .batchFallback:
+                await realtimeASRSessionCoordinator.close()
+                return await resolveBatchTranscriptAfterRecording(localFallback: localFallback)
+            case .realtimeFinalization:
+                isAwaitingRealtimeFinalization = true
+                defer { isAwaitingRealtimeFinalization = false }
+
+                do {
+                    let transcript = try await realtimeASRSessionCoordinator.stopAndResolveFinal()
+                    return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                } catch let error as RemoteASRStreamingError where error == .cancelled {
+                    return ""
+                } catch {
+                    await realtimeASRSessionCoordinator.close()
+                    return await resolveBatchTranscriptAfterRecording(localFallback: localFallback)
+                }
             }
         }
 
+        return await resolveBatchTranscriptAfterRecording(localFallback: localFallback)
+    }
+
+    private func resolveBatchTranscriptAfterRecording(localFallback: String) async -> String {
         return await AppWorkflowSupport.resolveTranscriptAfterRecording(
             backend: model.asrBackend,
             localFallback: localFallback,
@@ -1387,14 +1441,13 @@ final class AppController: NSObject {
             }
         )
 
-        try await realtimeASRSessionCoordinator.start(
-            configuration: model.remoteASRConfiguration,
-            backend: model.asrBackend,
-            language: model.selectedLanguage,
-            callbacks: callbacks
-        )
-
         do {
+            try await realtimeASRSessionCoordinator.start(
+                configuration: model.remoteASRConfiguration,
+                backend: model.asrBackend,
+                language: model.selectedLanguage,
+                callbacks: callbacks
+            )
             try await speechRecorder.startRecording(
                 mode: .captureOnly,
                 onCapturedAudioFrame: { [weak self] frame in
@@ -1406,6 +1459,7 @@ final class AppController: NSObject {
                 }
             )
         } catch {
+            speechRecorder.cancelImmediately()
             await realtimeASRSessionCoordinator.close()
             throw error
         }

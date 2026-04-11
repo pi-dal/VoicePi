@@ -266,6 +266,62 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func realtimeStopResolutionUsesRealtimeFinalizationWhenStreamingIsReady() {
+        #expect(
+            AppController.realtimeStopResolution(
+                backend: .remoteAliyunASR,
+                isRealtimeStreamingReady: true,
+                degradedToBatchFallback: false,
+                hasRecordedAudio: true,
+                localFallback: ""
+            ) == .realtimeFinalization
+        )
+    }
+
+    @Test
+    @MainActor
+    func realtimeStopResolutionUsesBatchFallbackWhenStreamingIsNotReadyAndAudioExists() {
+        #expect(
+            AppController.realtimeStopResolution(
+                backend: .remoteVolcengineASR,
+                isRealtimeStreamingReady: false,
+                degradedToBatchFallback: false,
+                hasRecordedAudio: true,
+                localFallback: ""
+            ) == .batchFallback
+        )
+    }
+
+    @Test
+    @MainActor
+    func realtimeStopResolutionCancelsSilentlyWhenStreamingIsNotReadyAndNoAudioExists() {
+        #expect(
+            AppController.realtimeStopResolution(
+                backend: .remoteAliyunASR,
+                isRealtimeStreamingReady: false,
+                degradedToBatchFallback: false,
+                hasRecordedAudio: false,
+                localFallback: "   "
+            ) == .silentCancel
+        )
+    }
+
+    @Test
+    @MainActor
+    func realtimeStopResolutionUsesBatchFallbackWhenRealtimeSessionHasDegraded() {
+        #expect(
+            AppController.realtimeStopResolution(
+                backend: .remoteAliyunASR,
+                isRealtimeStreamingReady: true,
+                degradedToBatchFallback: true,
+                hasRecordedAudio: true,
+                localFallback: ""
+            ) == .batchFallback
+        )
+    }
+
+    @Test
+    @MainActor
     func transcriptDeliveryRouteUsesInjectionForEditableTarget() {
         #expect(
             AppController.transcriptDeliveryRoute(
