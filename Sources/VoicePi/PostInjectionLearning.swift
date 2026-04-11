@@ -95,10 +95,14 @@ final class PostInjectionLearningCoordinator {
             }
         }
 
-        guard let value = snapshot.textValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty
-        else {
+        guard let rawValue = snapshot.textValue else {
             activeState = state
+            return nil
+        }
+
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            activeState = nil
             return nil
         }
 

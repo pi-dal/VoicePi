@@ -168,6 +168,36 @@ struct PostInjectionLearningTests {
         )
     }
 
+    @Test
+    func stopsTrackingWhenUserClearsInjectedTextCompletely() {
+        let coordinator = PostInjectionLearningCoordinator()
+        let baseTime = Date(timeIntervalSince1970: 1_700_003_050)
+
+        coordinator.startTracking(
+            .init(
+                insertedText: "Use postgre",
+                targetIdentifier: "target-6",
+                sourceApplication: "com.example.editor",
+                startedAt: baseTime
+            )
+        )
+
+        #expect(
+            coordinator.processSnapshot(
+                .init(inspection: .editable, targetIdentifier: "target-6", textValue: ""),
+                now: baseTime.addingTimeInterval(0.4)
+            ) == nil
+        )
+        #expect(coordinator.isTracking == false)
+
+        #expect(
+            coordinator.processSnapshot(
+                snapshot(target: "target-6", text: "Default candidate item"),
+                now: baseTime.addingTimeInterval(1.8)
+            ) == nil
+        )
+    }
+
     private func snapshot(target: String, text: String) -> EditableTextTargetSnapshot {
         .init(
             inspection: .editable,
