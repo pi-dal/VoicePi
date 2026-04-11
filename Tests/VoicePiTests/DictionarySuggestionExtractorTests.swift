@@ -70,6 +70,18 @@ struct DictionarySuggestionExtractorTests {
     }
 
     @Test
+    func unrelatedWholeTermReplacementDoesNotProduceSuggestion() {
+        let suggestion = extractor.extractSuggestion(
+            injectedText: "postgre",
+            editedText: "keyboard",
+            sourceApplication: nil,
+            capturedAt: Date()
+        )
+
+        #expect(suggestion == nil)
+    }
+
+    @Test
     func replacementsOutsideAllowedLengthRangeDoNotProduceSuggestion() {
         let extractor = DictionarySuggestionExtractor(
             minimumReplacementLength: 3,

@@ -76,6 +76,10 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
             return nil
         }
 
+        guard looksLikeTermVariant(original: original, corrected: corrected) else {
+            return nil
+        }
+
         guard !looksLikeLargeRewrite(original: original, corrected: corrected) else {
             return nil
         }
@@ -164,11 +168,63 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         return false
     }
 
+    private func looksLikeTermVariant(original: String, corrected: String) -> Bool {
+        let originalComparable = comparableTermForm(original)
+        let correctedComparable = comparableTermForm(corrected)
+        guard !originalComparable.isEmpty, !correctedComparable.isEmpty else {
+            return false
+        }
+
+        if originalComparable == correctedComparable {
+            return true
+        }
+
+        if originalComparable.contains(correctedComparable) || correctedComparable.contains(originalComparable) {
+            return true
+        }
+
+        let shorterLength = min(originalComparable.count, correctedComparable.count)
+        let requiredSharedLength = max(2, shorterLength / 2)
+        return longestCommonSubstringLength(between: originalComparable, and: correctedComparable) >= requiredSharedLength
+    }
+
     private func splitIntoTokens(_ value: String) -> [String] {
         value
             .split { $0.isWhitespace }
             .map(String.init)
             .filter { !$0.isEmpty }
+    }
+
+    private func comparableTermForm(_ value: String) -> String {
+        DictionaryNormalization.normalized(value)
+            .unicodeScalars
+            .filter { CharacterSet.alphanumerics.contains($0) }
+            .map(String.init)
+            .joined()
+    }
+
+    private func longestCommonSubstringLength(between lhs: String, and rhs: String) -> Int {
+        let lhsCharacters = Array(lhs)
+        let rhsCharacters = Array(rhs)
+        guard !lhsCharacters.isEmpty, !rhsCharacters.isEmpty else {
+            return 0
+        }
+
+        var previousRow = Array(repeating: 0, count: rhsCharacters.count + 1)
+        var longest = 0
+
+        for lhsCharacter in lhsCharacters {
+            var currentRow = Array(repeating: 0, count: rhsCharacters.count + 1)
+            for (index, rhsCharacter) in rhsCharacters.enumerated() {
+                if lhsCharacter == rhsCharacter {
+                    currentRow[index + 1] = previousRow[index] + 1
+                    longest = max(longest, currentRow[index + 1])
+                }
+            }
+            previousRow = currentRow
+        }
+
+        return longest
     }
 
     private func normalizeCandidateTerm(_ value: String) -> String {
