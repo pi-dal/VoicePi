@@ -269,10 +269,12 @@ private final class FloatingPanelContentViewController: NSViewController {
     private(set) var preferredPanelWidth: CGFloat = 260
     private var phase: Phase = .recording
     private let compactBannerWidth: CGFloat = 260
+    private let maximumBannerWidth: CGFloat = 660
+    private let bannerHorizontalInset: CGFloat = 18
+    private let bannerIndicatorWidth: CGFloat = 44
     private let recordingIndicatorSpacing: CGFloat = 14
     private let refiningIndicatorSpacing: CGFloat = 22
     private let transcriptFadeWidth: CGFloat = 28
-    private let maximumVisibleTranscriptWidth: CGFloat = 560
     private let transcriptUpdateAnimationKey = "voicepi.transcriptUpdate"
 
     override func viewDidLayout() {
@@ -482,14 +484,12 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     private func recalculatePreferredWidth() {
-        let measuredTextWidth = measuredTranscriptWidth()
         switch phase {
         case .recording:
-            let elasticTextWidth = max(160, min(560, measuredTextWidth + 8))
-            preferredPanelWidth = 18 + 44 + 14 + elasticTextWidth + 18
+            preferredPanelWidth = bannerPreferredWidth(indicatorSpacing: recordingIndicatorSpacing)
             heightConstraint?.constant = 56
         case .refining:
-            preferredPanelWidth = compactBannerWidth
+            preferredPanelWidth = bannerPreferredWidth(indicatorSpacing: refiningIndicatorSpacing)
             heightConstraint?.constant = 56
         case .modeSwitch:
             preferredPanelWidth = 452
@@ -557,7 +557,22 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     private func transcriptNeedsFade(for text: String? = nil) -> Bool {
-        measuredTranscriptWidth(for: text) > maximumVisibleTranscriptWidth
+        measuredTranscriptWidth(for: text) > maximumVisibleTranscriptWidth(for: phase)
+    }
+
+    private func bannerPreferredWidth(indicatorSpacing: CGFloat) -> CGFloat {
+        let elasticTextWidth = max(
+            160,
+            min(maximumVisibleTranscriptWidth(for: phase), measuredTranscriptWidth() + 8)
+        )
+        let computedWidth =
+            bannerHorizontalInset + bannerIndicatorWidth + indicatorSpacing + elasticTextWidth + bannerHorizontalInset
+        return max(compactBannerWidth, computedWidth)
+    }
+
+    private func maximumVisibleTranscriptWidth(for phase: Phase) -> CGFloat {
+        let indicatorSpacing = phase == .refining ? refiningIndicatorSpacing : recordingIndicatorSpacing
+        return maximumBannerWidth - bannerHorizontalInset - bannerIndicatorWidth - indicatorSpacing - bannerHorizontalInset
     }
 
     private func measuredTranscriptWidth(for text: String? = nil) -> CGFloat {
