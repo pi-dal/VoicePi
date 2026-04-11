@@ -135,6 +135,78 @@ struct PostInjectionLearningTests {
     }
 
     @Test
+    func adoptsFullFieldTextAsBaselineWhenExistingPrefixSurroundsInsertedText() {
+        let coordinator = PostInjectionLearningCoordinator(
+            configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
+        )
+        let baseTime = Date(timeIntervalSince1970: 1_700_003_035)
+
+        coordinator.startTracking(
+            .init(
+                insertedText: "你好",
+                targetIdentifier: "target-prefix",
+                sourceApplication: "com.example.editor",
+                startedAt: baseTime
+            )
+        )
+
+        #expect(
+            coordinator.processSnapshot(
+                snapshot(target: "target-prefix", text: "M你好"),
+                now: baseTime.addingTimeInterval(0.3)
+            ) == nil
+        )
+        #expect(
+            coordinator.processSnapshot(
+                snapshot(target: "target-prefix", text: "M你好"),
+                now: baseTime.addingTimeInterval(1.7)
+            ) == nil
+        )
+        #expect(coordinator.isTracking)
+    }
+
+    @Test
+    func stillLearnsReplacementAfterAdoptingPrefixedBaseline() throws {
+        let coordinator = PostInjectionLearningCoordinator(
+            configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
+        )
+        let baseTime = Date(timeIntervalSince1970: 1_700_003_036)
+
+        coordinator.startTracking(
+            .init(
+                insertedText: "postgre",
+                targetIdentifier: "target-prefixed-learning",
+                sourceApplication: "com.example.editor",
+                startedAt: baseTime
+            )
+        )
+
+        #expect(
+            coordinator.processSnapshot(
+                snapshot(target: "target-prefixed-learning", text: "Mpostgre"),
+                now: baseTime.addingTimeInterval(0.2)
+            ) == nil
+        )
+
+        #expect(
+            coordinator.processSnapshot(
+                snapshot(target: "target-prefixed-learning", text: "MPostgreSQL"),
+                now: baseTime.addingTimeInterval(0.6)
+            ) == nil
+        )
+
+        let suggestion = try #require(
+            coordinator.processSnapshot(
+                snapshot(target: "target-prefixed-learning", text: "MPostgreSQL"),
+                now: baseTime.addingTimeInterval(2.0)
+            )
+        )
+
+        #expect(suggestion.proposedCanonical == "PostgreSQL")
+        #expect(suggestion.proposedAliases == ["postgre"])
+    }
+
+    @Test
     func ignoresTargetChangesAndUnreadableSnapshots() {
         let coordinator = PostInjectionLearningCoordinator()
         let baseTime = Date(timeIntervalSince1970: 1_700_003_040)

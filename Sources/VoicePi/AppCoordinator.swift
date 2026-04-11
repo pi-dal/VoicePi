@@ -139,6 +139,17 @@ final class AppController: NSObject {
         }
     }
 
+    enum ResultReviewInsertionError: LocalizedError {
+        case sourceApplicationActivationFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .sourceApplicationActivationFailed:
+                return "VoicePi couldn't return focus to the previous app before pasting."
+            }
+        }
+    }
+
     private let model = AppModel()
     private let recordingShortcutAction = ShortcutActionController()
     private let modeCycleShortcutAction = ShortcutActionController()
@@ -182,6 +193,8 @@ final class AppController: NSObject {
     private var pendingResultReviewSourceText: String?
     private var pendingResultReviewPayload: ResultReviewPanelPayload?
     private var pendingResultReviewWorkflowOverride: RecordingWorkflowOverride?
+    private var pendingResultReviewTargetSnapshot: EditableTextTargetSnapshot?
+    private var pendingResultReviewSourceApplication: NSRunningApplication?
     private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
 
     static let shortcutMonitoringFailureMessage =
@@ -374,6 +387,32 @@ final class AppController: NSObject {
         postProcessingMode: PostProcessingMode
     ) -> Bool {
         refinementProvider == .externalProcessor && postProcessingMode == .refinement
+    }
+
+    static func resultReviewInsertionTargetSnapshot(
+        capturedTargetSnapshot: EditableTextTargetSnapshot?,
+        currentTargetSnapshot: EditableTextTargetSnapshot
+    ) -> EditableTextTargetSnapshot {
+        capturedTargetSnapshot ?? currentTargetSnapshot
+    }
+
+    static func resultReviewInsertionSourceApplicationBundleID(
+        capturedSourceApplicationBundleID: String?,
+        currentFrontmostApplicationBundleID: String?
+    ) -> String? {
+        let capturedBundleID = capturedSourceApplicationBundleID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let capturedBundleID, !capturedBundleID.isEmpty {
+            return capturedBundleID
+        }
+
+        let currentBundleID = currentFrontmostApplicationBundleID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let currentBundleID, !currentBundleID.isEmpty {
+            return currentBundleID
+        }
+
+        return nil
     }
 
     static func realtimeStopResolution(
@@ -1140,7 +1179,14 @@ final class AppController: NSObject {
             )
 
             if shouldPresentResultReviewPanel && didSucceed {
-                self.presentResultReviewPanel(text: finalText, sourceText: captured)
+                let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
+                let sourceApplication = NSWorkspace.shared.frontmostApplication
+                self.presentResultReviewPanel(
+                    text: finalText,
+                    sourceText: captured,
+                    targetSnapshot: targetSnapshot,
+                    sourceApplication: sourceApplication
+                )
             } else if failureAction == .surfaceProcessorFailure {
                 let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
                 let trimmedFailureMessage = processorFailureMessage?
@@ -1209,7 +1255,9 @@ final class AppController: NSObject {
 
     private func presentResultReviewPanel(
         text: String,
-        sourceText: String
+        sourceText: String,
+        targetSnapshot: EditableTextTargetSnapshot? = nil,
+        sourceApplication: NSRunningApplication? = nil
     ) {
         guard let payload = ResultReviewPanelPayload(text: text, sourceText: sourceText) else {
             presentTransientError("External processor returned unreadable output.")
@@ -1221,6 +1269,8 @@ final class AppController: NSObject {
         pendingResultReviewSourceText = sourceText
         pendingResultReviewPayload = payload
         pendingResultReviewWorkflowOverride = activeRecordingWorkflowOverride
+        pendingResultReviewTargetSnapshot = targetSnapshot
+        pendingResultReviewSourceApplication = sourceApplication
         floatingPanelController.hide(immediately: true)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
@@ -1232,6 +1282,8 @@ final class AppController: NSObject {
         pendingResultReviewSourceText = nil
         pendingResultReviewPayload = nil
         pendingResultReviewWorkflowOverride = nil
+        pendingResultReviewTargetSnapshot = nil
+        pendingResultReviewSourceApplication = nil
         resultReviewPanelController.hide()
     }
 
@@ -1269,13 +1321,28 @@ final class AppController: NSObject {
             let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
 
             if shouldPresentResultReviewPanel && didSucceed {
-                self.presentResultReviewPanel(text: refinedText, sourceText: sourceText)
+                self.presentResultReviewPanel(
+                    text: refinedText,
+                    sourceText: sourceText,
+                    targetSnapshot: self.pendingResultReviewTargetSnapshot,
+                    sourceApplication: self.pendingResultReviewSourceApplication
+                )
             }
         }
     }
 
     private func insertReviewedText(_ text: String) {
-        let targetSnapshot = editableTextTargetInspector.currentSnapshot()
+        let currentTargetSnapshot = editableTextTargetInspector.currentSnapshot()
+        let targetSnapshot = Self.resultReviewInsertionTargetSnapshot(
+            capturedTargetSnapshot: pendingResultReviewTargetSnapshot,
+            currentTargetSnapshot: currentTargetSnapshot
+        )
+        let sourceApplication = pendingResultReviewSourceApplication
+        let sourceApplicationBundleID = Self.resultReviewInsertionSourceApplicationBundleID(
+            capturedSourceApplicationBundleID: sourceApplication?.bundleIdentifier,
+            currentFrontmostApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        )
+        let reviewPayload = pendingResultReviewPayload
         switch Self.transcriptDeliveryRoute(
             for: text,
             targetInspection: targetSnapshot.inspection
@@ -1284,17 +1351,23 @@ final class AppController: NSObject {
             clearResultReviewState()
             statusBarController?.setTransientStatus(nil)
         case .injectableTarget:
+            resultReviewPanelController.hide()
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
+                    try await self.restoreResultReviewSourceApplicationIfNeeded(sourceApplication)
                     let injectionRecord = try await self.textInjector.injectAndRecord(text: text)
                     self.clearResultReviewState()
                     self.statusBarController?.setTransientStatus("Injected")
                     self.beginPostInjectionLearning(
                         targetSnapshot: targetSnapshot,
+                        sourceApplicationOverride: sourceApplicationBundleID,
                         injectionRecord: injectionRecord
                     )
                 } catch {
+                    if let reviewPayload {
+                        self.resultReviewPanelController.show(payload: reviewPayload)
+                    }
                     self.presentTransientError(error.localizedDescription)
                 }
             }
@@ -1315,12 +1388,13 @@ final class AppController: NSObject {
 
     private func beginPostInjectionLearning(
         targetSnapshot: EditableTextTargetSnapshot,
+        sourceApplicationOverride: String? = nil,
         injectionRecord: TextInjectionRecord
     ) {
         postInjectionLearningTask?.cancel()
         postInjectionLearningTask = nil
 
-        let sourceApplication = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let sourceApplication = sourceApplicationOverride ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let session = PostInjectionLearningSession(
             insertedText: injectionRecord.text,
             targetIdentifier: targetSnapshot.targetIdentifier,
@@ -1363,6 +1437,29 @@ final class AppController: NSObject {
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
+    }
+
+    private func restoreResultReviewSourceApplicationIfNeeded(
+        _ sourceApplication: NSRunningApplication?
+    ) async throws {
+        guard let sourceApplication else {
+            return
+        }
+
+        let voicePiBundleID = Bundle.main.bundleIdentifier
+        if sourceApplication.bundleIdentifier == voicePiBundleID {
+            return
+        }
+
+        guard !sourceApplication.isTerminated else {
+            throw ResultReviewInsertionError.sourceApplicationActivationFailed
+        }
+
+        guard sourceApplication.activate(options: []) else {
+            throw ResultReviewInsertionError.sourceApplicationActivationFailed
+        }
+
+        try await Task.sleep(for: .milliseconds(120))
     }
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {

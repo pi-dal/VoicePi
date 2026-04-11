@@ -367,6 +367,67 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func resultReviewInsertPrefersCapturedEditableTargetSnapshotOverLivePanelSnapshot() {
+        let capturedSnapshot = EditableTextTargetSnapshot(
+            inspection: .editable,
+            targetIdentifier: "target-1",
+            textValue: "Original draft"
+        )
+        let livePanelSnapshot = EditableTextTargetSnapshot(
+            inspection: .notEditable,
+            targetIdentifier: "voicepi-panel",
+            textValue: nil
+        )
+
+        #expect(
+            AppController.resultReviewInsertionTargetSnapshot(
+                capturedTargetSnapshot: capturedSnapshot,
+                currentTargetSnapshot: livePanelSnapshot
+            ) == capturedSnapshot
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewInsertFallsBackToLiveSnapshotWhenNoCapturedTargetExists() {
+        let liveSnapshot = EditableTextTargetSnapshot(
+            inspection: .editable,
+            targetIdentifier: "target-2",
+            textValue: "Live text"
+        )
+
+        #expect(
+            AppController.resultReviewInsertionTargetSnapshot(
+                capturedTargetSnapshot: nil,
+                currentTargetSnapshot: liveSnapshot
+            ) == liveSnapshot
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewInsertPrefersCapturedSourceApplicationWhenVoicePiIsFrontmost() {
+        #expect(
+            AppController.resultReviewInsertionSourceApplicationBundleID(
+                capturedSourceApplicationBundleID: "com.apple.TextEdit",
+                currentFrontmostApplicationBundleID: "com.pi-dal.VoicePi"
+            ) == "com.apple.TextEdit"
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewInsertFallsBackToCurrentSourceApplicationWhenNothingWasCaptured() {
+        #expect(
+            AppController.resultReviewInsertionSourceApplicationBundleID(
+                capturedSourceApplicationBundleID: nil,
+                currentFrontmostApplicationBundleID: "com.apple.Safari"
+            ) == "com.apple.Safari"
+        )
+    }
+
+    @Test
+    @MainActor
     func processorShortcutStartsDedicatedProcessorCaptureWhenIdle() {
         #expect(
             AppController.processorShortcutPressAction(

@@ -82,6 +82,46 @@ struct DictionarySuggestionExtractorTests {
     }
 
     @Test
+    func leadingChineseContextDoesNotLeakIntoCorrectedTerm() {
+        let suggestion = extractor.extractSuggestion(
+            injectedText: "postgre",
+            editedText: "之前写了一段PostgreSQL",
+            sourceApplication: nil,
+            capturedAt: Date()
+        )
+
+        #expect(suggestion != nil)
+        #expect(suggestion?.proposedCanonical == "PostgreSQL")
+        #expect(suggestion?.proposedAliases == ["postgre"])
+    }
+
+    @Test
+    func leadingAsciiPrefixDoesNotLeakIntoCorrectedTerm() {
+        let suggestion = extractor.extractSuggestion(
+            injectedText: "postgre",
+            editedText: "abcpostgresql",
+            sourceApplication: nil,
+            capturedAt: Date()
+        )
+
+        #expect(suggestion != nil)
+        #expect(suggestion?.proposedCanonical == "postgresql")
+        #expect(suggestion?.proposedAliases == ["postgre"])
+    }
+
+    @Test
+    func mixedScriptConcatenationDoesNotProduceSuggestion() {
+        let suggestion = extractor.extractSuggestion(
+            injectedText: "你好",
+            editedText: "M你好z",
+            sourceApplication: nil,
+            capturedAt: Date()
+        )
+
+        #expect(suggestion == nil)
+    }
+
+    @Test
     func replacementsOutsideAllowedLengthRangeDoNotProduceSuggestion() {
         let extractor = DictionarySuggestionExtractor(
             minimumReplacementLength: 3,

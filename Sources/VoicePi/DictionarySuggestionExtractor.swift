@@ -39,7 +39,10 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         }
 
         let original = normalizeCandidateTerm(replacement.original)
-        let corrected = normalizeCandidateTerm(replacement.corrected)
+        let corrected = focusedCorrectedTerm(
+            original: original,
+            corrected: replacement.corrected
+        )
         guard !original.isEmpty, !corrected.isEmpty else {
             return nil
         }
@@ -73,6 +76,10 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         }
 
         guard punctuationNormalizedOriginal.caseInsensitiveCompare(punctuationNormalizedCorrected) != .orderedSame else {
+            return nil
+        }
+
+        guard !introducesMixedScriptNoise(original: original, corrected: corrected) else {
             return nil
         }
 
@@ -166,6 +173,106 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         }
 
         return false
+    }
+
+    private func focusedCorrectedTerm(
+        original: String,
+        corrected rawCorrected: String
+    ) -> String {
+        let normalizedRawCorrected = normalizeCandidateTerm(rawCorrected)
+        guard !normalizedRawCorrected.isEmpty else {
+            return ""
+        }
+
+        let comparableOriginal = comparableTermForm(original)
+        guard !comparableOriginal.isEmpty else {
+            return normalizedRawCorrected
+        }
+
+        guard splitIntoTokens(original).count <= 2 else {
+            return normalizedRawCorrected
+        }
+
+        let candidates = correctedSuffixCandidates(in: rawCorrected)
+
+        var bestCandidate = normalizedRawCorrected
+        var bestScore = candidateScore(
+            originalComparable: comparableOriginal,
+            candidate: normalizedRawCorrected
+        )
+
+        for candidate in candidates {
+            let normalizedCandidate = normalizeCandidateTerm(candidate)
+            guard !normalizedCandidate.isEmpty else { continue }
+            guard containsAlphaNumeric(normalizedCandidate) else { continue }
+            guard looksLikeTermVariant(original: original, corrected: normalizedCandidate) else { continue }
+
+            let score = candidateScore(
+                originalComparable: comparableOriginal,
+                candidate: normalizedCandidate
+            )
+            if score > bestScore || (score == bestScore && normalizedCandidate.count < bestCandidate.count) {
+                bestCandidate = normalizedCandidate
+                bestScore = score
+            }
+        }
+
+        return bestCandidate
+    }
+
+    private func correctedSuffixCandidates(in value: String) -> Set<String> {
+        var candidates: Set<String> = []
+        let characters = Array(value)
+
+        for startIndex in characters.indices {
+            let candidate = String(characters[startIndex...])
+            candidates.insert(candidate)
+        }
+
+        return candidates
+    }
+
+    private func candidateScore(
+        originalComparable: String,
+        candidate: String
+    ) -> Int {
+        let comparableCandidate = comparableTermForm(candidate)
+        guard !comparableCandidate.isEmpty else {
+            return .min
+        }
+
+        let commonLength = longestCommonSubstringLength(
+            between: originalComparable,
+            and: comparableCandidate
+        )
+        let containmentBonus =
+            comparableCandidate.contains(originalComparable) || originalComparable.contains(comparableCandidate)
+            ? 1_000
+            : 0
+        let tokenPenalty = splitIntoTokens(candidate).count * 10
+        let lengthPenalty = abs(comparableCandidate.count - originalComparable.count)
+
+        return containmentBonus + (commonLength * 100) - tokenPenalty - lengthPenalty
+    }
+
+    private func introducesMixedScriptNoise(
+        original: String,
+        corrected: String
+    ) -> Bool {
+        let originalProfile = letterScriptProfile(for: original)
+        let correctedProfile = letterScriptProfile(for: corrected)
+
+        return !originalProfile.isMixedAlphaScript && correctedProfile.isMixedAlphaScript
+    }
+
+    private func letterScriptProfile(for value: String) -> LetterScriptProfile {
+        let scalars = value.unicodeScalars.filter { CharacterSet.letters.contains($0) }
+        let hasASCIIAlpha = scalars.contains { $0.isASCII }
+        let hasNonASCIIAlpha = scalars.contains { !$0.isASCII }
+        return LetterScriptProfile(
+            hasASCIIAlpha: hasASCIIAlpha,
+            hasNonASCIIAlpha: hasNonASCIIAlpha
+        )
     }
 
     private func looksLikeTermVariant(original: String, corrected: String) -> Bool {
@@ -262,6 +369,15 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
 
     private func containsAlphaNumeric(_ value: String) -> Bool {
         value.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
+    }
+}
+
+private struct LetterScriptProfile {
+    let hasASCIIAlpha: Bool
+    let hasNonASCIIAlpha: Bool
+
+    var isMixedAlphaScript: Bool {
+        hasASCIIAlpha && hasNonASCIIAlpha
     }
 }
 
