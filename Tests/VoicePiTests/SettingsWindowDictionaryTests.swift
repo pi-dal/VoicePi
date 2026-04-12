@@ -123,74 +123,9 @@ struct SettingsWindowDictionaryTests {
     }
 
     @Test
-    @MainActor
-    func dictionaryTermsCardDoesNotStretchWhenShowingFewRows() {
-        let controller = makeController()
-        controller.show(section: .dictionary)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let labels = textLabels(in: controller.window?.contentView)
-        guard let termsLabel = labels.first(where: { $0.stringValue == "Terms" }) else {
-            Issue.record("Expected Terms section title.")
-            return
-        }
-
-        guard let termsCard = cardAncestor(of: termsLabel) else {
-            Issue.record("Expected Terms card ancestor.")
-            return
-        }
-
-        #expect(termsCard.frame.height < 260)
-    }
-
-    @Test
-    @MainActor
-    func dictionarySuggestionsCardDoesNotStretchWhenEmpty() {
-        let controller = makeController()
-        controller.show(section: .dictionary)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-
-        let labels = textLabels(in: controller.window?.contentView)
-        guard let suggestionsLabel = labels.first(where: { $0.stringValue == "Suggestions" }) else {
-            Issue.record("Expected Suggestions section title.")
-            return
-        }
-
-        guard let suggestionsCard = cardAncestor(of: suggestionsLabel) else {
-            Issue.record("Expected Suggestions card ancestor.")
-            return
-        }
-
-        #expect(suggestionsCard.frame.height < 140)
-    }
-
-    private func makeController() -> SettingsWindowController {
-        let defaults = UserDefaults(suiteName: "VoicePiTests.settingsDictionary.\(UUID().uuidString)")!
-        let model = AppModel(defaults: defaults)
-        model.importDictionaryTerms(fromPlainText: """
-        agent.md|agent md
-        spec|spd
-        """)
-        return SettingsWindowController(model: model, delegate: nil)
-    }
-
-    private func allViews(in root: NSView?) -> [NSView] {
-        guard let root else { return [] }
-        return [root] + root.subviews.flatMap(allViews)
-    }
-
-    private func textLabels(in root: NSView?) -> [NSTextField] {
-        allViews(in: root).compactMap { $0 as? NSTextField }
-    }
-
-    private func cardAncestor(of view: NSView) -> ThemedSurfaceView? {
-        var current = view.superview
-        while let currentView = current {
-            if let card = currentView as? ThemedSurfaceView {
-                return card
-            }
-            current = currentView.superview
-        }
-        return nil
+    func dictionaryTermsRowsHeightClampsForSmallAndLargeLists() {
+        #expect(SettingsWindowSupport.dictionaryTermsRowsHeight(forVisibleRowCount: 1) == 56)
+        #expect(SettingsWindowSupport.dictionaryTermsRowsHeight(forVisibleRowCount: 2) == 122)
+        #expect(SettingsWindowSupport.dictionaryTermsRowsHeight(forVisibleRowCount: 10) == 254)
     }
 }

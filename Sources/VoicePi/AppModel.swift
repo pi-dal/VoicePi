@@ -2311,11 +2311,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func recordHistoryEntry(text: String) {
+    func recordHistoryEntry(text: String, recordingDurationMilliseconds: Int = 0) {
         guard let historyStore else { return }
 
         do {
-            try historyStore.appendEntry(text: text)
+            try historyStore.appendEntry(
+                text: text,
+                recordingDurationMilliseconds: recordingDurationMilliseconds
+            )
             refreshHistoryState()
         } catch {
             presentError("History update failed: \(error.localizedDescription)")

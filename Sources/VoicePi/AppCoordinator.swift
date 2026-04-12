@@ -195,7 +195,9 @@ final class AppController: NSObject {
     private var pendingResultReviewWorkflowOverride: RecordingWorkflowOverride?
     private var pendingResultReviewTargetSnapshot: EditableTextTargetSnapshot?
     private var pendingResultReviewSourceApplication: NSRunningApplication?
+    private var pendingResultReviewRecordingDurationMilliseconds = 0
     private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
+    private var activeRecordingStartedAt: Date?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -1062,6 +1064,7 @@ final class AppController: NSObject {
 
         isStartingRecording = true
         activeRecordingWorkflowOverride = workflowOverride
+        activeRecordingStartedAt = nil
         latestTranscript = ""
         cancelPostInjectionLearning()
         clearResultReviewState()
@@ -1143,6 +1146,7 @@ final class AppController: NSObject {
             }
 
             let localTranscript = await self.speechRecorder.stopRecording()
+            let recordingDurationMilliseconds = self.consumeCurrentRecordingDurationMilliseconds()
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
             let asrTranscript = await self.resolveTranscriptAfterRecording(localFallback: localTranscript)
@@ -1185,7 +1189,8 @@ final class AppController: NSObject {
                     text: finalText,
                     sourceText: captured,
                     targetSnapshot: targetSnapshot,
-                    sourceApplication: sourceApplication
+                    sourceApplication: sourceApplication,
+                    recordingDurationMilliseconds: recordingDurationMilliseconds
                 )
             } else if failureAction == .surfaceProcessorFailure {
                 let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
@@ -1209,7 +1214,10 @@ final class AppController: NSObject {
                     do {
                         let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
                         self.statusBarController?.setTransientStatus("Injected")
-                        self.model.recordHistoryEntry(text: finalText)
+                        self.model.recordHistoryEntry(
+                            text: finalText,
+                            recordingDurationMilliseconds: recordingDurationMilliseconds
+                        )
                         self.beginPostInjectionLearning(
                             targetSnapshot: targetSnapshot,
                             injectionRecord: injectionRecord
@@ -1220,7 +1228,10 @@ final class AppController: NSObject {
                     self.floatingPanelController.hide()
                 case .fallbackPanel:
                     if let payload = InputFallbackPanelPayload(text: finalText) {
-                        self.model.recordHistoryEntry(text: finalText)
+                        self.model.recordHistoryEntry(
+                            text: finalText,
+                            recordingDurationMilliseconds: recordingDurationMilliseconds
+                        )
                         self.presentInputFallbackPanel(payload)
                     }
                 }
@@ -1259,7 +1270,8 @@ final class AppController: NSObject {
         text: String,
         sourceText: String,
         targetSnapshot: EditableTextTargetSnapshot? = nil,
-        sourceApplication: NSRunningApplication? = nil
+        sourceApplication: NSRunningApplication? = nil,
+        recordingDurationMilliseconds: Int = 0
     ) {
         guard let payload = ResultReviewPanelPayload(text: text, sourceText: sourceText) else {
             presentTransientError("External processor returned unreadable output.")
@@ -1273,6 +1285,7 @@ final class AppController: NSObject {
         pendingResultReviewWorkflowOverride = activeRecordingWorkflowOverride
         pendingResultReviewTargetSnapshot = targetSnapshot
         pendingResultReviewSourceApplication = sourceApplication
+        pendingResultReviewRecordingDurationMilliseconds = max(0, recordingDurationMilliseconds)
         floatingPanelController.hide(immediately: true)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
@@ -1286,6 +1299,7 @@ final class AppController: NSObject {
         pendingResultReviewWorkflowOverride = nil
         pendingResultReviewTargetSnapshot = nil
         pendingResultReviewSourceApplication = nil
+        pendingResultReviewRecordingDurationMilliseconds = 0
         resultReviewPanelController.hide()
     }
 
@@ -1327,7 +1341,8 @@ final class AppController: NSObject {
                     text: refinedText,
                     sourceText: sourceText,
                     targetSnapshot: self.pendingResultReviewTargetSnapshot,
-                    sourceApplication: self.pendingResultReviewSourceApplication
+                    sourceApplication: self.pendingResultReviewSourceApplication,
+                    recordingDurationMilliseconds: self.pendingResultReviewRecordingDurationMilliseconds
                 )
             }
         }
@@ -1340,6 +1355,7 @@ final class AppController: NSObject {
             currentTargetSnapshot: currentTargetSnapshot
         )
         let sourceApplication = pendingResultReviewSourceApplication
+        let recordingDurationMilliseconds = pendingResultReviewRecordingDurationMilliseconds
         let sourceApplicationBundleID = Self.resultReviewInsertionSourceApplicationBundleID(
             capturedSourceApplicationBundleID: sourceApplication?.bundleIdentifier,
             currentFrontmostApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -1361,7 +1377,10 @@ final class AppController: NSObject {
                     let injectionRecord = try await self.textInjector.injectAndRecord(text: text)
                     self.clearResultReviewState()
                     self.statusBarController?.setTransientStatus("Injected")
-                    self.model.recordHistoryEntry(text: text)
+                    self.model.recordHistoryEntry(
+                        text: text,
+                        recordingDurationMilliseconds: recordingDurationMilliseconds
+                    )
                     self.beginPostInjectionLearning(
                         targetSnapshot: targetSnapshot,
                         sourceApplicationOverride: sourceApplicationBundleID,
@@ -1377,7 +1396,10 @@ final class AppController: NSObject {
         case .fallbackPanel:
             clearResultReviewState()
             if let payload = InputFallbackPanelPayload(text: text) {
-                model.recordHistoryEntry(text: text)
+                model.recordHistoryEntry(
+                    text: text,
+                    recordingDurationMilliseconds: recordingDurationMilliseconds
+                )
                 presentInputFallbackPanel(payload)
             }
         }
@@ -1580,12 +1602,23 @@ final class AppController: NSObject {
         if speechRecorder.isRecording {
             speechRecorder.cancelImmediately()
         }
+        activeRecordingStartedAt = nil
 
         isStartingRecording = false
         statusBarController?.setRecording(false)
         floatingPanelController.hide()
         model.hideOverlay()
         presentTransientError(message)
+    }
+
+    private func consumeCurrentRecordingDurationMilliseconds() -> Int {
+        defer {
+            activeRecordingStartedAt = nil
+        }
+        guard let activeRecordingStartedAt else { return 0 }
+
+        let elapsed = max(0, Date().timeIntervalSince(activeRecordingStartedAt))
+        return Int((elapsed * 1000).rounded())
     }
 
     private func refineIfNeeded(_ text: String) async -> String {
@@ -2365,7 +2398,9 @@ extension AppController: ShortcutMonitorDelegate {
 }
 
 extension AppController: SpeechRecorderDelegate {
-    func speechRecorderDidStart(_ recorder: SpeechRecorder) {}
+    func speechRecorderDidStart(_ recorder: SpeechRecorder) {
+        activeRecordingStartedAt = Date()
+    }
 
     func speechRecorder(_ recorder: SpeechRecorder, didUpdateTranscript transcript: String, isFinal: Bool) {
         latestTranscript = transcript
@@ -2382,6 +2417,9 @@ extension AppController: SpeechRecorderDelegate {
 
     func speechRecorder(_ recorder: SpeechRecorder, didFail error: Error) {
         latestTranscript = recorder.latestTranscript
+        if !isProcessingRelease {
+            activeRecordingStartedAt = nil
+        }
         if !isProcessingRelease {
             statusBarController?.setRecording(false)
             presentTransientError(error.localizedDescription)

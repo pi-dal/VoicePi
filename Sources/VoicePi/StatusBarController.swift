@@ -1276,6 +1276,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var dictionaryTermsRowsHeightConstraint: NSLayoutConstraint?
     private var dictionarySuggestionRowsHeightConstraint: NSLayoutConstraint?
     private let historySummaryLabel = NSTextField(labelWithString: "")
+    private let historyUsageStatsLabel = NSTextField(labelWithString: "")
+    private let historyUsageCardsStack = NSView()
+    private let historyUsageDetailCard = ThemedSurfaceView(style: .card)
+    private let historyUsageDetailTitleLabel = NSTextField(labelWithString: "")
+    private let historyUsageDetailSubtitleLabel = NSTextField(labelWithString: "")
+    private let historyUsageLineChartView = HistoryUsageLineChartView()
+    private let historyUsageHeatmapView = HistoryUsageHeatmapView()
+    private let historyUsageTimeRangePopup = ThemedPopUpButton()
     private let historyRowsStack = NSStackView()
 
     private let shortcutRecorderField = ShortcutRecorderField()
@@ -1403,6 +1411,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var externalProcessorManagerSheetWindow: PreviewSheetWindow?
     private var librarySubviewControls: [NSSegmentedControl] = []
     private var historyEntryByIdentifier: [String: HistoryEntry] = [:]
+    private var historyUsageMetricCardViews: [HistoryUsageMetric: ThemedSurfaceView] = [:]
+    private var historyUsageMetricValueLabels: [HistoryUsageMetric: NSTextField] = [:]
+    private var historyUsageMetricLookup: [ObjectIdentifier: HistoryUsageMetric] = [:]
+    private var historyUsageSelectedMetric: HistoryUsageMetric?
+    private var historyUsageTimeRange: HistoryUsageTimeRange = .oneWeek
+    private weak var historyDocumentContainerView: NSView?
     private weak var externalProcessorManagerSelectedEntryPopup: NSPopUpButton?
     private weak var externalProcessorManagerFeedbackLabel: NSTextField?
     private weak var externalProcessorManagerEntriesContainer: NSStackView?
@@ -2218,6 +2232,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         historySummaryLabel.lineBreakMode = .byWordWrapping
         historySummaryLabel.maximumNumberOfLines = 0
 
+        historyUsageStatsLabel.font = .systemFont(ofSize: 12.5)
+        historyUsageStatsLabel.textColor = .secondaryLabelColor
+        historyUsageStatsLabel.alignment = .left
+        historyUsageStatsLabel.lineBreakMode = .byWordWrapping
+        historyUsageStatsLabel.maximumNumberOfLines = 0
+
+        historyUsageCardsStack.translatesAutoresizingMaskIntoConstraints = false
+        historyUsageCardsStack.setContentHuggingPriority(.required, for: .vertical)
+        historyUsageCardsStack.setContentCompressionResistancePriority(.required, for: .vertical)
+        let historyUsageMetricRowCount = Int(ceil(Double(HistoryUsageMetric.allCases.count) / 2.0))
+        let historyUsageMetricMinimumHeight = CGFloat(historyUsageMetricRowCount * 69 + max(0, historyUsageMetricRowCount - 1) * 8)
+        historyUsageCardsStack.heightAnchor.constraint(equalToConstant: historyUsageMetricMinimumHeight).isActive = true
+        configureHistoryUsageMetricCards()
+        historyUsageDetailCard.translatesAutoresizingMaskIntoConstraints = false
+        configureHistoryUsageDetailCard()
+
         historyRowsStack.orientation = .vertical
         historyRowsStack.spacing = 10
         historyRowsStack.alignment = .leading
@@ -2239,6 +2269,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         historyDocumentView.translatesAutoresizingMaskIntoConstraints = false
         historyView.documentView = historyDocumentView
         historyDocumentView.addSubview(contentStack)
+        historyDocumentContainerView = historyDocumentView
+
+        let backgroundTap = NSClickGestureRecognizer(
+            target: self,
+            action: #selector(handleHistoryBackgroundClick(_:))
+        )
+        backgroundTap.delaysPrimaryMouseButtonEvents = false
+        historyDocumentView.addGestureRecognizer(backgroundTap)
 
         let clipView = historyView.contentView
         NSLayoutConstraint.activate([
@@ -2418,10 +2456,258 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         rebuildDictionarySuggestionRows()
     }
 
+    private func configureHistoryUsageMetricCards() {
+        historyUsageMetricCardViews = [:]
+        historyUsageMetricValueLabels = [:]
+        historyUsageMetricLookup = [:]
+
+        for metric in HistoryUsageMetric.allCases {
+            _ = makeHistoryUsageMetricCard(for: metric)
+        }
+        rebuildHistoryUsageMetricRows()
+        applyHistoryUsageMetricSelectionState()
+    }
+
+    private func makeHistoryUsageMetricCard(for metric: HistoryUsageMetric) -> NSView {
+        let card = ThemedSurfaceView(style: .row)
+        card.identifier = NSUserInterfaceItemIdentifier("history.usage.metric.\(metric.rawValue)")
+
+        let titleLabel = makeSubtleCaption(metric.title)
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        let valueLabel = NSTextField(labelWithString: "0")
+        valueLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        valueLabel.maximumNumberOfLines = 1
+        valueLabel.lineBreakMode = .byTruncatingTail
+        valueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let stack = NSStackView(views: [titleLabel, valueLabel])
+        stack.orientation = .vertical
+        stack.spacing = 4
+        stack.alignment = .leading
+        pinCardContent(stack, into: card)
+        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        card.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        card.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let tapGesture = NSClickGestureRecognizer(
+            target: self,
+            action: #selector(selectHistoryUsageMetricFromCard(_:))
+        )
+        card.addGestureRecognizer(tapGesture)
+
+        historyUsageMetricCardViews[metric] = card
+        historyUsageMetricValueLabels[metric] = valueLabel
+        historyUsageMetricLookup[ObjectIdentifier(card)] = metric
+        return card
+    }
+
+    private func rebuildHistoryUsageMetricRows() {
+        for subview in historyUsageCardsStack.subviews {
+            subview.removeFromSuperview()
+        }
+
+        let visibleMetrics = HistoryUsageMetric.allCases
+        let columns = 2
+        var previousRow: NSView?
+
+        for index in stride(from: 0, to: visibleMetrics.count, by: columns) {
+            let rowMetrics = Array(visibleMetrics[index..<min(index + columns, visibleMetrics.count)])
+            let rowCards = rowMetrics.compactMap { historyUsageMetricCardViews[$0] }
+            let row = NSStackView(views: rowCards)
+            row.orientation = .horizontal
+            row.spacing = 8
+            row.alignment = .top
+            row.distribution = .fillEqually
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.setContentHuggingPriority(.required, for: .vertical)
+            row.setContentCompressionResistancePriority(.required, for: .vertical)
+            historyUsageCardsStack.addSubview(row)
+            NSLayoutConstraint.activate([
+                row.leadingAnchor.constraint(equalTo: historyUsageCardsStack.leadingAnchor),
+                row.trailingAnchor.constraint(equalTo: historyUsageCardsStack.trailingAnchor),
+                row.heightAnchor.constraint(equalToConstant: 69)
+            ])
+
+            if let previousRow {
+                row.topAnchor.constraint(equalTo: previousRow.bottomAnchor, constant: 8).isActive = true
+            } else {
+                row.topAnchor.constraint(equalTo: historyUsageCardsStack.topAnchor).isActive = true
+            }
+
+            previousRow = row
+        }
+
+        previousRow?.bottomAnchor.constraint(equalTo: historyUsageCardsStack.bottomAnchor).isActive = true
+    }
+
+    private func configureHistoryUsageDetailCard() {
+        historyUsageDetailTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        historyUsageDetailSubtitleLabel.font = .systemFont(ofSize: 12)
+        historyUsageDetailSubtitleLabel.textColor = .secondaryLabelColor
+        historyUsageDetailSubtitleLabel.maximumNumberOfLines = 0
+        historyUsageDetailSubtitleLabel.lineBreakMode = .byWordWrapping
+
+        historyUsageTimeRangePopup.removeAllItems()
+        historyUsageTimeRangePopup.addItems(withTitles: HistoryUsageTimeRange.allCases.map(\.title))
+        historyUsageTimeRangePopup.target = self
+        historyUsageTimeRangePopup.action = #selector(historyUsageTimeRangeChanged(_:))
+        syncHistoryUsageTimeRangePopupSelection()
+
+        historyUsageLineChartView.translatesAutoresizingMaskIntoConstraints = false
+        historyUsageLineChartView.heightAnchor.constraint(equalToConstant: 150).isActive = true
+
+        historyUsageHeatmapView.translatesAutoresizingMaskIntoConstraints = false
+        historyUsageHeatmapView.heightAnchor.constraint(equalToConstant: 170).isActive = true
+
+        let headerRow = NSStackView(views: [
+            historyUsageDetailTitleLabel,
+            NSView(),
+            historyUsageTimeRangePopup
+        ])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 10
+
+        let stack = NSStackView(views: [
+            headerRow,
+            historyUsageDetailSubtitleLabel,
+            historyUsageLineChartView,
+            historyUsageHeatmapView
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.alignment = .leading
+
+        pinCardContent(stack, into: historyUsageDetailCard)
+        historyUsageDetailCard.isHidden = true
+    }
+
+    private func refreshHistoryUsageMetricCards(using stats: HistoryUsageStats) {
+        let presentations = SettingsWindowSupport.historyUsageMetricCards(for: stats)
+        for presentation in presentations {
+            historyUsageMetricValueLabels[presentation.metric]?.stringValue = presentation.valueText
+        }
+    }
+
+    private func refreshHistoryUsageDetail(entries: [HistoryEntry]) {
+        guard let selectedMetric = historyUsageSelectedMetric else {
+            historyUsageDetailCard.isHidden = true
+            return
+        }
+
+        let visualization = SettingsWindowSupport.historyUsageVisualization(
+            entries: entries,
+            metric: selectedMetric,
+            timeRange: historyUsageTimeRange
+        )
+        historyUsageDetailTitleLabel.stringValue = "\(selectedMetric.title) Trend"
+        historyUsageDetailSubtitleLabel.stringValue =
+            "Range: \(historyUsageTimeRange.title) • \(visualization.granularity.title) (\(selectedMetric.lineChartUnit)) • Heatmap: Monday–Sunday × hour"
+        historyUsageLineChartView.metricTitle = selectedMetric.title
+        historyUsageLineChartView.points = visualization.timeline.map { point in
+            .init(date: point.date, value: point.value)
+        }
+        historyUsageLineChartView.granularity = visualization.granularity
+        historyUsageHeatmapView.metricTitle = selectedMetric.title
+        historyUsageHeatmapView.values = visualization.heatmap
+        historyUsageDetailCard.isHidden = false
+    }
+
+    private func applyHistoryUsageMetricSelectionState() {
+        let selectedMetric = historyUsageSelectedMetric
+
+        for (metric, card) in historyUsageMetricCardViews {
+            let isSelected = selectedMetric == metric
+            card.layer?.borderWidth = isSelected ? 1.8 : 1
+            card.layer?.borderColor = (isSelected
+                ? interfaceColor(
+                    light: NSColor.systemBlue.darker(),
+                    dark: NSColor.systemBlue.lighter()
+                )
+                : cardBorderColor).cgColor
+        }
+    }
+
+    @objc
+    private func selectHistoryUsageMetricFromCard(_ sender: NSClickGestureRecognizer) {
+        guard
+            let view = sender.view,
+            let selectedMetric = historyUsageMetricLookup[ObjectIdentifier(view)]
+        else {
+            return
+        }
+
+        historyUsageSelectedMetric = selectedMetric
+        applyHistoryUsageMetricSelectionState()
+        refreshHistoryUsageDetail(entries: model.historyEntries)
+    }
+
+    @objc
+    private func historyUsageTimeRangeChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        guard
+            index >= 0,
+            let selectedRange = HistoryUsageTimeRange(rawValue: index)
+        else {
+            return
+        }
+        historyUsageTimeRange = selectedRange
+        refreshHistoryUsageDetail(entries: model.historyEntries)
+    }
+
+    private func syncHistoryUsageTimeRangePopupSelection() {
+        historyUsageTimeRangePopup.selectItem(at: historyUsageTimeRange.rawValue)
+    }
+
+    @objc
+    private func handleHistoryBackgroundClick(_ sender: NSClickGestureRecognizer) {
+        guard historyUsageSelectedMetric != nil else { return }
+        guard let container = historyDocumentContainerView else { return }
+
+        let location = sender.location(in: container)
+        if pointInAnyHistoryUsageMetricCard(location, container: container) {
+            return
+        }
+        if pointInHistoryUsageDetailCard(location, container: container) {
+            return
+        }
+
+        historyUsageSelectedMetric = nil
+        applyHistoryUsageMetricSelectionState()
+        refreshHistoryUsageDetail(entries: model.historyEntries)
+    }
+
+    private func pointInAnyHistoryUsageMetricCard(_ point: NSPoint, container: NSView) -> Bool {
+        for card in historyUsageMetricCardViews.values {
+            guard !card.isHidden else { continue }
+            let frame = card.convert(card.bounds, to: container)
+            if frame.contains(point) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func pointInHistoryUsageDetailCard(_ point: NSPoint, container: NSView) -> Bool {
+        guard !historyUsageDetailCard.isHidden else { return false }
+        let frame = historyUsageDetailCard.convert(historyUsageDetailCard.bounds, to: container)
+        return frame.contains(point)
+    }
+
     private func refreshHistorySection() {
+        let usageStats = HistoryUsageStats(entries: model.historyEntries)
         historySummaryLabel.stringValue = SettingsWindowSupport.historySummaryText(
             forEntryCount: model.historyEntries.count
         )
+        historyUsageStatsLabel.stringValue = SettingsWindowSupport.historyUsageStatsText(
+            for: usageStats
+        )
+        refreshHistoryUsageMetricCards(using: usageStats)
+        syncHistoryUsageTimeRangePopupSelection()
+        applyHistoryUsageMetricSelectionState()
+        refreshHistoryUsageDetail(entries: model.historyEntries)
 
         if currentSection == .history {
             rebuildHistoryRows()
@@ -2648,8 +2934,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func selectSection(_ section: SettingsSection) {
+        let previousSection = currentSection
         currentSection = section
         let selectedNavigationSection = navigationSection(for: section)
+
+        if section == .history, previousSection != .history {
+            historyUsageSelectedMetric = nil
+            applyHistoryUsageMetricSelectionState()
+            refreshHistoryUsageDetail(entries: model.historyEntries)
+        }
 
         for (candidate, button) in sectionButtons {
             let isSelected = candidate == selectedNavigationSection
@@ -3744,8 +4037,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         translationProviderPopup.syncTheme()
         targetLanguagePopup.syncTheme()
         activePromptPopup.syncTheme()
+        historyUsageTimeRangePopup.syncTheme()
         syncAppearanceControlTheme()
         refreshNavigationAppearance()
+        applyHistoryUsageMetricSelectionState()
     }
 
     private func configurePostProcessingPopups() {
@@ -5539,6 +5834,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
         let stack = NSStackView(views: [
             historySummaryLabel,
+            historyUsageStatsLabel,
+            historyUsageCardsStack,
+            historyUsageDetailCard,
             makeDictionaryListSeparator(),
             privacyTitle,
             privacyDescription
@@ -5546,6 +5844,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
+        historyUsageCardsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        historyUsageDetailCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         pinCardContent(stack, into: card)
         return card
     }
@@ -5749,11 +6049,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateDictionaryTermsRowsHeight(forVisibleRowCount rowCount: Int) {
         guard let constraint = dictionaryTermsRowsHeightConstraint else { return }
-        let visibleRows = max(1, min(4, rowCount))
-        let rowHeight: CGFloat = 56
-        let targetHeight = (CGFloat(visibleRows) * rowHeight)
-            + (CGFloat(max(0, visibleRows - 1)) * dictionaryTermRowsStack.spacing)
-        constraint.constant = min(260, max(56, targetHeight))
+        constraint.constant = SettingsWindowSupport.dictionaryTermsRowsHeight(
+            forVisibleRowCount: rowCount,
+            rowSpacing: dictionaryTermRowsStack.spacing
+        )
     }
 
     private func updateDictionarySuggestionRowsHeight(forVisibleRowCount rowCount: Int) {
@@ -6850,6 +7149,476 @@ final class StyledSettingsButton: NSButton {
 @MainActor
 final class FlippedLayoutView: NSView {
     override var isFlipped: Bool { true }
+}
+
+@MainActor
+final class HistoryUsageLineChartView: NSView, NSViewToolTipOwner {
+    struct Point: Equatable {
+        let date: Date
+        let value: Double
+    }
+
+    var metricTitle: String = "Value" {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    var points: [Point] = [] {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    var granularity: HistoryUsageTimelineGranularity = .day {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    private var tooltipTags: [NSView.ToolTipTag] = []
+    private var tooltipTextByTag: [NSView.ToolTipTag: String] = [:]
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let background = isDark
+            ? NSColor(calibratedWhite: 0.16, alpha: 0.9)
+            : NSColor(calibratedWhite: 1.0, alpha: 0.66)
+        background.setFill()
+        dirtyRect.fill()
+
+        let plotInset = NSEdgeInsets(top: 16, left: 10, bottom: 24, right: 10)
+        let plotRect = NSRect(
+            x: bounds.minX + plotInset.left,
+            y: bounds.minY + plotInset.bottom,
+            width: max(1, bounds.width - plotInset.left - plotInset.right),
+            height: max(1, bounds.height - plotInset.top - plotInset.bottom)
+        )
+
+        let ruleColor = isDark
+            ? NSColor.white.withAlphaComponent(0.08)
+            : NSColor.black.withAlphaComponent(0.08)
+        for index in 0...3 {
+            let y = plotRect.minY + (CGFloat(index) / 3) * plotRect.height
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: plotRect.minX, y: y))
+            path.line(to: NSPoint(x: plotRect.maxX, y: y))
+            path.lineWidth = 1
+            ruleColor.setStroke()
+            path.stroke()
+        }
+
+        guard points.count >= 2 else {
+            clearTooltips()
+            drawEmptyMessage("No trend data yet", in: plotRect)
+            return
+        }
+
+        let values = points.map(\.value)
+        let maxValue = max(1, values.max() ?? 1)
+        let minValue = min(0, values.min() ?? 0)
+        let valueRange = max(1, maxValue - minValue)
+
+        let linePath = NSBezierPath()
+        let areaPath = NSBezierPath()
+        areaPath.move(to: NSPoint(x: plotRect.minX, y: plotRect.minY))
+        var pointLocations: [NSPoint] = []
+        pointLocations.reserveCapacity(points.count)
+
+        for (index, point) in points.enumerated() {
+            let progress = CGFloat(index) / CGFloat(max(1, points.count - 1))
+            let x = plotRect.minX + progress * plotRect.width
+            let yProgress = CGFloat((point.value - minValue) / valueRange)
+            let y = plotRect.minY + yProgress * plotRect.height
+            let location = NSPoint(x: x, y: y)
+            pointLocations.append(location)
+
+            if index == 0 {
+                linePath.move(to: location)
+                areaPath.line(to: location)
+            } else {
+                linePath.line(to: location)
+                areaPath.line(to: location)
+            }
+        }
+
+        areaPath.line(to: NSPoint(x: plotRect.maxX, y: plotRect.minY))
+        areaPath.close()
+
+        let lineColor = isDark
+            ? NSColor.systemBlue.lighter()
+            : NSColor.systemBlue.darker()
+        lineColor.withAlphaComponent(0.16).setFill()
+        areaPath.fill()
+
+        linePath.lineWidth = 2
+        lineColor.setStroke()
+        linePath.stroke()
+
+        clearTooltips()
+        let dotRadius: CGFloat = 2.2
+        for location in pointLocations {
+            let dot = NSBezierPath(
+                ovalIn: NSRect(
+                    x: location.x - dotRadius,
+                    y: location.y - dotRadius,
+                    width: dotRadius * 2,
+                    height: dotRadius * 2
+                )
+            )
+            lineColor.setFill()
+            dot.fill()
+        }
+
+        for (index, region) in tooltipRegions(for: pointLocations, in: plotRect).enumerated() {
+            registerTooltip(rect: region, text: pointTooltipText(for: points[index]))
+        }
+
+        let valueLabel = "\(Int(maxValue.rounded()))"
+        drawAxisLabel(valueLabel, at: NSPoint(x: plotRect.minX + 2, y: plotRect.maxY - 12), color: .secondaryLabelColor)
+
+        drawTimelineAxisLabels(in: plotRect)
+    }
+
+    private func drawAxisLabel(_ text: String, at point: NSPoint, color: NSColor) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10),
+            .foregroundColor: color
+        ]
+        text.draw(at: point, withAttributes: attributes)
+    }
+
+    private func drawEmptyMessage(_ text: String, in rect: NSRect) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        let size = text.size(withAttributes: attributes)
+        let point = NSPoint(
+            x: rect.midX - size.width / 2,
+            y: rect.midY - size.height / 2
+        )
+        text.draw(at: point, withAttributes: attributes)
+    }
+
+    func view(
+        _ view: NSView,
+        stringForToolTip tag: NSView.ToolTipTag,
+        point: NSPoint,
+        userData data: UnsafeMutableRawPointer?
+    ) -> String {
+        tooltipTextByTag[tag] ?? ""
+    }
+
+    private func clearTooltips() {
+        for tag in tooltipTags {
+            removeToolTip(tag)
+        }
+        tooltipTags.removeAll()
+        tooltipTextByTag.removeAll()
+    }
+
+    func tooltipRegions(for locations: [NSPoint], in plotRect: NSRect) -> [NSRect] {
+        guard !locations.isEmpty else { return [] }
+        guard locations.count > 1 else { return [plotRect] }
+
+        return locations.enumerated().map { index, _ in
+            let minX = index == 0
+                ? plotRect.minX
+                : (locations[index - 1].x + locations[index].x) / 2
+            let maxX = index == locations.count - 1
+                ? plotRect.maxX
+                : (locations[index].x + locations[index + 1].x) / 2
+
+            return NSRect(
+                x: minX,
+                y: plotRect.minY,
+                width: max(1, maxX - minX),
+                height: plotRect.height
+            )
+        }
+    }
+
+    private func registerTooltip(rect: NSRect, text: String) {
+        let tag = addToolTip(rect, owner: self, userData: nil)
+        tooltipTags.append(tag)
+        tooltipTextByTag[tag] = text
+    }
+
+    private func pointTooltipText(for point: Point) -> String {
+        "\(pointDateLabel(for: point.date))\n\(metricTitle): \(pointValueLabel(point.value))"
+    }
+
+    private func pointDateLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        switch granularity {
+        case .hour:
+            formatter.dateFormat = "yyyy-MM-dd HH:00"
+            return formatter.string(from: date)
+        case .day:
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: date)
+        case .week:
+            formatter.dateFormat = "yyyy-MM-dd"
+            return "Week of \(formatter.string(from: date))"
+        case .month:
+            formatter.dateFormat = "yyyy-MM"
+            return formatter.string(from: date)
+        }
+    }
+
+    private func pointValueLabel(_ value: Double) -> String {
+        if abs(value.rounded() - value) < 0.000_1 {
+            return "\(Int(value.rounded()))"
+        }
+        return String(format: "%.2f", value)
+    }
+
+    private func drawTimelineAxisLabels(in plotRect: NSRect) {
+        guard points.count >= 2 else { return }
+
+        let tickCount = min(6, max(2, points.count))
+        let step = max(1, Int(ceil(Double(points.count - 1) / Double(tickCount - 1))))
+        var indices = Array(stride(from: 0, to: points.count, by: step))
+        if indices.last != points.count - 1 {
+            indices.append(points.count - 1)
+        }
+
+        let formatter = DateFormatter()
+        switch granularity {
+        case .hour:
+            formatter.dateFormat = "HH:mm"
+        case .day:
+            formatter.dateFormat = "M/d"
+        case .week:
+            formatter.dateFormat = "M/d"
+        case .month:
+            formatter.dateFormat = "yy/MM"
+        }
+
+        for index in indices {
+            let progress = CGFloat(index) / CGFloat(max(1, points.count - 1))
+            let x = plotRect.minX + progress * plotRect.width
+            let label = formatter.string(from: points[index].date)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            let size = label.size(withAttributes: attributes)
+            let centeredX = min(
+                max(plotRect.minX, x - size.width / 2),
+                plotRect.maxX - size.width
+            )
+            label.draw(
+                at: NSPoint(x: centeredX, y: bounds.minY + 6),
+                withAttributes: attributes
+            )
+        }
+    }
+}
+
+@MainActor
+final class HistoryUsageHeatmapView: NSView, NSViewToolTipOwner {
+    struct TooltipEntry: Equatable {
+        let rect: NSRect
+        let text: String
+    }
+
+    var metricTitle: String = "Value" {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    var values: [[Double]] = Array(repeating: Array(repeating: 0, count: 24), count: 7) {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    private let weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    private var tooltipTags: [NSView.ToolTipTag] = []
+    private var tooltipTextByTag: [NSView.ToolTipTag: String] = [:]
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let background = isDark
+            ? NSColor(calibratedWhite: 0.16, alpha: 0.9)
+            : NSColor(calibratedWhite: 1.0, alpha: 0.66)
+        background.setFill()
+        dirtyRect.fill()
+
+        let labelWidth: CGFloat = 34
+        let topLabelHeight: CGFloat = 16
+        let bottomPadding: CGFloat = 8
+        let rightPadding: CGFloat = 8
+        let gridRect = NSRect(
+            x: bounds.minX + labelWidth,
+            y: bounds.minY + bottomPadding,
+            width: max(1, bounds.width - labelWidth - rightPadding),
+            height: max(1, bounds.height - topLabelHeight - bottomPadding - 2)
+        )
+
+        let rowCount = 7
+        let columnCount = 24
+        let rowHeight = gridRect.height / CGFloat(rowCount)
+        let columnWidth = gridRect.width / CGFloat(columnCount)
+        let maxValue = values.flatMap { $0 }.max() ?? 0
+        clearTooltips()
+
+        for row in 0..<rowCount {
+            let weekdayLabel = weekdayLabels[row]
+            let labelAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            let labelPoint = NSPoint(
+                x: bounds.minX + 2,
+                y: gridRect.maxY - CGFloat(row + 1) * rowHeight + (rowHeight - 10) / 2
+            )
+            weekdayLabel.draw(at: labelPoint, withAttributes: labelAttributes)
+
+            for column in 0..<columnCount {
+                let value = (row < values.count && column < values[row].count) ? values[row][column] : 0
+                let intensity = maxValue > 0 ? value / maxValue : 0
+                let cellRect = NSRect(
+                    x: gridRect.minX + CGFloat(column) * columnWidth + 0.5,
+                    y: gridRect.maxY - CGFloat(row + 1) * rowHeight + 0.5,
+                    width: max(0.5, columnWidth - 1),
+                    height: max(0.5, rowHeight - 1)
+                )
+                heatmapCellColor(intensity: intensity, darkMode: isDark).setFill()
+                NSBezierPath(rect: cellRect).fill()
+            }
+        }
+
+        for entry in tooltipEntries(in: gridRect) {
+            registerTooltip(rect: entry.rect, text: entry.text)
+        }
+
+        let axisTicks: [(Int, String)] = [(0, "0"), (6, "6"), (12, "12"), (18, "18"), (23, "23")]
+        for (hour, label) in axisTicks {
+            let x = gridRect.minX + CGFloat(hour) * columnWidth
+            let labelAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            label.draw(at: NSPoint(x: x, y: bounds.maxY - topLabelHeight), withAttributes: labelAttributes)
+        }
+    }
+
+    func view(
+        _ view: NSView,
+        stringForToolTip tag: NSView.ToolTipTag,
+        point: NSPoint,
+        userData data: UnsafeMutableRawPointer?
+    ) -> String {
+        tooltipTextByTag[tag] ?? ""
+    }
+
+    private func heatmapCellColor(intensity: Double, darkMode: Bool) -> NSColor {
+        let clamped = max(0, min(1, intensity))
+        if clamped == 0 {
+            return darkMode
+                ? NSColor.white.withAlphaComponent(0.04)
+                : NSColor.black.withAlphaComponent(0.04)
+        }
+
+        let base = darkMode ? NSColor.systemTeal : NSColor.systemBlue
+        return base.withAlphaComponent(CGFloat(0.18 + clamped * 0.72))
+    }
+
+    private func clearTooltips() {
+        for tag in tooltipTags {
+            removeToolTip(tag)
+        }
+        tooltipTags.removeAll()
+        tooltipTextByTag.removeAll()
+    }
+
+    func tooltipEntries(in gridRect: NSRect) -> [TooltipEntry] {
+        let rowCount = 7
+        let columnCount = 24
+        let rowHeight = gridRect.height / CGFloat(rowCount)
+        let columnWidth = gridRect.width / CGFloat(columnCount)
+        var entries: [TooltipEntry] = []
+        entries.reserveCapacity(rowCount * columnCount)
+
+        for row in 0..<rowCount {
+            for column in 0..<columnCount {
+                let value = (row < values.count && column < values[row].count) ? values[row][column] : 0
+                let cellRect = NSRect(
+                    x: gridRect.minX + CGFloat(column) * columnWidth + 0.5,
+                    y: gridRect.maxY - CGFloat(row + 1) * rowHeight + 0.5,
+                    width: max(0.5, columnWidth - 1),
+                    height: max(0.5, rowHeight - 1)
+                )
+                entries.append(.init(
+                    rect: cellRect,
+                    text: heatmapTooltipText(row: row, hour: column, value: value)
+                ))
+            }
+        }
+
+        return entries
+    }
+
+    private func registerTooltip(rect: NSRect, text: String) {
+        let tag = addToolTip(rect, owner: self, userData: nil)
+        tooltipTags.append(tag)
+        tooltipTextByTag[tag] = text
+    }
+
+    private func heatmapTooltipText(row: Int, hour: Int, value: Double) -> String {
+        let startHour = String(format: "%02d:00", hour)
+        let endHour = String(format: "%02d:00", (hour + 1) % 24)
+        return "\(weekdayLabels[row]) \(startHour)-\(endHour)\n\(metricTitle): \(valueLabel(value))"
+    }
+
+    private func valueLabel(_ value: Double) -> String {
+        if abs(value.rounded() - value) < 0.000_1 {
+            return "\(Int(value.rounded()))"
+        }
+        return String(format: "%.2f", value)
+    }
 }
 
 @MainActor

@@ -28,6 +28,30 @@ struct HistoryStoreTests {
 
     @Test
     @MainActor
+    func appModelHistoryTracksDurationAndTextUsageStats() throws {
+        let fileManager = FileManager()
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("VoicePiTests.History.Stats.\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let historyURL = root.appendingPathComponent("History.json", isDirectory: false)
+        let defaults = UserDefaults(suiteName: "VoicePiTests.historyStats.\(UUID().uuidString)")!
+        let store = HistoryStore(historyFileURL: historyURL, fileManager: fileManager)
+        let model = AppModel(defaults: defaults, historyStore: store)
+
+        model.recordHistoryEntry(
+            text: "你好 hello world",
+            recordingDurationMilliseconds: 12_345
+        )
+
+        let entry = try #require(model.historyEntries.first)
+        #expect(entry.characterCount == 2)
+        #expect(entry.wordCount == 2)
+        #expect(entry.recordingDurationMilliseconds == 12_345)
+    }
+
+    @Test
+    @MainActor
     func appModelCanDeleteHistoryEntryAndPersistRemoval() throws {
         let fileManager = FileManager()
         let root = fileManager.temporaryDirectory
@@ -51,6 +75,44 @@ struct HistoryStoreTests {
         let reloaded = AppModel(defaults: defaults, historyStore: store)
         #expect(reloaded.historyEntries.count == 1)
         #expect(reloaded.historyEntries.contains(where: { $0.id == deletedID }) == false)
+    }
+
+    @Test
+    func historyStoreDeletesLegacyHistoryAndResetsToCurrentSchema() throws {
+        struct LegacyHistoryEntry: Codable {
+            let id: UUID
+            let text: String
+            let createdAt: Date
+        }
+
+        struct LegacyHistoryDocument: Codable {
+            let entries: [LegacyHistoryEntry]
+        }
+
+        let fileManager = FileManager()
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("VoicePiTests.History.Legacy.\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let historyURL = root.appendingPathComponent("History.json", isDirectory: false)
+        let store = HistoryStore(historyFileURL: historyURL, fileManager: fileManager)
+        let legacyDocument = LegacyHistoryDocument(entries: [
+            LegacyHistoryEntry(
+                id: UUID(),
+                text: "测试 hello world",
+                createdAt: Date()
+            )
+        ])
+
+        let legacyData = try JSONEncoder().encode(legacyDocument)
+        try legacyData.write(to: historyURL, options: .atomic)
+
+        let document = try store.loadHistory()
+        #expect(document.entries.isEmpty)
+
+        let persistedData = try Data(contentsOf: historyURL)
+        let persistedDocument = try JSONDecoder().decode(HistoryDocument.self, from: persistedData)
+        #expect(persistedDocument.entries.isEmpty)
     }
 
     @Test
