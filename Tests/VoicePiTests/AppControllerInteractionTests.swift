@@ -198,6 +198,32 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func pressStartsSelectionRewriteWhenIdleAndSelectionIsConfirmed() {
+        #expect(
+            AppController.pressAction(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false,
+                hasConfirmedSelectionForRewrite: true
+            ) == .startSelectionRewrite
+        )
+    }
+
+    @Test
+    @MainActor
+    func pressStillStopsRecordingBeforeSelectionRewriteWhenRecordingIsActive() {
+        #expect(
+            AppController.pressAction(
+                isRecording: true,
+                isStartingRecording: false,
+                isProcessingRelease: false,
+                hasConfirmedSelectionForRewrite: true
+            ) == .stopRecording
+        )
+    }
+
+    @Test
+    @MainActor
     func pressCancelsProcessingWhenOverlayIsStillProcessing() {
         #expect(
             AppController.pressAction(
@@ -367,6 +393,68 @@ struct AppControllerInteractionTests {
             !AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .llm,
                 postProcessingMode: .translation
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewPromptSelectionDefersPromptCommitUntilRegenerateSuccess() {
+        let updated = AppController.updatedResultReviewPromptSelection(
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            pendingPromptPresetID: nil,
+            pendingPromptTitle: nil,
+            requestedPromptPresetID: "user.meeting",
+            requestedPromptTitle: "Meeting Notes"
+        )
+
+        #expect(updated.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(updated.selectedPromptTitle == PromptPreset.builtInDefault.title)
+        #expect(updated.pendingPromptPresetID == "user.meeting")
+        #expect(updated.pendingPromptTitle == "Meeting Notes")
+    }
+
+    @Test
+    @MainActor
+    func resultReviewPromptSelectionCommitsPendingPromptAfterSuccessfulRegenerate() {
+        let committed = AppController.committedResultReviewPromptSelectionAfterRegenerateSuccess(
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            pendingPromptPresetID: "user.meeting",
+            pendingPromptTitle: "Meeting Notes"
+        )
+
+        #expect(committed.selectedPromptPresetID == "user.meeting")
+        #expect(committed.selectedPromptTitle == "Meeting Notes")
+        #expect(committed.pendingPromptPresetID == nil)
+        #expect(committed.pendingPromptTitle == nil)
+    }
+
+    @Test
+    @MainActor
+    func unconfiguredLLMRefinementDoesNotPresentResultReviewPanel() {
+        #expect(
+            !AppController.canPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .refinement,
+                llmConfigurationIsConfigured: false,
+                didExternalProcessorSucceed: false,
+                processedText: "unchanged transcript"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func configuredLLMRefinementCanPresentResultReviewPanelWithNonEmptyResult() {
+        #expect(
+            AppController.canPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .refinement,
+                llmConfigurationIsConfigured: true,
+                didExternalProcessorSucceed: false,
+                processedText: "refined answer"
             )
         )
     }

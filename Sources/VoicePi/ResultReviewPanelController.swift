@@ -274,6 +274,12 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private let appIconView = NSImageView()
     private let brandLabel = NSTextField(labelWithString: "")
 
+    private let originalRow = NSView()
+    private let originalIconView = NSImageView()
+    private let originalTextStack = NSStackView()
+    private let originalSectionLabel = NSTextField(labelWithString: "")
+    private let originalTextLabel = NSTextField(wrappingLabelWithString: "")
+
     private let promptRow = NSView()
     private let promptIconView = NSImageView()
     private let promptSectionLabel = NSTextField(labelWithString: "")
@@ -290,7 +296,9 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private let outputScrollView = NSScrollView()
     private let outputTextView = NSTextView()
 
+    private var payload: ResultReviewPanelPayload?
     private var state: ResultReviewPanelPresentationState?
+    private var promptSelectionState: ResultReviewPanelPromptSelectionState?
 
     var onPromptSelectionChanged: ((String) -> Void)?
     var onRegenerateRequested: (() -> Void)?
@@ -318,10 +326,11 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         cardView.layer?.borderWidth = 1
 
         configureHeader()
+        configureOriginalRow()
         configurePromptRow()
         configureAnswerSection()
 
-        let contentStack = NSStackView(views: [headerContainer, promptRow, answerContainer])
+        let contentStack = NSStackView(views: [headerContainer, originalRow, promptRow, answerContainer])
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -344,8 +353,10 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
             headerContainer.heightAnchor.constraint(equalToConstant: 34),
             headerContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            originalRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             promptRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             answerContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            originalRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             promptRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 38),
             answerContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 170)
         ])
@@ -353,6 +364,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         setPayload(
             ResultReviewPanelPayload(
                 resultText: "Preview output",
+                originalText: "Preview original",
                 selectedPromptPresetID: PromptPreset.builtInDefaultID,
                 selectedPromptTitle: PromptPreset.builtInDefault.title,
                 availablePrompts: [
@@ -369,7 +381,17 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     }
 
     func setPayload(_ payload: ResultReviewPanelPayload) {
-        state = ResultReviewPanelPresentationState(payload: payload)
+        self.payload = payload
+        if var promptSelectionState = self.promptSelectionState {
+            promptSelectionState.applyPayload(payload)
+            self.promptSelectionState = promptSelectionState
+        } else {
+            self.promptSelectionState = ResultReviewPanelPromptSelectionState(payload: payload)
+        }
+        state = ResultReviewPanelPresentationState(
+            payload: payload,
+            promptSelectionState: self.promptSelectionState
+        )
         syncState()
     }
 
@@ -403,6 +425,9 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         answerHeaderSeparator.layer?.backgroundColor = separatorColor.cgColor
 
         brandLabel.textColor = .labelColor
+        originalIconView.contentTintColor = .secondaryLabelColor
+        originalSectionLabel.textColor = .labelColor
+        originalTextLabel.textColor = .secondaryLabelColor
         promptIconView.contentTintColor = .secondaryLabelColor
         promptSectionLabel.textColor = .labelColor
         answerIconView.contentTintColor = .secondaryLabelColor
@@ -445,7 +470,9 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private func syncState() {
         guard let state else { return }
         brandLabel.stringValue = state.titleText
-        promptSectionLabel.stringValue = "Prompt"
+        originalSectionLabel.stringValue = state.originalSectionTitle
+        originalTextLabel.stringValue = state.originalDisplayText
+        promptSectionLabel.stringValue = state.promptSectionTitle
         answerTitleLabel.stringValue = state.outputSectionTitle
         outputCopyButton.toolTip = state.outputCopyButtonTitle
         outputCopyButton.isEnabled = !state.outputCopyText.isEmpty
@@ -454,10 +481,49 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         regenerateButton.isEnabled = state.isRegenerateEnabled
         reloadPromptPresetPopup(
             options: state.promptOptions,
-            selectedPresetID: state.selectedPromptPresetID
+            selectedPresetID: state.promptPickerSelectedPresetID
         )
         outputTextView.string = state.outputDisplayText
         updateOutputTextLayout()
+    }
+
+    private func configureOriginalRow() {
+        originalRow.translatesAutoresizingMaskIntoConstraints = false
+
+        originalIconView.translatesAutoresizingMaskIntoConstraints = false
+        originalIconView.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: "Original")
+        originalIconView.imageScaling = .scaleProportionallyDown
+
+        originalTextStack.translatesAutoresizingMaskIntoConstraints = false
+        originalTextStack.orientation = .vertical
+        originalTextStack.alignment = .leading
+        originalTextStack.spacing = 2
+
+        originalSectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        originalSectionLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        originalSectionLabel.maximumNumberOfLines = 1
+
+        originalTextLabel.translatesAutoresizingMaskIntoConstraints = false
+        originalTextLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        originalTextLabel.maximumNumberOfLines = 3
+        originalTextLabel.lineBreakMode = .byTruncatingTail
+
+        originalTextStack.addArrangedSubview(originalSectionLabel)
+        originalTextStack.addArrangedSubview(originalTextLabel)
+        originalRow.addSubview(originalIconView)
+        originalRow.addSubview(originalTextStack)
+
+        NSLayoutConstraint.activate([
+            originalIconView.leadingAnchor.constraint(equalTo: originalRow.leadingAnchor, constant: 2),
+            originalIconView.topAnchor.constraint(equalTo: originalRow.topAnchor, constant: 8),
+            originalIconView.widthAnchor.constraint(equalToConstant: 14),
+            originalIconView.heightAnchor.constraint(equalToConstant: 14),
+
+            originalTextStack.leadingAnchor.constraint(equalTo: originalIconView.trailingAnchor, constant: 10),
+            originalTextStack.trailingAnchor.constraint(equalTo: originalRow.trailingAnchor, constant: -1),
+            originalTextStack.topAnchor.constraint(equalTo: originalRow.topAnchor, constant: 6),
+            originalTextStack.bottomAnchor.constraint(equalTo: originalRow.bottomAnchor, constant: -6)
+        ])
     }
 
     private func configureHeader() {
@@ -721,11 +787,27 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         guard let presetID = promptPresetPopup.selectedItem?.representedObject as? String else {
             return
         }
-        onPromptSelectionChanged?(presetID)
+        guard var promptSelectionState, let payload else {
+            onPromptSelectionChanged?(presetID)
+            return
+        }
+        promptSelectionState.setPendingPromptSelection(to: presetID, options: payload.availablePrompts)
+        self.promptSelectionState = promptSelectionState
+        state = ResultReviewPanelPresentationState(
+            payload: payload,
+            promptSelectionState: promptSelectionState
+        )
+        syncState()
     }
 
     @objc
     private func regeneratePressed() {
+        if var promptSelectionState {
+            if let pendingPromptPresetID = promptSelectionState.consumePendingPromptPresetIDForRegenerate() {
+                onPromptSelectionChanged?(pendingPromptPresetID)
+            }
+            self.promptSelectionState = promptSelectionState
+        }
         onRegenerateRequested?()
     }
 
