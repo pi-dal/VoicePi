@@ -9,13 +9,6 @@ fi
 echo "==> Running Swift tests"
 set -- test
 
-if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-  echo "==> CI mode: skipping UI window suites"
-  set -- "$@" \
-    --skip ResultReviewPanelControllerTests \
-    --skip SettingsWindowLayoutTests
-fi
-
 swift "$@"
 
 echo

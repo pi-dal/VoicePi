@@ -241,11 +241,7 @@ final class FloatingPanelController: NSWindowController {
 
 @MainActor
 private final class FloatingPanelContentViewController: NSViewController {
-    enum Phase {
-        case recording
-        case refining
-        case modeSwitch
-    }
+    typealias Phase = FloatingPanelController.Phase
 
     var widthDidChange: ((CGFloat) -> Void)?
 
@@ -268,12 +264,12 @@ private final class FloatingPanelContentViewController: NSViewController {
 
     private(set) var preferredPanelWidth: CGFloat = 260
     private var phase: Phase = .recording
-    private let compactBannerWidth: CGFloat = 260
-    private let maximumBannerWidth: CGFloat = 660
-    private let bannerHorizontalInset: CGFloat = 18
-    private let bannerIndicatorWidth: CGFloat = 44
-    private let recordingIndicatorSpacing: CGFloat = 14
-    private let refiningIndicatorSpacing: CGFloat = 22
+    private let compactBannerWidth: CGFloat = FloatingPanelSupport.compactBannerWidth
+    private let maximumBannerWidth: CGFloat = FloatingPanelSupport.maximumBannerWidth
+    private let bannerHorizontalInset: CGFloat = FloatingPanelSupport.bannerHorizontalInset
+    private let bannerIndicatorWidth: CGFloat = FloatingPanelSupport.bannerIndicatorWidth
+    private let recordingIndicatorSpacing: CGFloat = FloatingPanelSupport.recordingIndicatorSpacing
+    private let refiningIndicatorSpacing: CGFloat = FloatingPanelSupport.refiningIndicatorSpacing
     private let transcriptFadeWidth: CGFloat = 28
     private let transcriptUpdateAnimationKey = "voicepi.transcriptUpdate"
 
@@ -398,18 +394,7 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     func updateTranscript(_ transcript: String) {
-        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nextText: String
-
-        switch phase {
-        case .recording:
-            nextText = trimmed.isEmpty ? "正在聆听…" : transcript
-        case .refining:
-            nextText = trimmed.isEmpty ? "Refining..." : transcript
-        case .modeSwitch:
-            nextText = transcript
-        }
-
+        let nextText = FloatingPanelSupport.displayedTranscript(for: phase, transcript: transcript)
         setTranscriptText(nextText, animated: shouldAnimateTranscriptUpdate(to: nextText))
         recalculatePreferredWidth()
     }
@@ -440,12 +425,16 @@ private final class FloatingPanelContentViewController: NSViewController {
         switch phase {
         case .recording:
             setTranscriptText(
-                currentText.isEmpty || Self.isRefiningPlaceholder(currentText) ? "正在聆听…" : currentText,
+                currentText.isEmpty || Self.isRefiningPlaceholder(currentText)
+                    ? FloatingPanelSupport.displayedTranscript(for: .recording, transcript: "")
+                    : currentText,
                 animated: false
             )
         case .refining:
             setTranscriptText(
-                currentText.isEmpty ? "Refining..." : currentText,
+                currentText.isEmpty
+                    ? FloatingPanelSupport.displayedTranscript(for: .refining, transcript: "")
+                    : currentText,
                 animated: false
             )
         case .modeSwitch:
@@ -561,26 +550,31 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     private func bannerPreferredWidth(indicatorSpacing: CGFloat) -> CGFloat {
-        let elasticTextWidth = max(
-            160,
-            min(maximumVisibleTranscriptWidth(for: phase), measuredTranscriptWidth() + 8)
+        let transcript = transcriptLabel.stringValue
+        guard !transcript.isEmpty else {
+            return FloatingPanelSupport.bannerPreferredWidth(
+                for: phase,
+                transcript: FloatingPanelSupport.displayedTranscript(for: phase, transcript: transcript),
+                font: transcriptLabel.font ?? .systemFont(ofSize: 15, weight: .medium)
+            )
+        }
+
+        return FloatingPanelSupport.bannerPreferredWidth(
+            for: phase,
+            transcript: transcript,
+            font: transcriptLabel.font ?? .systemFont(ofSize: 15, weight: .medium)
         )
-        let computedWidth =
-            bannerHorizontalInset + bannerIndicatorWidth + indicatorSpacing + elasticTextWidth + bannerHorizontalInset
-        return max(compactBannerWidth, computedWidth)
     }
 
     private func maximumVisibleTranscriptWidth(for phase: Phase) -> CGFloat {
-        let indicatorSpacing = phase == .refining ? refiningIndicatorSpacing : recordingIndicatorSpacing
-        return maximumBannerWidth - bannerHorizontalInset - bannerIndicatorWidth - indicatorSpacing - bannerHorizontalInset
+        FloatingPanelSupport.maximumVisibleTranscriptWidth(for: phase)
     }
 
     private func measuredTranscriptWidth(for text: String? = nil) -> CGFloat {
-        let text = (text ?? transcriptLabel.stringValue) as NSString
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: transcriptLabel.font ?? NSFont.systemFont(ofSize: 15, weight: .medium)
-        ]
-        return ceil(text.size(withAttributes: attributes).width)
+        FloatingPanelSupport.measuredTranscriptWidth(
+            for: text ?? transcriptLabel.stringValue,
+            font: transcriptLabel.font ?? .systemFont(ofSize: 15, weight: .medium)
+        )
     }
 
     private func syncAppearance() {

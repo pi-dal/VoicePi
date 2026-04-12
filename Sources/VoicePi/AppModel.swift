@@ -1613,22 +1613,30 @@ final class AppModel: ObservableObject {
     @Published var inputMonitoringAuthorization: AuthorizationState = .unknown
     @Published var dictionaryEntries: [DictionaryEntry] = []
     @Published var dictionarySuggestions: [DictionarySuggestion] = []
+    @Published var historyEntries: [HistoryEntry] = []
 
     private let defaults: UserDefaults
     private let dictionaryStore: DictionaryStoring?
+    private let historyStore: HistoryStoring?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private lazy var cachedPromptLibrary: PromptLibrary? = try? PromptLibrary.loadBundled()
 
     init(
         defaults: UserDefaults = .standard,
-        dictionaryStore: DictionaryStoring? = nil
+        dictionaryStore: DictionaryStoring? = nil,
+        historyStore: HistoryStoring? = nil
     ) {
         self.defaults = defaults
         if let dictionaryStore {
             self.dictionaryStore = dictionaryStore
         } else {
             self.dictionaryStore = try? DictionaryStore()
+        }
+        if let historyStore {
+            self.historyStore = historyStore
+        } else {
+            self.historyStore = try? HistoryStore()
         }
 
         let initialSelectedLanguage: SupportedLanguage
@@ -1805,6 +1813,7 @@ final class AppModel: ObservableObject {
         }
 
         refreshDictionaryState()
+        refreshHistoryState()
     }
 
     var isLLMReady: Bool {
@@ -1830,6 +1839,10 @@ final class AppModel: ObservableObject {
 
     var enabledDictionaryEntries: [DictionaryEntry] {
         dictionaryEntries.filter(\.isEnabled)
+    }
+
+    func recentHistoryEntries(limit: Int = 3) -> [HistoryEntry] {
+        Array(historyEntries.prefix(max(0, limit)))
     }
 
     func updateOverlayRecording(transcript: String, level: CGFloat) {
@@ -2298,6 +2311,30 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func recordHistoryEntry(text: String) {
+        guard let historyStore else { return }
+
+        do {
+            try historyStore.appendEntry(text: text)
+            refreshHistoryState()
+        } catch {
+            presentError("History update failed: \(error.localizedDescription)")
+        }
+    }
+
+    func deleteHistoryEntry(id: UUID) {
+        guard let historyStore else { return }
+
+        do {
+            var document = try historyStore.loadHistory()
+            document.entries.removeAll { $0.id == id }
+            try historyStore.saveHistory(document)
+            refreshHistoryState()
+        } catch {
+            presentError("History delete failed: \(error.localizedDescription)")
+        }
+    }
+
     private func persistConfiguration() {
         if let data = try? encoder.encode(llmConfiguration) {
             defaults.set(data, forKey: Keys.llmConfig)
@@ -2393,6 +2430,19 @@ final class AppModel: ObservableObject {
         }
         dictionarySuggestions = suggestions.suggestions.sorted { lhs, rhs in
             lhs.capturedAt > rhs.capturedAt
+        }
+    }
+
+    private func refreshHistoryState() {
+        guard let historyStore else { return }
+
+        do {
+            let document = try historyStore.loadHistory()
+            historyEntries = document.entries.sorted { lhs, rhs in
+                lhs.createdAt > rhs.createdAt
+            }
+        } catch {
+            presentError("History load failed: \(error.localizedDescription)")
         }
     }
 

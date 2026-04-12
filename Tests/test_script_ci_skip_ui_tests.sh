@@ -41,5 +41,8 @@ chmod +x "$TMP_DIR/bin/swift"
   ./Scripts/test.sh >/dev/null
 )
 
-grep -q -- '--skip ResultReviewPanelControllerTests' "$TMP_DIR/.swift-test-args"
-grep -q -- '--skip SettingsWindowLayoutTests' "$TMP_DIR/.swift-test-args"
+grep -q -- '^test$' "$TMP_DIR/.swift-test-args"
+if grep -q -- '--skip' "$TMP_DIR/.swift-test-args"; then
+  echo "expected Scripts/test.sh to run the full Swift test suite in CI mode" >&2
+  exit 1
+fi

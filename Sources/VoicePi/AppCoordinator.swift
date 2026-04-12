@@ -1209,6 +1209,7 @@ final class AppController: NSObject {
                     do {
                         let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
                         self.statusBarController?.setTransientStatus("Injected")
+                        self.model.recordHistoryEntry(text: finalText)
                         self.beginPostInjectionLearning(
                             targetSnapshot: targetSnapshot,
                             injectionRecord: injectionRecord
@@ -1219,6 +1220,7 @@ final class AppController: NSObject {
                     self.floatingPanelController.hide()
                 case .fallbackPanel:
                     if let payload = InputFallbackPanelPayload(text: finalText) {
+                        self.model.recordHistoryEntry(text: finalText)
                         self.presentInputFallbackPanel(payload)
                     }
                 }
@@ -1359,6 +1361,7 @@ final class AppController: NSObject {
                     let injectionRecord = try await self.textInjector.injectAndRecord(text: text)
                     self.clearResultReviewState()
                     self.statusBarController?.setTransientStatus("Injected")
+                    self.model.recordHistoryEntry(text: text)
                     self.beginPostInjectionLearning(
                         targetSnapshot: targetSnapshot,
                         sourceApplicationOverride: sourceApplicationBundleID,
@@ -1374,6 +1377,7 @@ final class AppController: NSObject {
         case .fallbackPanel:
             clearResultReviewState()
             if let payload = InputFallbackPanelPayload(text: text) {
+                model.recordHistoryEntry(text: text)
                 presentInputFallbackPanel(payload)
             }
         }

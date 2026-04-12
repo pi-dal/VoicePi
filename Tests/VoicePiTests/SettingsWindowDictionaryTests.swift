@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import VoicePi
@@ -5,8 +6,9 @@ import Testing
 @MainActor
 struct SettingsWindowDictionaryTests {
     @Test
-    func settingsNavigationIncludesDictionarySection() {
+    func settingsNavigationIncludesLibrarySection() {
         #expect(SettingsSection.allCases.contains(.dictionary))
+        #expect(SettingsSection.dictionary.title == "Library")
     }
 
     @Test
@@ -26,6 +28,13 @@ struct SettingsWindowDictionaryTests {
         #expect(SettingsSection.allCases.contains(.externalProcessors))
         #expect(SettingsSection.externalProcessors.title == "Processors")
         #expect(SettingsSection.llm.title == "Text")
+    }
+
+    @Test
+    func settingsNavigationHidesHistoryFromTopNavigation() {
+        #expect(SettingsSection.allCases.contains(.history))
+        #expect(SettingsSection.navigationCases.contains(.history) == false)
+        #expect(SettingsSection.navigationCases.contains(.dictionary))
     }
 
     @Test
@@ -102,5 +111,86 @@ struct SettingsWindowDictionaryTests {
         )
 
         #expect(presentation.pendingReviewText == "2 suggestions pending review.")
+    }
+
+    @Test
+    func dictionaryRowPresentationUsesFallbackAliasCopyWhenNoAliasesExist() {
+        let entry = DictionaryEntry(canonical: "PostgreSQL", aliases: [])
+
+        let presentation = SettingsPresentation.dictionaryRowPresentation(entry: entry)
+
+        #expect(presentation.aliasSummary == "No aliases")
+    }
+
+    @Test
+    @MainActor
+    func dictionaryTermsCardDoesNotStretchWhenShowingFewRows() {
+        let controller = makeController()
+        controller.show(section: .dictionary)
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+
+        let labels = textLabels(in: controller.window?.contentView)
+        guard let termsLabel = labels.first(where: { $0.stringValue == "Terms" }) else {
+            Issue.record("Expected Terms section title.")
+            return
+        }
+
+        guard let termsCard = cardAncestor(of: termsLabel) else {
+            Issue.record("Expected Terms card ancestor.")
+            return
+        }
+
+        #expect(termsCard.frame.height < 260)
+    }
+
+    @Test
+    @MainActor
+    func dictionarySuggestionsCardDoesNotStretchWhenEmpty() {
+        let controller = makeController()
+        controller.show(section: .dictionary)
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+
+        let labels = textLabels(in: controller.window?.contentView)
+        guard let suggestionsLabel = labels.first(where: { $0.stringValue == "Suggestions" }) else {
+            Issue.record("Expected Suggestions section title.")
+            return
+        }
+
+        guard let suggestionsCard = cardAncestor(of: suggestionsLabel) else {
+            Issue.record("Expected Suggestions card ancestor.")
+            return
+        }
+
+        #expect(suggestionsCard.frame.height < 140)
+    }
+
+    private func makeController() -> SettingsWindowController {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.settingsDictionary.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.importDictionaryTerms(fromPlainText: """
+        agent.md|agent md
+        spec|spd
+        """)
+        return SettingsWindowController(model: model, delegate: nil)
+    }
+
+    private func allViews(in root: NSView?) -> [NSView] {
+        guard let root else { return [] }
+        return [root] + root.subviews.flatMap(allViews)
+    }
+
+    private func textLabels(in root: NSView?) -> [NSTextField] {
+        allViews(in: root).compactMap { $0 as? NSTextField }
+    }
+
+    private func cardAncestor(of view: NSView) -> ThemedSurfaceView? {
+        var current = view.superview
+        while let currentView = current {
+            if let card = currentView as? ThemedSurfaceView {
+                return card
+            }
+            current = currentView.superview
+        }
+        return nil
     }
 }

@@ -87,6 +87,35 @@ enum ExternalProcessorTestFeedback {
     }
 }
 
+enum ExternalProcessorManagerPresentation {
+    static let emptyStateText = "No processors configured yet. Click + to add one."
+
+    static func displayTitle(for entry: ExternalProcessorEntry) -> String {
+        let trimmedName = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            return trimmedName
+        }
+
+        return entry.kind.title
+    }
+
+    static func feedbackText(for state: ExternalProcessorManagerState) -> String {
+        if let selected = state.entries.first(where: { $0.id == state.selectedEntryID }) {
+            return "Selected: \(displayTitle(for: selected))"
+        }
+
+        if state.entries.isEmpty {
+            return emptyStateText
+        }
+
+        return "Choose a processor to make it the active refinement backend."
+    }
+
+    static func showsActiveProcessorPicker(for state: ExternalProcessorManagerState) -> Bool {
+        state.entries.isEmpty == false
+    }
+}
+
 private extension Array {
     subscript(safe index: Int) -> Element? {
         guard indices.contains(index) else { return nil }
