@@ -147,7 +147,6 @@ For the first implementation, reuse existing presentation surfaces:
 - transient status text (for explicit copy like `Prompt default: ...`)
 
 Do not add a brand-new overlay system in this slice.
-
 Recommended shape:
 
 - `Prompt: Meeting Notes`
@@ -295,11 +294,14 @@ The product should not force the review rerun experience to be processor-only.
 
 If the user reached a reviewable refinement result, they should be able to rerun that same source transcript with another prompt through the active refinement provider path for the review session.
 
+<<<<<<< HEAD
 Implementation note for coherence:
 
 - entering review should be available for refinement results from both `LLM` and `External Processor`
 - review reruns should reuse the workflow snapshot captured when the review session was created (instead of silently drifting if settings change while the panel is open)
 
+=======
+>>>>>>> 8739dd9 (docs: add refinement prompt cycle and rerun design spec)
 ## Architecture
 
 ### Review Session Model
@@ -311,14 +313,22 @@ Suggested shape:
 ```swift
 struct RefinementReviewSession {
     let rawTranscript: String
+<<<<<<< HEAD
     var selectedPromptPresetID: String
+=======
+    var selectedPromptPresetID: String?
+>>>>>>> 8739dd9 (docs: add refinement prompt cycle and rerun design spec)
     var selectedPromptTitle: String
     var currentResultText: String
     let targetSnapshot: EditableTextTargetSnapshot?
     let sourceApplication: NSRunningApplication?
     let recordingDurationMilliseconds: Int
+<<<<<<< HEAD
     let workflow: AppController.ProcessingWorkflowSelection
     let workflowOverride: AppController.RecordingWorkflowOverride?
+=======
+    let workflowOverride: AppCoordinator.RecordingWorkflowOverride?
+>>>>>>> 8739dd9 (docs: add refinement prompt cycle and rerun design spec)
 }
 ```
 
@@ -337,9 +347,13 @@ The cleanest boundary is to extend the coordinator-driven refinement path so bot
 1. initial post-recording refinement
 2. review-panel regenerate
 
+<<<<<<< HEAD
 That means `AppController.refineIfNeeded(_:)` should gain an override path for prompt selection or fully resolved prompt data, instead of forcing every call to re-read only the current global model selection.
 
 When an explicit review-session prompt is chosen, resolution should bypass strict-mode destination binding and use the chosen preset directly for that rerun.
+=======
+That means `AppCoordinator.refineIfNeeded(_:)` should gain an override path for prompt selection or fully resolved prompt data, instead of forcing every call to re-read only the current global model selection.
+>>>>>>> 8739dd9 (docs: add refinement prompt cycle and rerun design spec)
 
 ### AppModel Responsibilities
 
@@ -355,7 +369,11 @@ This keeps prompt ordering logic out of the UI and coordinator layers.
 
 ### AppCoordinator Responsibilities
 
+<<<<<<< HEAD
 `AppController` (coordinator role) should own:
+=======
+`AppCoordinator` should own:
+>>>>>>> 8739dd9 (docs: add refinement prompt cycle and rerun design spec)
 
 - recording-time prompt cycle shortcut handling
 - review-session lifecycle
@@ -395,7 +413,11 @@ The controller should not directly resolve prompts or call providers.
 
 ### Review-Time Flow
 
+<<<<<<< HEAD
 1. VoicePi creates a review session after a reviewable refinement result is produced (`LLM` or `External Processor`)
+=======
+1. VoicePi creates a review session after a reviewable result is produced
+>>>>>>> 8739dd9 (docs: add refinement prompt cycle and rerun design spec)
 2. session stores the original transcript and the prompt that produced the current result
 3. user changes prompt selection in the review panel
 4. user presses `Regenerate`
