@@ -113,6 +113,42 @@ final class AppController: NSObject {
         let refinementProvider: RefinementProvider
     }
 
+    struct RefinementReviewSession {
+        let sessionID: UUID
+        let rawTranscript: String
+        var selectedPromptPresetID: String
+        var selectedPromptTitle: String
+        var currentResultText: String
+        let targetSnapshot: EditableTextTargetSnapshot?
+        let sourceApplication: NSRunningApplication?
+        let recordingDurationMilliseconds: Int
+        let workflow: ProcessingWorkflowSelection
+        let workflowOverride: RecordingWorkflowOverride?
+
+        init(
+            rawTranscript: String,
+            selectedPromptPresetID: String,
+            selectedPromptTitle: String,
+            currentResultText: String,
+            targetSnapshot: EditableTextTargetSnapshot?,
+            sourceApplication: NSRunningApplication?,
+            recordingDurationMilliseconds: Int,
+            workflow: ProcessingWorkflowSelection,
+            workflowOverride: RecordingWorkflowOverride?
+        ) {
+            self.sessionID = UUID()
+            self.rawTranscript = rawTranscript
+            self.selectedPromptPresetID = selectedPromptPresetID
+            self.selectedPromptTitle = selectedPromptTitle
+            self.currentResultText = currentResultText
+            self.targetSnapshot = targetSnapshot
+            self.sourceApplication = sourceApplication
+            self.recordingDurationMilliseconds = recordingDurationMilliseconds
+            self.workflow = workflow
+            self.workflowOverride = workflowOverride
+        }
+    }
+
     enum PostProcessingFailureAction: Equatable {
         case continueTranscriptDelivery
         case surfaceProcessorFailure
@@ -153,6 +189,7 @@ final class AppController: NSObject {
     private let model = AppModel()
     private let recordingShortcutAction = ShortcutActionController()
     private let modeCycleShortcutAction = ShortcutActionController()
+    private let promptCycleShortcutAction = ShortcutActionController()
     private let processorShortcutAction = ShortcutActionController()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
@@ -190,12 +227,7 @@ final class AppController: NSObject {
     private var activeDirectUpdateInstaller: AppUpdater?
     private var installationSource: AppInstallationSource = .unknown
     private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
-    private var pendingResultReviewSourceText: String?
-    private var pendingResultReviewPayload: ResultReviewPanelPayload?
-    private var pendingResultReviewWorkflowOverride: RecordingWorkflowOverride?
-    private var pendingResultReviewTargetSnapshot: EditableTextTargetSnapshot?
-    private var pendingResultReviewSourceApplication: NSRunningApplication?
-    private var pendingResultReviewRecordingDurationMilliseconds = 0
+    private var refinementReviewSession: RefinementReviewSession?
     private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
     private var activeRecordingStartedAt: Date?
 
@@ -219,6 +251,15 @@ final class AppController: NSObject {
 
     static let modeCycleShortcutRegistrationFailureMessage =
         "Mode-switch shortcut registration is unavailable. Choose a different shortcut."
+
+    static let promptCycleShortcutMonitoringFailureMessage =
+        "Prompt-cycle shortcut listening is unavailable. Input Monitoring is required to listen for this shortcut."
+
+    static let promptCycleShortcutSuppressionWarningMessage =
+        "Prompt-cycle shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
+
+    static let promptCycleShortcutRegistrationFailureMessage =
+        "Prompt-cycle shortcut registration is unavailable. Choose a different shortcut."
 
     static let processorShortcutMonitoringFailureMessage =
         "Processor shortcut listening is unavailable. Input Monitoring is required to listen for this shortcut."
@@ -388,7 +429,8 @@ final class AppController: NSObject {
         refinementProvider: RefinementProvider,
         postProcessingMode: PostProcessingMode
     ) -> Bool {
-        refinementProvider == .externalProcessor && postProcessingMode == .refinement
+        _ = refinementProvider
+        return postProcessingMode == .refinement
     }
 
     static func resultReviewInsertionTargetSnapshot(
@@ -470,6 +512,7 @@ final class AppController: NSObject {
             activationShortcut: shortcut,
             modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
     }
@@ -483,6 +526,7 @@ final class AppController: NSObject {
             activationShortcut: activationShortcut,
             modeCycleShortcut: modeCycleShortcut,
             processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
     }
@@ -491,6 +535,7 @@ final class AppController: NSObject {
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
         processorShortcut: ActivationShortcut,
+        promptCycleShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
         inputMonitoringState: AuthorizationState
     ) -> LaunchPermissionPlan {
         LaunchPermissionPlan(
@@ -503,7 +548,8 @@ final class AppController: NSObject {
             requestInputMonitoringPermission: shortcutsRequireInputMonitoring(
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: modeCycleShortcut,
-                processorShortcut: processorShortcut
+                processorShortcut: processorShortcut,
+                promptCycleShortcut: promptCycleShortcut
             ),
             useSystemAccessibilityPrompt: true
         )
@@ -523,11 +569,13 @@ final class AppController: NSObject {
     static func shortcutsRequireInputMonitoring(
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
-        processorShortcut: ActivationShortcut
+        processorShortcut: ActivationShortcut,
+        promptCycleShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
     ) -> Bool {
         activationShortcut.requiresInputMonitoring
             || modeCycleShortcut.requiresInputMonitoring
             || processorShortcut.requiresInputMonitoring
+            || promptCycleShortcut.requiresInputMonitoring
     }
 
     static func shouldOfferInputMonitoringSettingsOnLaunch(
@@ -610,6 +658,21 @@ final class AppController: NSObject {
             registeredHotkeyAccessibilityWarning: nil,
             eventTapAccessibilityWarning: modeCycleShortcutSuppressionWarningMessage,
             inputMonitoringFailureMessage: modeCycleShortcutMonitoringFailureMessage
+        )
+    }
+
+    static func promptCycleShortcutMonitorPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: nil,
+            eventTapAccessibilityWarning: promptCycleShortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: promptCycleShortcutMonitoringFailureMessage
         )
     }
 
@@ -792,6 +855,9 @@ final class AppController: NSObject {
         resultReviewPanelController.onCopyRequested = { [weak self] _ in
             self?.statusBarController?.setTransientStatus("Copied")
         }
+        resultReviewPanelController.onPromptSelectionChanged = { [weak self] presetID in
+            self?.updateResultReviewPromptSelection(presetID)
+        }
         resultReviewPanelController.onRetryRequested = { [weak self] in
             Task { @MainActor [weak self] in
                 self?.retryReviewedText()
@@ -838,6 +904,13 @@ final class AppController: NSObject {
         }
         modeCycleShortcutAction.shortcut = model.modeCycleShortcut
 
+        promptCycleShortcutAction.onPress = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handlePromptCycleShortcutPress()
+            }
+        }
+        promptCycleShortcutAction.shortcut = model.promptCycleShortcut
+
         processorShortcutAction.onPress = { [weak self] in
             Task { @MainActor [weak self] in
                 self?.handleProcessorShortcutPress()
@@ -860,6 +933,7 @@ final class AppController: NSObject {
                 activationShortcut: self.model.activationShortcut,
                 modeCycleShortcut: self.model.modeCycleShortcut,
                 processorShortcut: self.model.processorShortcut,
+                promptCycleShortcut: self.model.promptCycleShortcut,
                 inputMonitoringState: self.currentInputMonitoringAuthorizationState()
             )
             await self.refreshPermissionStates(
@@ -881,6 +955,7 @@ final class AppController: NSObject {
         resultReviewRetryTask?.cancel()
         postInjectionLearningTask = nil
         resultReviewRetryTask = nil
+        refinementReviewSession = nil
         postInjectionLearningCoordinator.cancelTracking()
         dictionarySuggestionToastController.hide()
         resultReviewPanelController.hide()
@@ -890,6 +965,7 @@ final class AppController: NSObject {
         startupHotkeyBootstrapTask = nil
         recordingShortcutAction.stop()
         modeCycleShortcutAction.stop()
+        promptCycleShortcutAction.stop()
         processorShortcutAction.stop()
 
         if speechRecorder.isRecording {
@@ -922,11 +998,33 @@ final class AppController: NSObject {
         statusBarController?.setTransientStatus("Text processing: \(model.modeDisplayTitle(for: model.postProcessingMode))")
     }
 
+    private func cycleRefinementPromptFromShortcut() {
+        guard let cycledPrompt = model.cycleActivePromptSelection() else {
+            return
+        }
+
+        let destination = promptDestinationInspector.currentDestinationContext()
+        let effectivePrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
+        let effectivePresetID = effectivePrompt.presetID ?? PromptPreset.builtInDefaultID
+        let cycledPresetID = cycledPrompt.presetID ?? PromptPreset.builtInDefaultID
+        let didStrictBindingOverride = model.promptWorkspace.strictModeEnabled && effectivePresetID != cycledPresetID
+        let statusPrefix = didStrictBindingOverride ? "Prompt default" : "Prompt"
+
+        floatingPanelController.showModeSwitch(
+            modeTitle: model.postProcessingMode.title,
+            refinementPromptTitle: cycledPrompt.title,
+            autoHideDelayNanoseconds: 1_100_000_000
+        )
+        statusBarController?.refreshAll()
+        statusBarController?.setTransientStatus("\(statusPrefix): \(cycledPrompt.title)")
+    }
+
     private func bootstrapHotkeyMonitoring() {
         startupHotkeyBootstrapTask?.cancel()
         let initialStatus = ensureHotkeyMonitorRunning()
         guard initialStatus == Self.shortcutRegistrationFailureMessage
             || initialStatus == Self.modeCycleShortcutRegistrationFailureMessage
+            || initialStatus == Self.promptCycleShortcutRegistrationFailureMessage
             || initialStatus == Self.processorShortcutRegistrationFailureMessage else {
             return
         }
@@ -944,6 +1042,7 @@ final class AppController: NSObject {
                 let status = self.ensureHotkeyMonitorRunning()
                 guard status == Self.shortcutRegistrationFailureMessage
                     || status == Self.modeCycleShortcutRegistrationFailureMessage
+                    || status == Self.promptCycleShortcutRegistrationFailureMessage
                     || status == Self.processorShortcutRegistrationFailureMessage else {
                     return
                 }
@@ -971,6 +1070,17 @@ final class AppController: NSObject {
         case .holdRepeat:
             startModeCycleShortcutRepeat()
         }
+    }
+
+    private func handlePromptCycleShortcutPress() {
+        guard Self.shouldStartModeCycleRepeat(
+            shortcut: model.promptCycleShortcut,
+            isRecording: speechRecorder.isRecording,
+            isStartingRecording: isStartingRecording,
+            isProcessingRelease: isProcessingRelease
+        ) else { return }
+
+        cycleRefinementPromptFromShortcut()
     }
 
     private func startModeCycleShortcutRepeat() {
@@ -1163,31 +1273,46 @@ final class AppController: NSObject {
                 return
             }
 
-            let finalText = await self.refineIfNeeded(captured)
-            guard !Task.isCancelled, self.isProcessingRelease else { return }
-
             let workflow = Self.effectiveProcessingWorkflow(
                 postProcessingMode: self.model.postProcessingMode,
                 refinementProvider: self.model.refinementProvider,
                 override: self.activeRecordingWorkflowOverride
             )
+            let finalText = await self.refineIfNeeded(
+                captured,
+                workflow: workflow,
+                workflowOverride: self.activeRecordingWorkflowOverride
+            )
+            guard !Task.isCancelled, self.isProcessingRelease else { return }
 
             let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
                 refinementProvider: workflow.refinementProvider,
                 postProcessingMode: workflow.postProcessingMode
             )
             let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+            let canPresentResultReviewPanel: Bool = {
+                guard shouldPresentResultReviewPanel else { return false }
+                if workflow.refinementProvider == .externalProcessor {
+                    return didSucceed
+                }
+                return !ExternalProcessorOutputSanitizer
+                    .sanitize(finalText)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
+            }()
             let failureAction = Self.postProcessingFailureAction(
                 workflowOverride: self.activeRecordingWorkflowOverride,
                 didExternalProcessorSucceed: didSucceed
             )
 
-            if shouldPresentResultReviewPanel && didSucceed {
+            if canPresentResultReviewPanel {
                 let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
                 let sourceApplication = NSWorkspace.shared.frontmostApplication
                 self.presentResultReviewPanel(
-                    text: finalText,
-                    sourceText: captured,
+                    resultText: finalText,
+                    rawTranscript: captured,
+                    workflow: workflow,
+                    workflowOverride: self.activeRecordingWorkflowOverride,
                     targetSnapshot: targetSnapshot,
                     sourceApplication: sourceApplication,
                     recordingDurationMilliseconds: recordingDurationMilliseconds
@@ -1267,100 +1392,178 @@ final class AppController: NSObject {
     }
 
     private func presentResultReviewPanel(
-        text: String,
-        sourceText: String,
+        resultText: String,
+        rawTranscript: String,
+        workflow: ProcessingWorkflowSelection,
+        workflowOverride: RecordingWorkflowOverride?,
         targetSnapshot: EditableTextTargetSnapshot? = nil,
         sourceApplication: NSRunningApplication? = nil,
         recordingDurationMilliseconds: Int = 0
     ) {
-        guard let payload = ResultReviewPanelPayload(text: text, sourceText: sourceText) else {
+        let sanitizedRawTranscript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedRawTranscript.isEmpty else {
+            presentTransientError("Original transcript is unavailable for review.")
+            return
+        }
+
+        let resolvedPrompt = resolvedRefinementPrompt(for: workflow)
+        let selectedPromptPresetID = resolvedPrompt?.presetID ?? PromptPreset.builtInDefaultID
+        let selectedPromptTitle = resolvedPrompt?.title ?? PromptPreset.builtInDefault.title
+        let session = RefinementReviewSession(
+            rawTranscript: sanitizedRawTranscript,
+            selectedPromptPresetID: selectedPromptPresetID,
+            selectedPromptTitle: selectedPromptTitle,
+            currentResultText: resultText,
+            targetSnapshot: targetSnapshot,
+            sourceApplication: sourceApplication,
+            recordingDurationMilliseconds: max(0, recordingDurationMilliseconds),
+            workflow: workflow,
+            workflowOverride: workflowOverride
+        )
+
+        guard let payload = resultReviewPayload(for: session, isRegenerating: false) else {
             presentTransientError("External processor returned unreadable output.")
             return
         }
 
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
-        pendingResultReviewSourceText = sourceText
-        pendingResultReviewPayload = payload
-        pendingResultReviewWorkflowOverride = activeRecordingWorkflowOverride
-        pendingResultReviewTargetSnapshot = targetSnapshot
-        pendingResultReviewSourceApplication = sourceApplication
-        pendingResultReviewRecordingDurationMilliseconds = max(0, recordingDurationMilliseconds)
+        refinementReviewSession = session
         floatingPanelController.hide(immediately: true)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
     }
 
+    private func updateResultReviewPromptSelection(_ presetID: String) {
+        guard var session = refinementReviewSession else { return }
+
+        let resolvedPrompt = model.resolvedPromptPresetForExplicitPresetID(presetID)
+        session.selectedPromptPresetID = resolvedPrompt.presetID ?? PromptPreset.builtInDefaultID
+        session.selectedPromptTitle = resolvedPrompt.title
+        refinementReviewSession = session
+
+        guard let payload = resultReviewPayload(
+            for: session,
+            isRegenerating: resultReviewRetryTask != nil
+        ) else { return }
+        resultReviewPanelController.show(payload: payload)
+    }
+
+    private func resultReviewPromptOptions() -> [ResultReviewPanelPromptOption] {
+        model.orderedPromptCyclePresets().map {
+            .init(presetID: $0.id, title: $0.resolvedTitle)
+        }
+    }
+
+    private func resultReviewPayload(
+        for session: RefinementReviewSession,
+        isRegenerating: Bool
+    ) -> ResultReviewPanelPayload? {
+        ResultReviewPanelPayload(
+            resultText: session.currentResultText,
+            selectedPromptPresetID: session.selectedPromptPresetID,
+            selectedPromptTitle: session.selectedPromptTitle,
+            availablePrompts: resultReviewPromptOptions(),
+            isRegenerating: isRegenerating
+        )
+    }
+
     private func clearResultReviewState() {
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
-        pendingResultReviewSourceText = nil
-        pendingResultReviewPayload = nil
-        pendingResultReviewWorkflowOverride = nil
-        pendingResultReviewTargetSnapshot = nil
-        pendingResultReviewSourceApplication = nil
-        pendingResultReviewRecordingDurationMilliseconds = 0
+        refinementReviewSession = nil
         resultReviewPanelController.hide()
     }
 
     private func dismissResultReviewPanel() {
-        resultReviewRetryTask?.cancel()
-        resultReviewRetryTask = nil
-        resultReviewPanelController.hide()
+        clearResultReviewState()
     }
 
     private func retryReviewedText() {
-        guard let sourceText = pendingResultReviewSourceText else {
+        guard let session = refinementReviewSession else {
+            return
+        }
+        let sourceText = session.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceText.isEmpty else {
+            presentTransientError("Original transcript is unavailable for regenerate.")
             return
         }
 
         resultReviewRetryTask?.cancel()
+        if let payload = resultReviewPayload(for: session, isRegenerating: true) {
+            resultReviewPanelController.show(payload: payload)
+        }
+        let sessionID = session.sessionID
         resultReviewRetryTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
                 self.resultReviewRetryTask = nil
             }
 
-            let refinedText = await self.refineIfNeeded(sourceText)
-            guard !Task.isCancelled, self.pendingResultReviewSourceText == sourceText else { return }
-
-            let workflow = Self.effectiveProcessingWorkflow(
-                postProcessingMode: self.model.postProcessingMode,
-                refinementProvider: self.model.refinementProvider,
-                override: self.pendingResultReviewWorkflowOverride
+            let refinedText = await self.refineIfNeeded(
+                sourceText,
+                workflow: session.workflow,
+                workflowOverride: session.workflowOverride,
+                promptPresetOverrideID: session.selectedPromptPresetID
             )
+            guard !Task.isCancelled else { return }
+            guard var latestSession = self.refinementReviewSession,
+                  latestSession.sessionID == sessionID else { return }
 
-            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
-                refinementProvider: workflow.refinementProvider,
-                postProcessingMode: workflow.postProcessingMode
-            )
-            let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
-
-            if shouldPresentResultReviewPanel && didSucceed {
-                self.presentResultReviewPanel(
-                    text: refinedText,
-                    sourceText: sourceText,
-                    targetSnapshot: self.pendingResultReviewTargetSnapshot,
-                    sourceApplication: self.pendingResultReviewSourceApplication,
-                    recordingDurationMilliseconds: self.pendingResultReviewRecordingDurationMilliseconds
-                )
+            let sanitizedRefinedText = ExternalProcessorOutputSanitizer.sanitize(refinedText)
+            let didExternalProcessorSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+            let rerunSucceeded: Bool
+            if latestSession.workflow.refinementProvider == .externalProcessor {
+                rerunSucceeded = didExternalProcessorSucceed
+                    && !sanitizedRefinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            } else {
+                rerunSucceeded = !sanitizedRefinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
+
+            if rerunSucceeded {
+                latestSession.currentResultText = sanitizedRefinedText
+                self.refinementReviewSession = latestSession
+            } else {
+                if latestSession.workflow.refinementProvider == .externalProcessor {
+                    let processorFailureMessage = await self.externalProcessorRefiner
+                        .lastFailureMessageOnLastInvocation
+                    let trimmedFailureMessage = processorFailureMessage?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let failureMessage = trimmedFailureMessage.isEmpty
+                        ? "Regenerate failed. Previous result is kept."
+                        : trimmedFailureMessage
+                    self.presentTransientError(failureMessage)
+                } else {
+                    self.presentTransientError("Regenerate returned empty output. Previous result is kept.")
+                }
+            }
+
+            guard let payload = self.resultReviewPayload(
+                for: latestSession,
+                isRegenerating: false
+            ) else {
+                self.clearResultReviewState()
+                self.presentTransientError("Regenerate returned unreadable output.")
+                return
+            }
+            self.resultReviewPanelController.show(payload: payload)
         }
     }
 
     private func insertReviewedText(_ text: String) {
+        guard let session = refinementReviewSession else { return }
         let currentTargetSnapshot = editableTextTargetInspector.currentSnapshot()
         let targetSnapshot = Self.resultReviewInsertionTargetSnapshot(
-            capturedTargetSnapshot: pendingResultReviewTargetSnapshot,
+            capturedTargetSnapshot: session.targetSnapshot,
             currentTargetSnapshot: currentTargetSnapshot
         )
-        let sourceApplication = pendingResultReviewSourceApplication
-        let recordingDurationMilliseconds = pendingResultReviewRecordingDurationMilliseconds
+        let sourceApplication = session.sourceApplication
+        let recordingDurationMilliseconds = session.recordingDurationMilliseconds
         let sourceApplicationBundleID = Self.resultReviewInsertionSourceApplicationBundleID(
             capturedSourceApplicationBundleID: sourceApplication?.bundleIdentifier,
             currentFrontmostApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         )
-        let reviewPayload = pendingResultReviewPayload
+        let reviewPayload = resultReviewPayload(for: session, isRegenerating: false)
         switch Self.transcriptDeliveryRoute(
             for: text,
             targetInspection: targetSnapshot.inspection
@@ -1621,22 +1824,48 @@ final class AppController: NSObject {
         return Int((elapsed * 1000).rounded())
     }
 
-    private func refineIfNeeded(_ text: String) async -> String {
-        let workflow = Self.effectiveProcessingWorkflow(
+    private func resolvedRefinementPrompt(
+        for workflow: ProcessingWorkflowSelection,
+        promptPresetOverrideID: String? = nil
+    ) -> ResolvedPromptPreset? {
+        guard workflow.postProcessingMode == .refinement else {
+            return nil
+        }
+
+        if let promptPresetOverrideID {
+            let normalizedPromptID = promptPresetOverrideID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedPromptID.isEmpty {
+                return model.resolvedPromptPresetForExplicitPresetID(normalizedPromptID)
+            }
+        }
+
+        let destination = promptDestinationInspector.currentDestinationContext()
+        return model.resolvedPromptPreset(for: .voicePi, destination: destination)
+    }
+
+    private func refineIfNeeded(
+        _ text: String,
+        workflow: ProcessingWorkflowSelection? = nil,
+        workflowOverride: RecordingWorkflowOverride? = nil,
+        promptPresetOverrideID: String? = nil
+    ) async -> String {
+        let effectiveWorkflow = workflow ?? Self.effectiveProcessingWorkflow(
             postProcessingMode: model.postProcessingMode,
             refinementProvider: model.refinementProvider,
-            override: activeRecordingWorkflowOverride ?? pendingResultReviewWorkflowOverride
+            override: workflowOverride ?? activeRecordingWorkflowOverride
         )
-        let destination = promptDestinationInspector.currentDestinationContext()
-        let resolvedPrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
-        if workflow.refinementProvider == .externalProcessor {
+        let resolvedPrompt = resolvedRefinementPrompt(
+            for: effectiveWorkflow,
+            promptPresetOverrideID: promptPresetOverrideID
+        )
+        if effectiveWorkflow.refinementProvider == .externalProcessor {
             await externalProcessorRefiner.resetLastInvocation()
         }
 
         return await AppWorkflowSupport.postProcessIfNeeded(
             text,
-            mode: workflow.postProcessingMode,
-            refinementProvider: workflow.refinementProvider,
+            mode: effectiveWorkflow.postProcessingMode,
+            refinementProvider: effectiveWorkflow.refinementProvider,
             externalProcessor: model.selectedExternalProcessorEntry(),
             externalProcessorRefiner: externalProcessorRefiner,
             translationProvider: model.effectiveTranslationProvider(
@@ -1645,10 +1874,8 @@ final class AppController: NSObject {
             sourceLanguage: model.selectedLanguage,
             targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
-            refinementPromptTitle: workflow.postProcessingMode == .refinement ? resolvedPrompt.title : nil,
-            resolvedRefinementPrompt: workflow.postProcessingMode == .refinement
-                ? resolvedPrompt.middleSection
-                : nil,
+            refinementPromptTitle: resolvedPrompt?.title,
+            resolvedRefinementPrompt: resolvedPrompt?.middleSection,
             dictionaryEntries: model.enabledDictionaryEntries,
             refiner: llmRefiner,
             translator: appleTranslateService,
@@ -1860,6 +2087,11 @@ final class AppController: NSObject {
             inputMonitoringState: inputMonitoringState,
             accessibilityState: accessibilityState
         )
+        let promptCyclePlan = Self.promptCycleShortcutMonitorPlan(
+            shortcut: model.promptCycleShortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState
+        )
         let processorPlan = Self.processorShortcutMonitorPlan(
             shortcut: model.processorShortcut,
             inputMonitoringState: inputMonitoringState,
@@ -1885,6 +2117,12 @@ final class AppController: NSObject {
             registrationFailureMessage: Self.modeCycleShortcutRegistrationFailureMessage,
             monitoringFailureMessage: Self.modeCycleShortcutMonitoringFailureMessage
         )
+        let promptCycleStatus = applyHotkeyMonitorPlan(
+            promptCyclePlan,
+            actionController: promptCycleShortcutAction,
+            registrationFailureMessage: Self.promptCycleShortcutRegistrationFailureMessage,
+            monitoringFailureMessage: Self.promptCycleShortcutMonitoringFailureMessage
+        )
         let processorStatus = applyHotkeyMonitorPlan(
             processorPlan,
             actionController: processorShortcutAction,
@@ -1892,7 +2130,7 @@ final class AppController: NSObject {
             monitoringFailureMessage: Self.processorShortcutMonitoringFailureMessage
         )
 
-        let statusMessage = activationStatus ?? cycleStatus ?? processorStatus
+        let statusMessage = activationStatus ?? cycleStatus ?? promptCycleStatus ?? processorStatus
         if let statusMessage, statusBarController != nil {
             statusBarController?.setTransientStatus(statusMessage)
         } else if statusBarController != nil, model.errorState == nil {
@@ -1945,7 +2183,8 @@ final class AppController: NSObject {
         Self.shortcutsRequireInputMonitoring(
             activationShortcut: model.activationShortcut,
             modeCycleShortcut: model.modeCycleShortcut,
-            processorShortcut: model.processorShortcut
+            processorShortcut: model.processorShortcut,
+            promptCycleShortcut: model.promptCycleShortcut
         )
     }
 
@@ -2454,6 +2693,13 @@ extension AppController: StatusBarControllerDelegate {
     func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut) {
         model.setModeCycleShortcut(shortcut)
         modeCycleShortcutAction.shortcut = shortcut
+        controller.refreshAll()
+        ensureHotkeyMonitorRunning()
+    }
+
+    func statusBarController(_ controller: StatusBarController, didUpdatePromptCycleShortcut shortcut: ActivationShortcut) {
+        model.setPromptCycleShortcut(shortcut)
+        promptCycleShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
     }

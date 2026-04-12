@@ -11,6 +11,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarController(_ controller: StatusBarController, didSaveRemoteASRConfiguration configuration: RemoteASRConfiguration)
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut)
+    func statusBarController(_ controller: StatusBarController, didUpdatePromptCycleShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didUpdateProcessorShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didRequestTest configuration: LLMConfiguration) async -> Result<String, Error>
     func statusBarController(_ controller: StatusBarController, didRequestRemoteASRTest configuration: RemoteASRConfiguration) async -> Result<String, Error>
@@ -1142,6 +1143,11 @@ protocol SettingsWindowControllerDelegate: AnyObject {
 
     func settingsWindowController(
         _ controller: SettingsWindowController,
+        didUpdatePromptCycleShortcut shortcut: ActivationShortcut
+    )
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
         didUpdateProcessorShortcut shortcut: ActivationShortcut
     )
 
@@ -1266,6 +1272,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let homeLanguageLabel = NSTextField(labelWithString: "")
     private let homeShortcutLabel = NSTextField(labelWithString: "")
     private let homeModeShortcutLabel = NSTextField(labelWithString: "")
+    private let homePromptShortcutLabel = NSTextField(labelWithString: "")
     private let homeASRLabel = NSTextField(labelWithString: "")
     private let homeLLMLabel = NSTextField(labelWithString: "")
     private let dictionarySummaryLabel = NSTextField(labelWithString: "")
@@ -1290,6 +1297,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let shortcutHintLabel = NSTextField(labelWithString: "")
     private let modeShortcutRecorderField = ShortcutRecorderField()
     private let modeShortcutHintLabel = NSTextField(labelWithString: "")
+    private let promptShortcutRecorderField = ShortcutRecorderField()
+    private let promptShortcutHintLabel = NSTextField(labelWithString: "")
     private let processorShortcutRecorderField = ShortcutRecorderField()
     private let processorShortcutHintLabel = NSTextField(labelWithString: "")
 
@@ -1625,6 +1634,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         homeShortcutLabel.alignment = .left
         homeModeShortcutLabel.font = .systemFont(ofSize: 13)
         homeModeShortcutLabel.alignment = .left
+        homePromptShortcutLabel.font = .systemFont(ofSize: 13)
+        homePromptShortcutLabel.alignment = .left
         homeASRLabel.font = .systemFont(ofSize: 13)
         homeASRLabel.alignment = .left
         homeLLMLabel.font = .systemFont(ofSize: 13)
@@ -1653,6 +1664,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         modeShortcutHintLabel.maximumNumberOfLines = 0
         modeShortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use for quick mode switching."
 
+        promptShortcutRecorderField.target = self
+        promptShortcutRecorderField.action = #selector(promptShortcutRecorderChanged(_:))
+        promptShortcutHintLabel.font = .systemFont(ofSize: 12)
+        promptShortcutHintLabel.textColor = .secondaryLabelColor
+        promptShortcutHintLabel.alignment = .left
+        promptShortcutHintLabel.lineBreakMode = .byWordWrapping
+        promptShortcutHintLabel.maximumNumberOfLines = 0
+        promptShortcutHintLabel.stringValue = promptShortcutHintText(for: model.promptCycleShortcut)
+
         processorShortcutRecorderField.target = self
         processorShortcutRecorderField.action = #selector(processorShortcutRecorderChanged(_:))
         processorShortcutHintLabel.font = .systemFont(ofSize: 12)
@@ -1674,6 +1694,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         modeShortcutControl.spacing = 8
         modeShortcutControl.alignment = .leading
 
+        let promptShortcutControl = NSStackView(views: [promptShortcutRecorderField, promptShortcutHintLabel])
+        promptShortcutControl.orientation = .vertical
+        promptShortcutControl.spacing = 8
+        promptShortcutControl.alignment = .leading
+
         let processorShortcutControl = NSStackView(views: [processorShortcutRecorderField, processorShortcutHintLabel])
         processorShortcutControl.orientation = .vertical
         processorShortcutControl.spacing = 8
@@ -1682,10 +1707,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let overviewSection = makeGroupedSection(rows: [
             makePreferenceRow(title: "Activation Shortcut", control: shortcutControl),
             makePreferenceRow(title: "Mode Switch Shortcut", control: modeShortcutControl),
+            makePreferenceRow(title: "Prompt Cycle Shortcut", control: promptShortcutControl),
             makePreferenceRow(title: "Processor Shortcut", control: processorShortcutControl),
             makePreferenceRow(title: "Appearance", control: interfaceThemeControl),
             makePreferenceRow(title: "Recognition Language", control: homeLanguageLabel),
             makePreferenceRow(title: "Mode Switching", control: homeModeShortcutLabel),
+            makePreferenceRow(title: "Prompt Switching", control: homePromptShortcutLabel),
             makePreferenceRow(title: "Permissions", control: homePermissionSummaryLabel),
             makePreferenceRow(title: "ASR", control: homeASRLabel),
             makePreferenceRow(title: "Text Processing", control: homeLLMLabel)
@@ -1696,7 +1723,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 icon: "waveform.and.mic",
                 eyebrow: "General",
                 title: "A tighter control center for dictation, translation, and post-processing.",
-                description: "VoicePi stays in the menu bar, lets you keep dedicated shortcuts for recording and mode switching, and can reopen processor output from a third global shortcut."
+                description: "VoicePi stays in the menu bar, lets you keep dedicated shortcuts for recording, mode switching, and prompt switching, and can reopen processor output from a dedicated processor shortcut."
             ),
             overviewSection,
             homeSummaryLabel
@@ -2324,6 +2351,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if !modeShortcutRecorderField.isRecordingShortcut {
             modeShortcutRecorderField.shortcut = model.modeCycleShortcut
         }
+        if !promptShortcutRecorderField.isRecordingShortcut {
+            promptShortcutRecorderField.shortcut = model.promptCycleShortcut
+        }
         if !processorShortcutRecorderField.isRecordingShortcut {
             processorShortcutRecorderField.shortcut = model.processorShortcut
         }
@@ -2345,12 +2375,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let presentation = SettingsPresentation.homeSectionPresentation(model: model)
         homeShortcutLabel.stringValue = presentation.shortcutSummary
         homeModeShortcutLabel.stringValue = presentation.modeShortcutSummary
+        homePromptShortcutLabel.stringValue = presentation.promptShortcutSummary
         homeLanguageLabel.stringValue = presentation.languageSummary
         homePermissionSummaryLabel.stringValue = presentation.permissionSummary
         homeASRLabel.stringValue = presentation.asrSummary
         homeLLMLabel.stringValue = presentation.llmSummary
         shortcutHintLabel.stringValue = presentation.shortcutHint
         modeShortcutHintLabel.stringValue = presentation.modeShortcutHint
+        promptShortcutHintLabel.stringValue = presentation.promptShortcutHint
         processorShortcutHintLabel.stringValue = processorShortcutHintText(for: model.processorShortcut)
         homeSummaryLabel.stringValue = presentation.statusSummary
         homeSummaryLabel.textColor = presentation.statusTone == .error ? .systemRed : .secondaryLabelColor
@@ -2358,6 +2390,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func processorShortcutHintText(for shortcut: ActivationShortcut) -> String {
         SettingsWindowSupport.processorShortcutHintText(for: shortcut)
+    }
+
+    private func promptShortcutHintText(for shortcut: ActivationShortcut) -> String {
+        SettingsWindowSupport.promptCycleShortcutHintText(for: shortcut)
     }
 
     private func refreshASRSection() {
@@ -3400,6 +3436,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         model.setModeCycleShortcut(shortcut)
         delegate?.settingsWindowController(self, didUpdateModeCycleShortcut: shortcut)
+        reloadFromModel()
+        window?.makeFirstResponder(nil)
+    }
+
+    @objc
+    private func promptShortcutRecorderChanged(_ sender: ShortcutRecorderField) {
+        let shortcut = sender.shortcut
+
+        guard !shortcut.isEmpty else {
+            sender.shortcut = model.promptCycleShortcut
+            return
+        }
+
+        model.setPromptCycleShortcut(shortcut)
+        delegate?.settingsWindowController(self, didUpdatePromptCycleShortcut: shortcut)
         reloadFromModel()
         window?.makeFirstResponder(nil)
     }
@@ -6503,6 +6554,14 @@ extension StatusBarController: SettingsWindowControllerDelegate {
     ) {
         refreshAll()
         delegate?.statusBarController(self, didUpdateModeCycleShortcut: shortcut)
+    }
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
+        didUpdatePromptCycleShortcut shortcut: ActivationShortcut
+    ) {
+        refreshAll()
+        delegate?.statusBarController(self, didUpdatePromptCycleShortcut: shortcut)
     }
 
     func settingsWindowController(

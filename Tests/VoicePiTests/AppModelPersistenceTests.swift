@@ -14,6 +14,7 @@ struct AppModelPersistenceTests {
         #expect(model.selectedExternalProcessorEntryID == nil)
         #expect(model.externalProcessorEntries.isEmpty)
         #expect(model.processorShortcut.isEmpty)
+        #expect(model.promptCycleShortcut.isEmpty)
     }
 
     @Test
@@ -133,6 +134,12 @@ struct AppModelPersistenceTests {
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
             )
         )
+        model.setPromptCycleShortcut(
+            ActivationShortcut(
+                keyCodes: [31],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
 
         let reloaded = AppModel(defaults: defaults)
 
@@ -164,6 +171,12 @@ struct AppModelPersistenceTests {
             reloaded.processorShortcut == ActivationShortcut(
                 keyCodes: [35],
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
+        #expect(
+            reloaded.promptCycleShortcut == ActivationShortcut(
+                keyCodes: [31],
+                modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
             )
         )
     }
@@ -463,6 +476,7 @@ struct AppModelPersistenceTests {
         let model = AppModel(defaults: defaults)
 
         #expect(model.modeCycleShortcut.isEmpty)
+        #expect(model.promptCycleShortcut.isEmpty)
         #expect(model.postProcessingMode == .disabled)
 
         model.cyclePostProcessingMode()

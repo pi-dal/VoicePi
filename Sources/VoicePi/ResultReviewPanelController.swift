@@ -61,6 +61,7 @@ final class ResultReviewPanelController: NSWindowController {
 
     var onInsertRequested: ((String) -> Void)?
     var onCopyRequested: ((String) -> Void)?
+    var onPromptSelectionChanged: ((String) -> Void)?
     var onRetryRequested: (() -> Void)?
     var onDismissRequested: (() -> Void)?
 
@@ -103,8 +104,11 @@ final class ResultReviewPanelController: NSWindowController {
         panel.onConfirmPressed = { [weak self] in
             self?.performInsert()
         }
-        contentController.onPromptCopyRequested = { [weak self] in
-            _ = self?.performPromptCopy()
+        contentController.onPromptSelectionChanged = { [weak self] presetID in
+            self?.onPromptSelectionChanged?(presetID)
+        }
+        contentController.onRegenerateRequested = { [weak self] in
+            self?.performRetry()
         }
         contentController.onOutputCopyRequested = { [weak self] in
             _ = self?.performCopy()
@@ -124,15 +128,11 @@ final class ResultReviewPanelController: NSWindowController {
     }
 
     var displayedPromptText: String {
-        contentController.displayedPromptText
+        contentController.selectedPromptTitle
     }
 
     var displayedText: String {
         contentController.displayedText
-    }
-
-    var promptCopyButtonTitle: String {
-        contentController.promptCopyButtonTitle
     }
 
     var outputCopyButtonTitle: String {
@@ -177,20 +177,6 @@ final class ResultReviewPanelController: NSWindowController {
 
     func performInsert() {
         onInsertRequested?(contentController.displayedText)
-    }
-
-    @discardableResult
-    func performPromptCopy() -> Bool {
-        let promptText = contentController.promptTextForCopy
-        guard !promptText.isEmpty else {
-            return false
-        }
-
-        let didCopy = clipboardWriter.write(string: promptText)
-        if didCopy {
-            onCopyRequested?(promptText)
-        }
-        return didCopy
     }
 
     @discardableResult
@@ -290,8 +276,9 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
     private let promptRow = NSView()
     private let promptIconView = NSImageView()
-    private let promptTextLabel = NSTextField(wrappingLabelWithString: "")
-    private let promptCopyButton = NSButton(title: "", target: nil, action: nil)
+    private let promptSectionLabel = NSTextField(labelWithString: "")
+    private let promptPresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let regenerateButton = NSButton(title: "", target: nil, action: nil)
 
     private let answerContainer = NSView()
     private let answerHeader = NSView()
@@ -305,7 +292,8 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
     private var state: ResultReviewPanelPresentationState?
 
-    var onPromptCopyRequested: (() -> Void)?
+    var onPromptSelectionChanged: ((String) -> Void)?
+    var onRegenerateRequested: (() -> Void)?
     var onOutputCopyRequested: (() -> Void)?
     var onDismissRequested: (() -> Void)?
 
@@ -362,7 +350,17 @@ private final class ResultReviewPanelContentViewController: NSViewController {
             answerContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 170)
         ])
 
-        setPayload(ResultReviewPanelPayload(text: "Preview output", sourceText: "Preview prompt")!)
+        setPayload(
+            ResultReviewPanelPayload(
+                resultText: "Preview output",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: PromptPreset.builtInDefault.title,
+                availablePrompts: [
+                    .init(presetID: PromptPreset.builtInDefaultID, title: PromptPreset.builtInDefault.title),
+                    .init(presetID: "user.preview", title: "Preview Prompt")
+                ]
+            )!
+        )
     }
 
     override func viewDidLayout() {
@@ -406,13 +404,14 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
         brandLabel.textColor = .labelColor
         promptIconView.contentTintColor = .secondaryLabelColor
-        promptTextLabel.textColor = .labelColor
+        promptSectionLabel.textColor = .labelColor
         answerIconView.contentTintColor = .secondaryLabelColor
         answerTitleLabel.textColor = .labelColor
         outputTextView.textColor = .labelColor
         outputTextView.backgroundColor = .clear
+        promptPresetPopup.appearance = view.window?.appearance
 
-        for button in [promptCopyButton, outputCopyButton] {
+        for button in [outputCopyButton] {
             button.contentTintColor = iconTint
         }
 
@@ -423,12 +422,12 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         state?.titleText ?? "VoicePi"
     }
 
-    var displayedPromptText: String {
-        state?.promptDisplayText ?? ""
+    var selectedPromptTitle: String {
+        state?.selectedPromptTitle ?? ""
     }
 
-    var promptTextForCopy: String {
-        state?.promptCopyText ?? ""
+    var selectedPromptPresetID: String {
+        state?.selectedPromptPresetID ?? PromptPreset.builtInDefaultID
     }
 
     var displayedText: String {
@@ -439,10 +438,6 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         state?.outputCopyText ?? ""
     }
 
-    var promptCopyButtonTitle: String {
-        state?.promptCopyButtonTitle ?? "Copy"
-    }
-
     var outputCopyButtonTitle: String {
         state?.outputCopyButtonTitle ?? "Copy"
     }
@@ -450,12 +445,17 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private func syncState() {
         guard let state else { return }
         brandLabel.stringValue = state.titleText
-        promptTextLabel.stringValue = state.promptDisplayText
+        promptSectionLabel.stringValue = "Prompt"
         answerTitleLabel.stringValue = state.outputSectionTitle
-        promptCopyButton.toolTip = state.promptCopyButtonTitle
         outputCopyButton.toolTip = state.outputCopyButtonTitle
-        promptCopyButton.isEnabled = !state.promptCopyText.isEmpty
         outputCopyButton.isEnabled = !state.outputCopyText.isEmpty
+        promptPresetPopup.isEnabled = state.isPromptPickerEnabled
+        regenerateButton.title = state.regenerateButtonTitle
+        regenerateButton.isEnabled = state.isRegenerateEnabled
+        reloadPromptPresetPopup(
+            options: state.promptOptions,
+            selectedPresetID: state.selectedPromptPresetID
+        )
         outputTextView.string = state.outputDisplayText
         updateOutputTextLayout()
     }
@@ -506,19 +506,33 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         promptRow.translatesAutoresizingMaskIntoConstraints = false
 
         promptIconView.translatesAutoresizingMaskIntoConstraints = false
-        promptIconView.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Prompt")
+        promptIconView.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Prompt")
         promptIconView.imageScaling = .scaleProportionallyDown
 
-        promptTextLabel.translatesAutoresizingMaskIntoConstraints = false
-        promptTextLabel.font = .systemFont(ofSize: 14, weight: .regular)
-        promptTextLabel.maximumNumberOfLines = 2
-        promptTextLabel.lineBreakMode = .byTruncatingTail
+        promptSectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        promptSectionLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        promptSectionLabel.maximumNumberOfLines = 1
 
-        configureActionIconButton(promptCopyButton, action: #selector(promptCopyPressed))
+        promptPresetPopup.translatesAutoresizingMaskIntoConstraints = false
+        promptPresetPopup.target = self
+        promptPresetPopup.action = #selector(promptPresetChanged)
+        promptPresetPopup.font = .systemFont(ofSize: 13, weight: .regular)
+        promptPresetPopup.controlSize = .regular
+        promptPresetPopup.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        promptPresetPopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        regenerateButton.translatesAutoresizingMaskIntoConstraints = false
+        regenerateButton.target = self
+        regenerateButton.action = #selector(regeneratePressed)
+        regenerateButton.bezelStyle = .rounded
+        regenerateButton.controlSize = .small
+        regenerateButton.setContentHuggingPriority(.required, for: .horizontal)
+        regenerateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         promptRow.addSubview(promptIconView)
-        promptRow.addSubview(promptTextLabel)
-        promptRow.addSubview(promptCopyButton)
+        promptRow.addSubview(promptSectionLabel)
+        promptRow.addSubview(promptPresetPopup)
+        promptRow.addSubview(regenerateButton)
 
         NSLayoutConstraint.activate([
             promptIconView.leadingAnchor.constraint(equalTo: promptRow.leadingAnchor, constant: 2),
@@ -528,15 +542,17 @@ private final class ResultReviewPanelContentViewController: NSViewController {
             promptIconView.widthAnchor.constraint(equalToConstant: 14),
             promptIconView.heightAnchor.constraint(equalToConstant: 14),
 
-            promptCopyButton.trailingAnchor.constraint(equalTo: promptRow.trailingAnchor, constant: -1),
-            promptCopyButton.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
-            promptCopyButton.widthAnchor.constraint(equalToConstant: 22),
-            promptCopyButton.heightAnchor.constraint(equalToConstant: 22),
+            regenerateButton.trailingAnchor.constraint(equalTo: promptRow.trailingAnchor, constant: -1),
+            regenerateButton.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
 
-            promptTextLabel.leadingAnchor.constraint(equalTo: promptIconView.trailingAnchor, constant: 10),
-            promptTextLabel.trailingAnchor.constraint(equalTo: promptCopyButton.leadingAnchor, constant: -12),
-            promptTextLabel.topAnchor.constraint(equalTo: promptRow.topAnchor, constant: 8),
-            promptTextLabel.bottomAnchor.constraint(equalTo: promptRow.bottomAnchor, constant: -8)
+            promptSectionLabel.leadingAnchor.constraint(equalTo: promptIconView.trailingAnchor, constant: 10),
+            promptSectionLabel.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
+
+            promptPresetPopup.leadingAnchor.constraint(equalTo: promptSectionLabel.trailingAnchor, constant: 10),
+            promptPresetPopup.trailingAnchor.constraint(equalTo: regenerateButton.leadingAnchor, constant: -10),
+            promptPresetPopup.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
+            promptPresetPopup.heightAnchor.constraint(equalToConstant: 28),
+            promptPresetPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 170)
         ])
     }
 
@@ -671,14 +687,46 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         outputTextView.frame = NSRect(x: 0, y: 0, width: max(contentSize.width, 1), height: height)
     }
 
+    private func reloadPromptPresetPopup(
+        options: [ResultReviewPanelPromptOption],
+        selectedPresetID: String
+    ) {
+        let previousSelection = promptPresetPopup.selectedItem?.representedObject as? String
+        promptPresetPopup.removeAllItems()
+        for option in options {
+            promptPresetPopup.addItem(withTitle: option.title)
+            promptPresetPopup.lastItem?.representedObject = option.presetID
+        }
+
+        let targetPresetID = options.contains(where: { $0.presetID == selectedPresetID })
+            ? selectedPresetID
+            : previousSelection
+        if let targetPresetID,
+           let index = promptPresetPopup.itemArray.firstIndex(where: {
+               ($0.representedObject as? String) == targetPresetID
+           }) {
+            promptPresetPopup.selectItem(at: index)
+        } else if promptPresetPopup.numberOfItems > 0 {
+            promptPresetPopup.selectItem(at: 0)
+        }
+    }
+
     @objc
     private func closePressed() {
         onDismissRequested?()
     }
 
     @objc
-    private func promptCopyPressed() {
-        onPromptCopyRequested?()
+    private func promptPresetChanged() {
+        guard let presetID = promptPresetPopup.selectedItem?.representedObject as? String else {
+            return
+        }
+        onPromptSelectionChanged?(presetID)
+    }
+
+    @objc
+    private func regeneratePressed() {
+        onRegenerateRequested?()
     }
 
     @objc

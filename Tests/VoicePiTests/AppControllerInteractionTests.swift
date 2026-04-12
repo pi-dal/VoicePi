@@ -344,7 +344,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func externalProcessorRefinementUsesResultReviewPanelWhileStandardModesDoNot() {
+    func refinementReviewPanelSupportsBothLLMAndExternalProcessorModes() {
         #expect(
             AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .externalProcessor,
@@ -352,7 +352,7 @@ struct AppControllerInteractionTests {
             )
         )
         #expect(
-            !AppController.shouldPresentResultReviewPanel(
+            AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .llm,
                 postProcessingMode: .refinement
             )
@@ -361,6 +361,12 @@ struct AppControllerInteractionTests {
             !AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .externalProcessor,
                 postProcessingMode: .disabled
+            )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .translation
             )
         )
     }
@@ -672,6 +678,35 @@ struct AppControllerInteractionTests {
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
                 processorShortcut: processorShortcut,
+                promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                inputMonitoringState: .unknown
+            ) == .init(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                useSystemAccessibilityPrompt: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func launchPermissionPlanAlsoRequestsInputMonitoringWhenPromptCycleShortcutIsAdvanced() {
+        let activationShortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        let promptCycleShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.launchPermissionPlan(
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                promptCycleShortcut: promptCycleShortcut,
                 inputMonitoringState: .unknown
             ) == .init(
                 requestMediaPermissions: true,
