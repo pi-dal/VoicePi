@@ -73,6 +73,7 @@ final class AppController: NSObject {
 
     enum PressAction: Equatable {
         case startRecording
+        case startSelectionRewrite
         case stopRecording
         case cancelProcessing
         case ignore
@@ -108,9 +109,88 @@ final class AppController: NSObject {
         case ignore
     }
 
+    enum RefiningPresentationMode: Equatable {
+        case floatingOverlayAndStatusBar
+        case statusBarOnly
+    }
+
+    enum RecentInsertionAutoReviewPresentationDecision: Equatable {
+        case presentReviewPanel
+        case deferToCallToAction
+    }
+
+    enum SelectionRewritePresentationDecision: Equatable {
+        case presentRecentInsertionReviewPanel
+        case presentFreshReviewPanelAndStartRewrite
+    }
+
     struct ProcessingWorkflowSelection: Equatable {
         let postProcessingMode: PostProcessingMode
         let refinementProvider: RefinementProvider
+    }
+
+    enum ResultReviewSourceType: Equatable {
+        case recentInsertion
+        case selectedText
+    }
+
+    struct ResultReviewSelectionAnchor: Equatable {
+        let targetIdentifier: String?
+        let selectedText: String
+        let selectedRange: NSRange
+        let sourceApplicationBundleID: String?
+    }
+
+    struct RefinementReviewSession {
+        let sessionID: UUID
+        let sourceType: ResultReviewSourceType
+        let rawTranscript: String
+        var selectedPromptPresetID: String
+        var selectedPromptTitle: String
+        var pendingPromptPresetID: String?
+        var pendingPromptTitle: String?
+        var currentResultText: String
+        let selectionAnchor: ResultReviewSelectionAnchor
+        let recordingDurationMilliseconds: Int
+        let workflow: ProcessingWorkflowSelection
+        let workflowOverride: RecordingWorkflowOverride?
+        let isAutoOpened: Bool
+
+        init(
+            sourceType: ResultReviewSourceType,
+            rawTranscript: String,
+            selectedPromptPresetID: String,
+            selectedPromptTitle: String,
+            pendingPromptPresetID: String? = nil,
+            pendingPromptTitle: String? = nil,
+            currentResultText: String,
+            selectionAnchor: ResultReviewSelectionAnchor,
+            recordingDurationMilliseconds: Int,
+            workflow: ProcessingWorkflowSelection,
+            workflowOverride: RecordingWorkflowOverride?,
+            isAutoOpened: Bool
+        ) {
+            self.sessionID = UUID()
+            self.sourceType = sourceType
+            self.rawTranscript = rawTranscript
+            self.selectedPromptPresetID = selectedPromptPresetID
+            self.selectedPromptTitle = selectedPromptTitle
+            self.pendingPromptPresetID = pendingPromptPresetID
+            self.pendingPromptTitle = pendingPromptTitle
+            self.currentResultText = currentResultText
+            self.selectionAnchor = selectionAnchor
+            self.recordingDurationMilliseconds = recordingDurationMilliseconds
+            self.workflow = workflow
+            self.workflowOverride = workflowOverride
+            self.isAutoOpened = isAutoOpened
+        }
+    }
+
+    struct ResultReviewPromptSelectionState: Equatable {
+        let selectedPromptPresetID: String
+        let selectedPromptTitle: String
+        let pendingPromptPresetID: String?
+        let pendingPromptTitle: String?
     }
 
     enum PostProcessingFailureAction: Equatable {
@@ -141,11 +221,14 @@ final class AppController: NSObject {
 
     enum ResultReviewInsertionError: LocalizedError {
         case sourceApplicationActivationFailed
+        case selectionChanged
 
         var errorDescription: String? {
             switch self {
             case .sourceApplicationActivationFailed:
                 return "VoicePi couldn't return focus to the previous app before pasting."
+            case .selectionChanged:
+                return "Selection changed. Re-select the text and try again."
             }
         }
     }
@@ -153,11 +236,13 @@ final class AppController: NSObject {
     private let model = AppModel()
     private let recordingShortcutAction = ShortcutActionController()
     private let modeCycleShortcutAction = ShortcutActionController()
+    private let promptCycleShortcutAction = ShortcutActionController()
     private let processorShortcutAction = ShortcutActionController()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
     private let resultReviewPanelController = ResultReviewPanelController()
+    private let selectionRegenerateHintController = SelectionRegenerateHintController()
     private let dictionarySuggestionToastController = DictionarySuggestionToastController()
     private let llmRefiner = LLMRefiner()
     private let externalProcessorRefiner = AppControllerExternalProcessorRefiner()
@@ -171,6 +256,7 @@ final class AppController: NSObject {
     private let appDefaults = UserDefaults.standard
     private let promptDestinationInspector = PromptDestinationInspector()
     private let editableTextTargetInspector: EditableTextTargetInspecting = EditableTextTargetInspector()
+    private let recentInsertionRewriteCoordinator = RecentInsertionRewriteCoordinator()
 
     private var statusBarController: StatusBarController?
     private var cancellables: Set<AnyCancellable> = []
@@ -190,12 +276,7 @@ final class AppController: NSObject {
     private var activeDirectUpdateInstaller: AppUpdater?
     private var installationSource: AppInstallationSource = .unknown
     private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
-    private var pendingResultReviewSourceText: String?
-    private var pendingResultReviewPayload: ResultReviewPanelPayload?
-    private var pendingResultReviewWorkflowOverride: RecordingWorkflowOverride?
-    private var pendingResultReviewTargetSnapshot: EditableTextTargetSnapshot?
-    private var pendingResultReviewSourceApplication: NSRunningApplication?
-    private var pendingResultReviewRecordingDurationMilliseconds = 0
+    private var refinementReviewSession: RefinementReviewSession?
     private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
     private var activeRecordingStartedAt: Date?
 
@@ -220,6 +301,15 @@ final class AppController: NSObject {
     static let modeCycleShortcutRegistrationFailureMessage =
         "Mode-switch shortcut registration is unavailable. Choose a different shortcut."
 
+    static let promptCycleShortcutMonitoringFailureMessage =
+        "Prompt-cycle shortcut listening is unavailable. Input Monitoring is required to listen for this shortcut."
+
+    static let promptCycleShortcutSuppressionWarningMessage =
+        "Prompt-cycle shortcut listening is active, but Accessibility is still required to suppress the shortcut before it reaches the frontmost app."
+
+    static let promptCycleShortcutRegistrationFailureMessage =
+        "Prompt-cycle shortcut registration is unavailable. Choose a different shortcut."
+
     static let processorShortcutMonitoringFailureMessage =
         "Processor shortcut listening is unavailable. Input Monitoring is required to listen for this shortcut."
 
@@ -241,7 +331,8 @@ final class AppController: NSObject {
     static func pressAction(
         isRecording: Bool,
         isStartingRecording: Bool,
-        isProcessingRelease: Bool
+        isProcessingRelease: Bool,
+        hasConfirmedSelectionForRewrite: Bool = false
     ) -> PressAction {
         if isProcessingRelease {
             return .cancelProcessing
@@ -253,6 +344,10 @@ final class AppController: NSObject {
 
         if isStartingRecording {
             return .ignore
+        }
+
+        if hasConfirmedSelectionForRewrite {
+            return .startSelectionRewrite
         }
 
         return .startRecording
@@ -388,7 +483,203 @@ final class AppController: NSObject {
         refinementProvider: RefinementProvider,
         postProcessingMode: PostProcessingMode
     ) -> Bool {
-        refinementProvider == .externalProcessor && postProcessingMode == .refinement
+        _ = refinementProvider
+        return postProcessingMode == .refinement
+    }
+
+    static func refiningPresentationModeForRegenerate() -> RefiningPresentationMode {
+        .statusBarOnly
+    }
+
+    static func refiningPresentationModeForNormalWorkflow() -> RefiningPresentationMode {
+        .floatingOverlayAndStatusBar
+    }
+
+    static func recentInsertionAutoReviewPresentationDecision(
+        selectedRange: NSRange,
+        textValue: String?
+    ) -> RecentInsertionAutoReviewPresentationDecision {
+        guard let textValue, !textValue.isEmpty else {
+            return .presentReviewPanel
+        }
+
+        let fullRange = NSRange(location: 0, length: textValue.utf16.count)
+        return NSEqualRanges(selectedRange, fullRange) ? .deferToCallToAction : .presentReviewPanel
+    }
+
+    static func selectionRewritePresentationDecision(
+        hasRecentInsertionMatch: Bool
+    ) -> SelectionRewritePresentationDecision {
+        hasRecentInsertionMatch
+            ? .presentRecentInsertionReviewPanel
+            : .presentFreshReviewPanelAndStartRewrite
+    }
+
+    static func didRefinementReviewRegenerateSucceed(
+        refinementProvider: RefinementProvider,
+        sourceText: String,
+        previousResultText: String? = nil,
+        regeneratedText: String,
+        didExternalProcessorSucceed: Bool
+    ) -> Bool {
+        let sanitizedRegeneratedText = ExternalProcessorOutputSanitizer.sanitize(regeneratedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedRegeneratedText.isEmpty else {
+            return false
+        }
+
+        switch refinementProvider {
+        case .externalProcessor:
+            return didExternalProcessorSucceed
+        case .llm:
+            let normalizedSourceText = ExternalProcessorOutputSanitizer.sanitize(sourceText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard sanitizedRegeneratedText != normalizedSourceText else {
+                return false
+            }
+
+            if let previousResultText {
+                let normalizedPreviousResultText = ExternalProcessorOutputSanitizer.sanitize(previousResultText)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard sanitizedRegeneratedText != normalizedPreviousResultText else {
+                    return false
+                }
+            }
+
+            return true
+        }
+    }
+
+    static func updatedResultReviewPromptSelection(
+        selectedPromptPresetID: String,
+        selectedPromptTitle: String,
+        pendingPromptPresetID: String?,
+        pendingPromptTitle: String?,
+        requestedPromptPresetID: String,
+        requestedPromptTitle: String
+    ) -> ResultReviewPromptSelectionState {
+        let normalizedSelectedPromptPresetID = normalizedResultReviewPromptPresetID(selectedPromptPresetID)
+        let normalizedSelectedPromptTitle = normalizedResultReviewPromptTitle(
+            selectedPromptTitle,
+            fallback: PromptPreset.builtInDefault.title
+        )
+        let normalizedPendingPromptPresetID = normalizedResultReviewPromptPresetID(
+            pendingPromptPresetID
+        )
+        let normalizedPendingPromptTitle = normalizedResultReviewPromptTitle(
+            pendingPromptTitle,
+            fallback: normalizedSelectedPromptTitle
+        )
+        let normalizedRequestedPromptPresetID = normalizedResultReviewPromptPresetID(requestedPromptPresetID)
+        let normalizedRequestedPromptTitle = normalizedResultReviewPromptTitle(
+            requestedPromptTitle,
+            fallback: normalizedSelectedPromptTitle
+        )
+
+        if normalizedRequestedPromptPresetID == normalizedSelectedPromptPresetID {
+            return ResultReviewPromptSelectionState(
+                selectedPromptPresetID: normalizedSelectedPromptPresetID,
+                selectedPromptTitle: normalizedSelectedPromptTitle,
+                pendingPromptPresetID: nil,
+                pendingPromptTitle: nil
+            )
+        }
+
+        if normalizedRequestedPromptPresetID == normalizedPendingPromptPresetID {
+            return ResultReviewPromptSelectionState(
+                selectedPromptPresetID: normalizedSelectedPromptPresetID,
+                selectedPromptTitle: normalizedSelectedPromptTitle,
+                pendingPromptPresetID: normalizedPendingPromptPresetID,
+                pendingPromptTitle: normalizedPendingPromptTitle
+            )
+        }
+
+        return ResultReviewPromptSelectionState(
+            selectedPromptPresetID: normalizedSelectedPromptPresetID,
+            selectedPromptTitle: normalizedSelectedPromptTitle,
+            pendingPromptPresetID: normalizedRequestedPromptPresetID,
+            pendingPromptTitle: normalizedRequestedPromptTitle
+        )
+    }
+
+    static func committedResultReviewPromptSelectionAfterRegenerateSuccess(
+        selectedPromptPresetID: String,
+        selectedPromptTitle: String,
+        pendingPromptPresetID: String?,
+        pendingPromptTitle: String?
+    ) -> ResultReviewPromptSelectionState {
+        let normalizedSelectedPromptPresetID = normalizedResultReviewPromptPresetID(selectedPromptPresetID)
+        let normalizedSelectedPromptTitle = normalizedResultReviewPromptTitle(
+            selectedPromptTitle,
+            fallback: PromptPreset.builtInDefault.title
+        )
+        let normalizedPendingPromptPresetID = normalizedResultReviewPromptPresetID(
+            pendingPromptPresetID
+        )
+
+        guard let normalizedPendingPromptPresetID else {
+            return ResultReviewPromptSelectionState(
+                selectedPromptPresetID: normalizedSelectedPromptPresetID,
+                selectedPromptTitle: normalizedSelectedPromptTitle,
+                pendingPromptPresetID: nil,
+                pendingPromptTitle: nil
+            )
+        }
+
+        return ResultReviewPromptSelectionState(
+            selectedPromptPresetID: normalizedPendingPromptPresetID,
+            selectedPromptTitle: normalizedResultReviewPromptTitle(
+                pendingPromptTitle,
+                fallback: normalizedSelectedPromptTitle
+            ),
+            pendingPromptPresetID: nil,
+            pendingPromptTitle: nil
+        )
+    }
+
+    static func canPresentResultReviewPanel(
+        refinementProvider: RefinementProvider,
+        postProcessingMode: PostProcessingMode,
+        llmConfigurationIsConfigured: Bool,
+        didExternalProcessorSucceed: Bool,
+        processedText: String
+    ) -> Bool {
+        guard shouldPresentResultReviewPanel(
+            refinementProvider: refinementProvider,
+            postProcessingMode: postProcessingMode
+        ) else {
+            return false
+        }
+
+        let sanitizedOutput = ExternalProcessorOutputSanitizer.sanitize(processedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedOutput.isEmpty else { return false }
+
+        guard canEnterRefinementReviewFlow(
+            refinementProvider: refinementProvider,
+            llmConfigurationIsConfigured: llmConfigurationIsConfigured
+        ) else {
+            return false
+        }
+
+        switch refinementProvider {
+        case .externalProcessor:
+            return didExternalProcessorSucceed
+        case .llm:
+            return true
+        }
+    }
+
+    static func canEnterRefinementReviewFlow(
+        refinementProvider: RefinementProvider,
+        llmConfigurationIsConfigured: Bool
+    ) -> Bool {
+        switch refinementProvider {
+        case .externalProcessor:
+            return true
+        case .llm:
+            return llmConfigurationIsConfigured
+        }
     }
 
     static func resultReviewInsertionTargetSnapshot(
@@ -415,6 +706,25 @@ final class AppController: NSObject {
         }
 
         return nil
+    }
+
+    private static func normalizedResultReviewPromptPresetID(_ presetID: String?) -> String? {
+        guard let presetID else { return nil }
+        let trimmed = presetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    private static func normalizedResultReviewPromptPresetID(_ presetID: String) -> String {
+        normalizedResultReviewPromptPresetID(Optional(presetID)) ?? PromptPreset.builtInDefaultID
+    }
+
+    private static func normalizedResultReviewPromptTitle(_ title: String?, fallback: String) -> String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            return fallback
+        }
+        return trimmed
     }
 
     static func realtimeStopResolution(
@@ -470,6 +780,7 @@ final class AppController: NSObject {
             activationShortcut: shortcut,
             modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
     }
@@ -483,6 +794,7 @@ final class AppController: NSObject {
             activationShortcut: activationShortcut,
             modeCycleShortcut: modeCycleShortcut,
             processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
     }
@@ -491,6 +803,7 @@ final class AppController: NSObject {
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
         processorShortcut: ActivationShortcut,
+        promptCycleShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
         inputMonitoringState: AuthorizationState
     ) -> LaunchPermissionPlan {
         LaunchPermissionPlan(
@@ -503,7 +816,8 @@ final class AppController: NSObject {
             requestInputMonitoringPermission: shortcutsRequireInputMonitoring(
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: modeCycleShortcut,
-                processorShortcut: processorShortcut
+                processorShortcut: processorShortcut,
+                promptCycleShortcut: promptCycleShortcut
             ),
             useSystemAccessibilityPrompt: true
         )
@@ -523,11 +837,13 @@ final class AppController: NSObject {
     static func shortcutsRequireInputMonitoring(
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
-        processorShortcut: ActivationShortcut
+        processorShortcut: ActivationShortcut,
+        promptCycleShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
     ) -> Bool {
         activationShortcut.requiresInputMonitoring
             || modeCycleShortcut.requiresInputMonitoring
             || processorShortcut.requiresInputMonitoring
+            || promptCycleShortcut.requiresInputMonitoring
     }
 
     static func shouldOfferInputMonitoringSettingsOnLaunch(
@@ -610,6 +926,21 @@ final class AppController: NSObject {
             registeredHotkeyAccessibilityWarning: nil,
             eventTapAccessibilityWarning: modeCycleShortcutSuppressionWarningMessage,
             inputMonitoringFailureMessage: modeCycleShortcutMonitoringFailureMessage
+        )
+    }
+
+    static func promptCycleShortcutMonitorPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: nil,
+            eventTapAccessibilityWarning: promptCycleShortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: promptCycleShortcutMonitoringFailureMessage
         )
     }
 
@@ -780,6 +1111,7 @@ final class AppController: NSObject {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.applyInterfaceTheme(model.interfaceTheme)
         resultReviewPanelController.applyInterfaceTheme(model.interfaceTheme)
+        selectionRegenerateHintController.applyInterfaceTheme(model.interfaceTheme)
         dictionarySuggestionToastController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.onCopySuccess = { [weak self] in
             self?.statusBarController?.setTransientStatus("Copied")
@@ -792,6 +1124,9 @@ final class AppController: NSObject {
         resultReviewPanelController.onCopyRequested = { [weak self] _ in
             self?.statusBarController?.setTransientStatus("Copied")
         }
+        resultReviewPanelController.onPromptSelectionChanged = { [weak self] presetID in
+            self?.updateResultReviewPromptSelection(presetID)
+        }
         resultReviewPanelController.onRetryRequested = { [weak self] in
             Task { @MainActor [weak self] in
                 self?.retryReviewedText()
@@ -799,6 +1134,11 @@ final class AppController: NSObject {
         }
         resultReviewPanelController.onDismissRequested = { [weak self] in
             self?.dismissResultReviewPanel()
+        }
+        selectionRegenerateHintController.onPrimaryAction = { [weak self] payload in
+            Task { @MainActor [weak self] in
+                self?.openRecentInsertionReviewFromHint(payload)
+            }
         }
         dictionarySuggestionToastController.onApprove = { [weak self] suggestion in
             guard let self else { return }
@@ -819,6 +1159,7 @@ final class AppController: NSObject {
                 self?.floatingPanelController.applyInterfaceTheme(theme)
                 self?.inputFallbackPanelController.applyInterfaceTheme(theme)
                 self?.resultReviewPanelController.applyInterfaceTheme(theme)
+                self?.selectionRegenerateHintController.applyInterfaceTheme(theme)
                 self?.dictionarySuggestionToastController.applyInterfaceTheme(theme)
             }
             .store(in: &cancellables)
@@ -837,6 +1178,13 @@ final class AppController: NSObject {
             }
         }
         modeCycleShortcutAction.shortcut = model.modeCycleShortcut
+
+        promptCycleShortcutAction.onPress = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handlePromptCycleShortcutPress()
+            }
+        }
+        promptCycleShortcutAction.shortcut = model.promptCycleShortcut
 
         processorShortcutAction.onPress = { [weak self] in
             Task { @MainActor [weak self] in
@@ -860,6 +1208,7 @@ final class AppController: NSObject {
                 activationShortcut: self.model.activationShortcut,
                 modeCycleShortcut: self.model.modeCycleShortcut,
                 processorShortcut: self.model.processorShortcut,
+                promptCycleShortcut: self.model.promptCycleShortcut,
                 inputMonitoringState: self.currentInputMonitoringAuthorizationState()
             )
             await self.refreshPermissionStates(
@@ -881,6 +1230,7 @@ final class AppController: NSObject {
         resultReviewRetryTask?.cancel()
         postInjectionLearningTask = nil
         resultReviewRetryTask = nil
+        refinementReviewSession = nil
         postInjectionLearningCoordinator.cancelTracking()
         dictionarySuggestionToastController.hide()
         resultReviewPanelController.hide()
@@ -890,6 +1240,7 @@ final class AppController: NSObject {
         startupHotkeyBootstrapTask = nil
         recordingShortcutAction.stop()
         modeCycleShortcutAction.stop()
+        promptCycleShortcutAction.stop()
         processorShortcutAction.stop()
 
         if speechRecorder.isRecording {
@@ -922,11 +1273,33 @@ final class AppController: NSObject {
         statusBarController?.setTransientStatus("Text processing: \(model.modeDisplayTitle(for: model.postProcessingMode))")
     }
 
+    private func cycleRefinementPromptFromShortcut() {
+        guard let cycledPrompt = model.cycleActivePromptSelection() else {
+            return
+        }
+
+        let destination = promptDestinationInspector.currentDestinationContext()
+        let effectivePrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
+        let effectivePresetID = effectivePrompt.presetID ?? PromptPreset.builtInDefaultID
+        let cycledPresetID = cycledPrompt.presetID ?? PromptPreset.builtInDefaultID
+        let didStrictBindingOverride = model.promptWorkspace.strictModeEnabled && effectivePresetID != cycledPresetID
+        let statusPrefix = didStrictBindingOverride ? "Prompt default" : "Prompt"
+
+        floatingPanelController.showModeSwitch(
+            modeTitle: model.postProcessingMode.title,
+            refinementPromptTitle: cycledPrompt.title,
+            autoHideDelayNanoseconds: 1_100_000_000
+        )
+        statusBarController?.refreshAll()
+        statusBarController?.setTransientStatus("\(statusPrefix): \(cycledPrompt.title)")
+    }
+
     private func bootstrapHotkeyMonitoring() {
         startupHotkeyBootstrapTask?.cancel()
         let initialStatus = ensureHotkeyMonitorRunning()
         guard initialStatus == Self.shortcutRegistrationFailureMessage
             || initialStatus == Self.modeCycleShortcutRegistrationFailureMessage
+            || initialStatus == Self.promptCycleShortcutRegistrationFailureMessage
             || initialStatus == Self.processorShortcutRegistrationFailureMessage else {
             return
         }
@@ -944,6 +1317,7 @@ final class AppController: NSObject {
                 let status = self.ensureHotkeyMonitorRunning()
                 guard status == Self.shortcutRegistrationFailureMessage
                     || status == Self.modeCycleShortcutRegistrationFailureMessage
+                    || status == Self.promptCycleShortcutRegistrationFailureMessage
                     || status == Self.processorShortcutRegistrationFailureMessage else {
                     return
                 }
@@ -971,6 +1345,17 @@ final class AppController: NSObject {
         case .holdRepeat:
             startModeCycleShortcutRepeat()
         }
+    }
+
+    private func handlePromptCycleShortcutPress() {
+        guard Self.shouldStartModeCycleRepeat(
+            shortcut: model.promptCycleShortcut,
+            isRecording: speechRecorder.isRecording,
+            isStartingRecording: isStartingRecording,
+            isProcessingRelease: isProcessingRelease
+        ) else { return }
+
+        cycleRefinementPromptFromShortcut()
     }
 
     private func startModeCycleShortcutRepeat() {
@@ -1048,7 +1433,8 @@ final class AppController: NSObject {
         switch Self.pressAction(
             isRecording: speechRecorder.isRecording,
             isStartingRecording: isStartingRecording,
-            isProcessingRelease: isProcessingRelease
+            isProcessingRelease: isProcessingRelease,
+            hasConfirmedSelectionForRewrite: hasConfirmedSelectionForRewrite()
         ) {
         case .ignore:
             return
@@ -1057,6 +1443,9 @@ final class AppController: NSObject {
             return
         case .cancelProcessing:
             cancelProcessingAndHideOverlay()
+            return
+        case .startSelectionRewrite:
+            beginSelectionRewriteFromCurrentSelection()
             return
         case .startRecording:
             break
@@ -1163,36 +1552,25 @@ final class AppController: NSObject {
                 return
             }
 
-            let finalText = await self.refineIfNeeded(captured)
-            guard !Task.isCancelled, self.isProcessingRelease else { return }
-
             let workflow = Self.effectiveProcessingWorkflow(
                 postProcessingMode: self.model.postProcessingMode,
                 refinementProvider: self.model.refinementProvider,
                 override: self.activeRecordingWorkflowOverride
             )
-
-            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
-                refinementProvider: workflow.refinementProvider,
-                postProcessingMode: workflow.postProcessingMode
+            let finalText = await self.refineIfNeeded(
+                captured,
+                workflow: workflow,
+                workflowOverride: self.activeRecordingWorkflowOverride
             )
+            guard !Task.isCancelled, self.isProcessingRelease else { return }
+
             let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
             let failureAction = Self.postProcessingFailureAction(
                 workflowOverride: self.activeRecordingWorkflowOverride,
                 didExternalProcessorSucceed: didSucceed
             )
 
-            if shouldPresentResultReviewPanel && didSucceed {
-                let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
-                let sourceApplication = NSWorkspace.shared.frontmostApplication
-                self.presentResultReviewPanel(
-                    text: finalText,
-                    sourceText: captured,
-                    targetSnapshot: targetSnapshot,
-                    sourceApplication: sourceApplication,
-                    recordingDurationMilliseconds: recordingDurationMilliseconds
-                )
-            } else if failureAction == .surfaceProcessorFailure {
+            if failureAction == .surfaceProcessorFailure {
                 let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
                 let trimmedFailureMessage = processorFailureMessage?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1208,6 +1586,7 @@ final class AppController: NSObject {
                     targetInspection: targetSnapshot.inspection
                 ) {
                 case .emptyResult:
+                    self.recentInsertionRewriteCoordinator.cancelTracking()
                     self.statusBarController?.setTransientStatus(nil)
                     self.floatingPanelController.hide()
                 case .injectableTarget:
@@ -1222,11 +1601,20 @@ final class AppController: NSObject {
                             targetSnapshot: targetSnapshot,
                             injectionRecord: injectionRecord
                         )
+                        let resolvedPrompt = self.resolvedRefinementPrompt(for: workflow)
+                        self.startRecentInsertionRewriteTracking(
+                            rawTranscript: captured,
+                            insertedText: injectionRecord.text,
+                            appliedPromptPresetID: resolvedPrompt?.presetID,
+                            targetSnapshot: targetSnapshot,
+                            sourceApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                        )
                     } catch {
                         self.presentTransientError(error.localizedDescription)
                     }
                     self.floatingPanelController.hide()
                 case .fallbackPanel:
+                    self.recentInsertionRewriteCoordinator.cancelTracking()
                     if let payload = InputFallbackPanelPayload(text: finalText) {
                         self.model.recordHistoryEntry(
                             text: finalText,
@@ -1267,141 +1655,378 @@ final class AppController: NSObject {
     }
 
     private func presentResultReviewPanel(
-        text: String,
-        sourceText: String,
-        targetSnapshot: EditableTextTargetSnapshot? = nil,
-        sourceApplication: NSRunningApplication? = nil,
-        recordingDurationMilliseconds: Int = 0
+        sourceType: ResultReviewSourceType,
+        resultText: String,
+        originalText: String,
+        workflow: ProcessingWorkflowSelection,
+        workflowOverride: RecordingWorkflowOverride?,
+        selectionAnchor: ResultReviewSelectionAnchor,
+        selectedPromptPresetIDOverride: String? = nil,
+        selectedPromptTitleOverride: String? = nil,
+        recordingDurationMilliseconds: Int = 0,
+        isRegenerating: Bool = false,
+        isAutoOpened: Bool
     ) {
-        guard let payload = ResultReviewPanelPayload(text: text, sourceText: sourceText) else {
+        let sanitizedOriginalText = ExternalProcessorOutputSanitizer.sanitize(originalText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedOriginalText.isEmpty else {
+            presentTransientError("Original text is unavailable for review.")
+            return
+        }
+
+        let selectedPromptPresetID = Self.normalizedResultReviewPromptPresetID(
+            selectedPromptPresetIDOverride
+        ) ?? resolvedRefinementPrompt(for: workflow)?.presetID ?? PromptPreset.builtInDefaultID
+        let fallbackPromptTitle = resolvedRefinementPrompt(for: workflow)?.title
+            ?? PromptPreset.builtInDefault.title
+        let selectedPromptTitle = Self.normalizedResultReviewPromptTitle(
+            selectedPromptTitleOverride,
+            fallback: fallbackPromptTitle
+        )
+        let session = RefinementReviewSession(
+            sourceType: sourceType,
+            rawTranscript: sanitizedOriginalText,
+            selectedPromptPresetID: selectedPromptPresetID,
+            selectedPromptTitle: selectedPromptTitle,
+            currentResultText: resultText,
+            selectionAnchor: selectionAnchor,
+            recordingDurationMilliseconds: max(0, recordingDurationMilliseconds),
+            workflow: workflow,
+            workflowOverride: workflowOverride,
+            isAutoOpened: isAutoOpened
+        )
+
+        guard let payload = resultReviewPayload(for: session, isRegenerating: isRegenerating) else {
             presentTransientError("External processor returned unreadable output.")
             return
         }
 
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
-        pendingResultReviewSourceText = sourceText
-        pendingResultReviewPayload = payload
-        pendingResultReviewWorkflowOverride = activeRecordingWorkflowOverride
-        pendingResultReviewTargetSnapshot = targetSnapshot
-        pendingResultReviewSourceApplication = sourceApplication
-        pendingResultReviewRecordingDurationMilliseconds = max(0, recordingDurationMilliseconds)
+        refinementReviewSession = session
+        selectionRegenerateHintController.hide()
         floatingPanelController.hide(immediately: true)
+        model.hideOverlay()
+        statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
+    }
+
+    private func updateResultReviewPromptSelection(_ presetID: String) {
+        guard var session = refinementReviewSession else { return }
+
+        let resolvedPrompt = model.resolvedPromptPresetForExplicitPresetID(presetID)
+        let updatedSelection = Self.updatedResultReviewPromptSelection(
+            selectedPromptPresetID: session.selectedPromptPresetID,
+            selectedPromptTitle: session.selectedPromptTitle,
+            pendingPromptPresetID: session.pendingPromptPresetID,
+            pendingPromptTitle: session.pendingPromptTitle,
+            requestedPromptPresetID: resolvedPrompt.presetID ?? PromptPreset.builtInDefaultID,
+            requestedPromptTitle: resolvedPrompt.title
+        )
+        session.selectedPromptPresetID = updatedSelection.selectedPromptPresetID
+        session.selectedPromptTitle = updatedSelection.selectedPromptTitle
+        session.pendingPromptPresetID = updatedSelection.pendingPromptPresetID
+        session.pendingPromptTitle = updatedSelection.pendingPromptTitle
+        refinementReviewSession = session
+    }
+
+    private func resultReviewPromptOptions() -> [ResultReviewPanelPromptOption] {
+        model.orderedPromptCyclePresets().map {
+            .init(presetID: $0.id, title: $0.resolvedTitle)
+        }
+    }
+
+    private func resultReviewPayload(
+        for session: RefinementReviewSession,
+        isRegenerating: Bool
+    ) -> ResultReviewPanelPayload? {
+        let selectedPromptPresetID: String
+        let selectedPromptTitle: String
+        if isRegenerating,
+           let pendingPromptPresetID = session.pendingPromptPresetID,
+           let pendingPromptTitle = session.pendingPromptTitle {
+            selectedPromptPresetID = pendingPromptPresetID
+            selectedPromptTitle = pendingPromptTitle
+        } else {
+            selectedPromptPresetID = session.selectedPromptPresetID
+            selectedPromptTitle = session.selectedPromptTitle
+        }
+
+        return ResultReviewPanelPayload(
+            resultText: session.currentResultText,
+            originalText: session.rawTranscript,
+            selectedPromptPresetID: selectedPromptPresetID,
+            selectedPromptTitle: selectedPromptTitle,
+            availablePrompts: resultReviewPromptOptions(),
+            allowsInsert: session.sourceType == .recentInsertion,
+            isRegenerating: isRegenerating
+        )
     }
 
     private func clearResultReviewState() {
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
-        pendingResultReviewSourceText = nil
-        pendingResultReviewPayload = nil
-        pendingResultReviewWorkflowOverride = nil
-        pendingResultReviewTargetSnapshot = nil
-        pendingResultReviewSourceApplication = nil
-        pendingResultReviewRecordingDurationMilliseconds = 0
+        refinementReviewSession = nil
+        selectionRegenerateHintController.hide()
         resultReviewPanelController.hide()
     }
 
     private func dismissResultReviewPanel() {
-        resultReviewRetryTask?.cancel()
-        resultReviewRetryTask = nil
-        resultReviewPanelController.hide()
+        clearResultReviewState()
     }
 
-    private func retryReviewedText() {
-        guard let sourceText = pendingResultReviewSourceText else {
+    private func retryReviewedText(
+        tracksGlobalProcessingState: Bool = false
+    ) {
+        guard let session = refinementReviewSession else {
+            return
+        }
+        let sourceText = session.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceText.isEmpty else {
+            presentTransientError("Original text is unavailable for regenerate.")
+            return
+        }
+        guard Self.canEnterRefinementReviewFlow(
+            refinementProvider: session.workflow.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) else {
+            presentTransientError("LLM refinement is not configured yet.")
             return
         }
 
         resultReviewRetryTask?.cancel()
+        if tracksGlobalProcessingState {
+            isProcessingRelease = true
+        }
+        floatingPanelController.hide(immediately: true)
+        model.hideOverlay()
+        statusBarController?.setTransientStatus(nil)
+        if let payload = resultReviewPayload(for: session, isRegenerating: true) {
+            resultReviewPanelController.show(payload: payload)
+        }
+        let sessionID = session.sessionID
         resultReviewRetryTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
                 self.resultReviewRetryTask = nil
+                if tracksGlobalProcessingState {
+                    self.isProcessingRelease = false
+                }
+                self.floatingPanelController.hide(immediately: true)
+                self.model.hideOverlay()
+                self.statusBarController?.setTransientStatus(nil)
             }
 
-            let refinedText = await self.refineIfNeeded(sourceText)
-            guard !Task.isCancelled, self.pendingResultReviewSourceText == sourceText else { return }
+            let refinedText = await self.refineIfNeeded(
+                sourceText,
+                workflow: session.workflow,
+                workflowOverride: session.workflowOverride,
+                promptPresetOverrideID: session.pendingPromptPresetID ?? session.selectedPromptPresetID,
+                refiningPresentationMode: Self.refiningPresentationModeForRegenerate()
+            )
+            guard !Task.isCancelled else { return }
+            guard var latestSession = self.refinementReviewSession,
+                  latestSession.sessionID == sessionID else { return }
 
-            let workflow = Self.effectiveProcessingWorkflow(
-                postProcessingMode: self.model.postProcessingMode,
-                refinementProvider: self.model.refinementProvider,
-                override: self.pendingResultReviewWorkflowOverride
+            let sanitizedRefinedText = ExternalProcessorOutputSanitizer.sanitize(refinedText)
+            let didExternalProcessorSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+            let rerunSucceeded = Self.didRefinementReviewRegenerateSucceed(
+                refinementProvider: latestSession.workflow.refinementProvider,
+                sourceText: latestSession.rawTranscript,
+                previousResultText: latestSession.currentResultText,
+                regeneratedText: sanitizedRefinedText,
+                didExternalProcessorSucceed: didExternalProcessorSucceed
             )
 
-            let shouldPresentResultReviewPanel = Self.shouldPresentResultReviewPanel(
-                refinementProvider: workflow.refinementProvider,
-                postProcessingMode: workflow.postProcessingMode
-            )
-            let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
-
-            if shouldPresentResultReviewPanel && didSucceed {
-                self.presentResultReviewPanel(
-                    text: refinedText,
-                    sourceText: sourceText,
-                    targetSnapshot: self.pendingResultReviewTargetSnapshot,
-                    sourceApplication: self.pendingResultReviewSourceApplication,
-                    recordingDurationMilliseconds: self.pendingResultReviewRecordingDurationMilliseconds
+            if rerunSucceeded {
+                latestSession.currentResultText = sanitizedRefinedText
+                let committedSelection = Self.committedResultReviewPromptSelectionAfterRegenerateSuccess(
+                    selectedPromptPresetID: latestSession.selectedPromptPresetID,
+                    selectedPromptTitle: latestSession.selectedPromptTitle,
+                    pendingPromptPresetID: latestSession.pendingPromptPresetID,
+                    pendingPromptTitle: latestSession.pendingPromptTitle
                 )
+                latestSession.selectedPromptPresetID = committedSelection.selectedPromptPresetID
+                latestSession.selectedPromptTitle = committedSelection.selectedPromptTitle
+                latestSession.pendingPromptPresetID = committedSelection.pendingPromptPresetID
+                latestSession.pendingPromptTitle = committedSelection.pendingPromptTitle
+                self.refinementReviewSession = latestSession
+            } else {
+                if latestSession.workflow.refinementProvider == .externalProcessor {
+                    let processorFailureMessage = await self.externalProcessorRefiner
+                        .lastFailureMessageOnLastInvocation
+                    let trimmedFailureMessage = processorFailureMessage?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let failureMessage = trimmedFailureMessage.isEmpty
+                        ? "Regenerate failed. Previous result is kept."
+                        : trimmedFailureMessage
+                    self.presentTransientError(failureMessage)
+                } else {
+                    self.presentTransientError("Regenerate failed or returned unchanged output. Previous result is kept.")
+                }
             }
+
+            guard let payload = self.resultReviewPayload(
+                for: latestSession,
+                isRegenerating: false
+            ) else {
+                self.clearResultReviewState()
+                self.presentTransientError("Regenerate returned unreadable output.")
+                return
+            }
+            self.resultReviewPanelController.show(payload: payload)
         }
     }
 
     private func insertReviewedText(_ text: String) {
-        let currentTargetSnapshot = editableTextTargetInspector.currentSnapshot()
-        let targetSnapshot = Self.resultReviewInsertionTargetSnapshot(
-            capturedTargetSnapshot: pendingResultReviewTargetSnapshot,
-            currentTargetSnapshot: currentTargetSnapshot
-        )
-        let sourceApplication = pendingResultReviewSourceApplication
-        let recordingDurationMilliseconds = pendingResultReviewRecordingDurationMilliseconds
-        let sourceApplicationBundleID = Self.resultReviewInsertionSourceApplicationBundleID(
-            capturedSourceApplicationBundleID: sourceApplication?.bundleIdentifier,
-            currentFrontmostApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        )
-        let reviewPayload = pendingResultReviewPayload
-        switch Self.transcriptDeliveryRoute(
-            for: text,
-            targetInspection: targetSnapshot.inspection
-        ) {
-        case .emptyResult:
+        guard let session = refinementReviewSession else { return }
+        guard session.sourceType == .recentInsertion else {
+            presentTransientError("Use Copy to reuse regenerated text.")
+            return
+        }
+        if session.pendingPromptPresetID != nil {
+            presentTransientError("Press Regenerate to apply the selected prompt before inserting.")
+            return
+        }
+        let sourceApplicationBundleID = session.selectionAnchor.sourceApplicationBundleID
+        let recordingDurationMilliseconds = session.recordingDurationMilliseconds
+        let reviewPayload = resultReviewPayload(for: session, isRegenerating: false)
+        let trimmedText = ExternalProcessorOutputSanitizer.sanitize(text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
             clearResultReviewState()
             statusBarController?.setTransientStatus(nil)
-        case .injectableTarget:
-            resultReviewPanelController.hide()
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    try await self.restoreResultReviewSourceApplicationIfNeeded(sourceApplication)
-                    let injectionRecord = try await self.textInjector.injectAndRecord(text: text)
-                    self.clearResultReviewState()
-                    self.statusBarController?.setTransientStatus("Injected")
-                    self.model.recordHistoryEntry(
-                        text: text,
-                        recordingDurationMilliseconds: recordingDurationMilliseconds
-                    )
-                    self.beginPostInjectionLearning(
-                        targetSnapshot: targetSnapshot,
-                        sourceApplicationOverride: sourceApplicationBundleID,
-                        injectionRecord: injectionRecord
-                    )
-                } catch {
-                    if let reviewPayload {
-                        self.resultReviewPanelController.show(payload: reviewPayload)
-                    }
-                    self.presentTransientError(error.localizedDescription)
-                }
-            }
-        case .fallbackPanel:
-            clearResultReviewState()
-            if let payload = InputFallbackPanelPayload(text: text) {
-                model.recordHistoryEntry(
+            return
+        }
+
+        resultReviewPanelController.hide()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.restoreResultReviewSourceApplicationIfNeeded(
+                    bundleIdentifier: sourceApplicationBundleID
+                )
+                try self.restoreAndValidateResultReviewSelection(session.selectionAnchor)
+                let injectionRecord = try await self.textInjector.injectAndRecord(text: text)
+                self.clearResultReviewState()
+                self.statusBarController?.setTransientStatus("Injected")
+                self.model.recordHistoryEntry(
                     text: text,
                     recordingDurationMilliseconds: recordingDurationMilliseconds
                 )
-                presentInputFallbackPanel(payload)
+                let currentSnapshot = self.editableTextTargetInspector.currentSnapshot()
+                self.beginPostInjectionLearning(
+                    targetSnapshot: currentSnapshot,
+                    sourceApplicationOverride: sourceApplicationBundleID,
+                    injectionRecord: injectionRecord
+                )
+                self.startRecentInsertionRewriteTracking(
+                    rawTranscript: session.rawTranscript,
+                    insertedText: injectionRecord.text,
+                    appliedPromptPresetID: session.selectedPromptPresetID,
+                    targetSnapshot: currentSnapshot,
+                    sourceApplicationBundleID: sourceApplicationBundleID
+                )
+            } catch {
+                if let reviewPayload {
+                    self.resultReviewPanelController.show(payload: reviewPayload)
+                }
+                self.presentTransientError(error.localizedDescription)
             }
+        }
+    }
+
+    private func rewriteSelectionAnchor(
+        from snapshot: EditableTextTargetSnapshot,
+        sourceApplicationBundleID: String?
+    ) -> ResultReviewSelectionAnchor? {
+        guard snapshot.inspection == .editable else { return nil }
+        guard let selectedTextRange = snapshot.selectedTextRange, selectedTextRange.length > 0 else {
+            return nil
+        }
+        guard let selectedText = normalizedSnapshotSelectedText(snapshot) else {
+            return nil
+        }
+
+        return ResultReviewSelectionAnchor(
+            targetIdentifier: snapshot.targetIdentifier,
+            selectedText: selectedText,
+            selectedRange: selectedTextRange,
+            sourceApplicationBundleID: sourceApplicationBundleID
+        )
+    }
+
+    private func normalizedSnapshotSelectedText(
+        _ snapshot: EditableTextTargetSnapshot
+    ) -> String? {
+        let normalizedText = ExternalProcessorOutputSanitizer.sanitize(snapshot.selectedText ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedText.isEmpty else { return nil }
+        return normalizedText
+    }
+
+    private func hasConfirmedSelectionForRewrite() -> Bool {
+        let snapshot = editableTextTargetInspector.currentSnapshot()
+        return rewriteSelectionAnchor(
+            from: snapshot,
+            sourceApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        ) != nil
+    }
+
+    private func beginSelectionRewriteFromCurrentSelection() {
+        guard !isProcessingRelease else { return }
+        selectionRegenerateHintController.hide()
+
+        let sourceApplicationBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let snapshot = editableTextTargetInspector.currentSnapshot()
+        guard let selectionAnchor = rewriteSelectionAnchor(
+            from: snapshot,
+            sourceApplicationBundleID: sourceApplicationBundleID
+        ) else {
+            presentTransientError("No selected text available for rewrite.")
+            return
+        }
+
+        let workflow = ProcessingWorkflowSelection(
+            postProcessingMode: .refinement,
+            refinementProvider: model.refinementProvider
+        )
+        if !Self.canEnterRefinementReviewFlow(
+            refinementProvider: workflow.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) {
+            presentTransientError("LLM refinement is not configured yet.")
+            return
+        }
+
+        let recentSession = recentInsertionRewriteCoordinator.matchingSession(
+            for: snapshot,
+            now: Date()
+        )
+        switch Self.selectionRewritePresentationDecision(
+            hasRecentInsertionMatch: recentSession != nil
+        ) {
+        case .presentRecentInsertionReviewPanel:
+            guard let recentSession else { return }
+            presentRecentInsertionReviewPanel(
+                recentSession,
+                snapshot: snapshot,
+                isAutoOpened: false
+            )
+        case .presentFreshReviewPanelAndStartRewrite:
+            let sourceText = selectionAnchor.selectedText
+            presentResultReviewPanel(
+                sourceType: .selectedText,
+                resultText: sourceText,
+                originalText: sourceText,
+                workflow: workflow,
+                workflowOverride: nil,
+                selectionAnchor: selectionAnchor,
+                isRegenerating: true,
+                isAutoOpened: false
+            )
+            retryReviewedText(tracksGlobalProcessingState: true)
         }
     }
 
@@ -1433,10 +2058,12 @@ final class AppController: NSObject {
             guard let self else { return }
             defer {
                 self.postInjectionLearningTask = nil
+                self.selectionRegenerateHintController.hide()
             }
 
             while !Task.isCancelled, self.postInjectionLearningCoordinator.isTracking {
                 let snapshot = self.editableTextTargetInspector.currentSnapshot()
+                self.refreshSelectionRegenerateHint(from: snapshot)
                 if let suggestion = self.postInjectionLearningCoordinator.processSnapshot(
                     snapshot,
                     now: Date()
@@ -1465,16 +2092,182 @@ final class AppController: NSObject {
         }
     }
 
+    private func startRecentInsertionRewriteTracking(
+        rawTranscript: String,
+        insertedText: String,
+        appliedPromptPresetID: String?,
+        targetSnapshot: EditableTextTargetSnapshot,
+        sourceApplicationBundleID: String?
+    ) {
+        let session = RecentInsertionRewriteSession(
+            rawTranscript: rawTranscript,
+            insertedText: insertedText,
+            appliedPromptPresetID: appliedPromptPresetID,
+            targetIdentifier: targetSnapshot.targetIdentifier,
+            sourceApplicationBundleID: sourceApplicationBundleID,
+            injectedAt: Date()
+        )
+        recentInsertionRewriteCoordinator.startTracking(session)
+    }
+
+    private func presentRecentInsertionReviewPanel(
+        _ recentSession: RecentInsertionRewriteSession,
+        snapshot: EditableTextTargetSnapshot,
+        isAutoOpened: Bool
+    ) {
+        guard let selectionAnchor = rewriteSelectionAnchor(
+            from: snapshot,
+            sourceApplicationBundleID: recentSession.sourceApplicationBundleID
+        ) else {
+            presentTransientError("No selected text available for rewrite.")
+            return
+        }
+        let workflow = ProcessingWorkflowSelection(
+            postProcessingMode: .refinement,
+            refinementProvider: model.refinementProvider
+        )
+        guard Self.canEnterRefinementReviewFlow(
+            refinementProvider: workflow.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) else {
+            presentTransientError("LLM refinement is not configured yet.")
+            return
+        }
+        let resolvedPrompt = model.resolvedPromptPresetForExplicitPresetID(
+            recentSession.appliedPromptPresetID
+        )
+        presentResultReviewPanel(
+            sourceType: .recentInsertion,
+            resultText: recentSession.insertedText,
+            originalText: recentSession.rawTranscript,
+            workflow: workflow,
+            workflowOverride: nil,
+            selectionAnchor: selectionAnchor,
+            selectedPromptPresetIDOverride: resolvedPrompt.presetID,
+            selectedPromptTitleOverride: resolvedPrompt.title,
+            isAutoOpened: isAutoOpened
+        )
+    }
+
+    private func refreshSelectionRegenerateHint(from snapshot: EditableTextTargetSnapshot) {
+        guard !isProcessingRelease else {
+            selectionRegenerateHintController.hide()
+            return
+        }
+        guard refinementReviewSession == nil else {
+            selectionRegenerateHintController.hide()
+            return
+        }
+        guard Self.canEnterRefinementReviewFlow(
+            refinementProvider: model.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) else {
+            selectionRegenerateHintController.hide()
+            return
+        }
+
+        let now = Date()
+        if let currentPayload = selectionRegenerateHintController.currentPayload {
+            if let matchingSession = recentInsertionRewriteCoordinator.matchingSession(
+                for: snapshot,
+                now: now
+            ),
+               matchingSession.id == currentPayload.sessionID {
+                if let selectedRange = snapshot.selectedTextRange,
+                   Self.recentInsertionAutoReviewPresentationDecision(
+                    selectedRange: selectedRange,
+                    textValue: snapshot.textValue
+                   ) == .presentReviewPanel {
+                    selectionRegenerateHintController.hide()
+                    presentRecentInsertionReviewPanel(
+                        matchingSession,
+                        snapshot: snapshot,
+                        isAutoOpened: true
+                    )
+                    return
+                }
+                let refreshedPayload = SelectionRegenerateHintPayload(
+                    sessionID: matchingSession.id,
+                    selectedText: matchingSession.insertedText,
+                    anchorRectInScreen: snapshot.selectedTextBoundsInScreen
+                )
+                if currentPayload != refreshedPayload {
+                    selectionRegenerateHintController.show(payload: refreshedPayload)
+                }
+                return
+            }
+            selectionRegenerateHintController.hide()
+        }
+
+        guard let recentSession = recentInsertionRewriteCoordinator.processSnapshotForAutoOpen(
+            snapshot,
+            now: now,
+            reviewPanelVisible: resultReviewPanelController.window?.isVisible == true
+        ) else {
+            return
+        }
+
+        if let selectedRange = snapshot.selectedTextRange,
+           Self.recentInsertionAutoReviewPresentationDecision(
+            selectedRange: selectedRange,
+            textValue: snapshot.textValue
+           ) == .presentReviewPanel {
+            presentRecentInsertionReviewPanel(
+                recentSession,
+                snapshot: snapshot,
+                isAutoOpened: true
+            )
+            return
+        }
+
+        selectionRegenerateHintController.show(
+            payload: SelectionRegenerateHintPayload(
+                sessionID: recentSession.id,
+                selectedText: recentSession.insertedText,
+                anchorRectInScreen: snapshot.selectedTextBoundsInScreen
+            )
+        )
+    }
+
+    private func openRecentInsertionReviewFromHint(_ payload: SelectionRegenerateHintPayload) {
+        selectionRegenerateHintController.hide()
+        guard !isProcessingRelease else { return }
+
+        let snapshot = editableTextTargetInspector.currentSnapshot()
+        guard let recentSession = recentInsertionRewriteCoordinator.matchingSession(
+            for: snapshot,
+            now: Date()
+        ),
+        recentSession.id == payload.sessionID else {
+            presentTransientError("Selection changed. Re-select the text and try again.")
+            return
+        }
+
+        presentRecentInsertionReviewPanel(
+            recentSession,
+            snapshot: snapshot,
+            isAutoOpened: false
+        )
+    }
+
     private func restoreResultReviewSourceApplicationIfNeeded(
-        _ sourceApplication: NSRunningApplication?
+        bundleIdentifier: String?
     ) async throws {
-        guard let sourceApplication else {
+        let trimmedBundleIdentifier = bundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmedBundleIdentifier, !trimmedBundleIdentifier.isEmpty else {
             return
         }
 
         let voicePiBundleID = Bundle.main.bundleIdentifier
-        if sourceApplication.bundleIdentifier == voicePiBundleID {
+        if trimmedBundleIdentifier == voicePiBundleID {
             return
+        }
+
+        guard let sourceApplication = NSRunningApplication
+            .runningApplications(withBundleIdentifier: trimmedBundleIdentifier)
+            .first(where: { !$0.isTerminated }) else {
+            throw ResultReviewInsertionError.sourceApplicationActivationFailed
         }
 
         guard !sourceApplication.isTerminated else {
@@ -1486,6 +2279,67 @@ final class AppController: NSObject {
         }
 
         try await Task.sleep(for: .milliseconds(120))
+    }
+
+    private func restoreAndValidateResultReviewSelection(
+        _ selectionAnchor: ResultReviewSelectionAnchor
+    ) throws {
+        let normalizedAnchorText = ExternalProcessorOutputSanitizer.sanitize(selectionAnchor.selectedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedAnchorText.isEmpty else {
+            throw ResultReviewInsertionError.selectionChanged
+        }
+
+        let currentSnapshot = editableTextTargetInspector.currentSnapshot()
+        if selectionMatchesAnchor(currentSnapshot, selectionAnchor: selectionAnchor) {
+            return
+        }
+
+        guard currentSnapshot.canSetSelectedTextRange else {
+            throw ResultReviewInsertionError.selectionChanged
+        }
+
+        guard editableTextTargetInspector.restoreSelectionRange(
+            targetIdentifier: selectionAnchor.targetIdentifier,
+            range: selectionAnchor.selectedRange
+        ) else {
+            throw ResultReviewInsertionError.selectionChanged
+        }
+
+        let restoredSnapshot = editableTextTargetInspector.currentSnapshot()
+        guard selectionMatchesAnchor(restoredSnapshot, selectionAnchor: selectionAnchor) else {
+            throw ResultReviewInsertionError.selectionChanged
+        }
+    }
+
+    private func selectionMatchesAnchor(
+        _ snapshot: EditableTextTargetSnapshot,
+        selectionAnchor: ResultReviewSelectionAnchor
+    ) -> Bool {
+        guard snapshot.inspection == .editable else {
+            return false
+        }
+
+        if let anchorTargetIdentifier = selectionAnchor.targetIdentifier {
+            guard snapshot.targetIdentifier == anchorTargetIdentifier else {
+                return false
+            }
+        }
+
+        guard let currentSelectedRange = snapshot.selectedTextRange,
+              currentSelectedRange == selectionAnchor.selectedRange else {
+            return false
+        }
+
+        let normalizedSelectedText = ExternalProcessorOutputSanitizer.sanitize(snapshot.selectedText ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAnchorText = ExternalProcessorOutputSanitizer.sanitize(selectionAnchor.selectedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSelectedText.isEmpty, !normalizedAnchorText.isEmpty else {
+            return false
+        }
+
+        return normalizedSelectedText == normalizedAnchorText
     }
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {
@@ -1621,22 +2475,49 @@ final class AppController: NSObject {
         return Int((elapsed * 1000).rounded())
     }
 
-    private func refineIfNeeded(_ text: String) async -> String {
-        let workflow = Self.effectiveProcessingWorkflow(
+    private func resolvedRefinementPrompt(
+        for workflow: ProcessingWorkflowSelection,
+        promptPresetOverrideID: String? = nil
+    ) -> ResolvedPromptPreset? {
+        guard workflow.postProcessingMode == .refinement else {
+            return nil
+        }
+
+        if let promptPresetOverrideID {
+            let normalizedPromptID = promptPresetOverrideID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedPromptID.isEmpty {
+                return model.resolvedPromptPresetForExplicitPresetID(normalizedPromptID)
+            }
+        }
+
+        let destination = promptDestinationInspector.currentDestinationContext()
+        return model.resolvedPromptPreset(for: .voicePi, destination: destination)
+    }
+
+    private func refineIfNeeded(
+        _ text: String,
+        workflow: ProcessingWorkflowSelection? = nil,
+        workflowOverride: RecordingWorkflowOverride? = nil,
+        promptPresetOverrideID: String? = nil,
+        refiningPresentationMode: RefiningPresentationMode = .floatingOverlayAndStatusBar
+    ) async -> String {
+        let effectiveWorkflow = workflow ?? Self.effectiveProcessingWorkflow(
             postProcessingMode: model.postProcessingMode,
             refinementProvider: model.refinementProvider,
-            override: activeRecordingWorkflowOverride ?? pendingResultReviewWorkflowOverride
+            override: workflowOverride ?? activeRecordingWorkflowOverride
         )
-        let destination = promptDestinationInspector.currentDestinationContext()
-        let resolvedPrompt = model.resolvedPromptPreset(for: .voicePi, destination: destination)
-        if workflow.refinementProvider == .externalProcessor {
+        let resolvedPrompt = resolvedRefinementPrompt(
+            for: effectiveWorkflow,
+            promptPresetOverrideID: promptPresetOverrideID
+        )
+        if effectiveWorkflow.refinementProvider == .externalProcessor {
             await externalProcessorRefiner.resetLastInvocation()
         }
 
         return await AppWorkflowSupport.postProcessIfNeeded(
             text,
-            mode: workflow.postProcessingMode,
-            refinementProvider: workflow.refinementProvider,
+            mode: effectiveWorkflow.postProcessingMode,
+            refinementProvider: effectiveWorkflow.refinementProvider,
             externalProcessor: model.selectedExternalProcessorEntry(),
             externalProcessorRefiner: externalProcessorRefiner,
             translationProvider: model.effectiveTranslationProvider(
@@ -1645,10 +2526,8 @@ final class AppController: NSObject {
             sourceLanguage: model.selectedLanguage,
             targetLanguage: model.targetLanguage,
             configuration: model.llmConfiguration,
-            refinementPromptTitle: workflow.postProcessingMode == .refinement ? resolvedPrompt.title : nil,
-            resolvedRefinementPrompt: workflow.postProcessingMode == .refinement
-                ? resolvedPrompt.middleSection
-                : nil,
+            refinementPromptTitle: resolvedPrompt?.title,
+            resolvedRefinementPrompt: resolvedPrompt?.middleSection,
             dictionaryEntries: model.enabledDictionaryEntries,
             refiner: llmRefiner,
             translator: appleTranslateService,
@@ -1658,8 +2537,10 @@ final class AppController: NSObject {
                 case .transcribing:
                     break
                 case .refining(let overlayTranscript, let statusText):
-                    self.floatingPanelController.showRefining(transcript: overlayTranscript)
-                    self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    if refiningPresentationMode == .floatingOverlayAndStatusBar {
+                        self.floatingPanelController.showRefining(transcript: overlayTranscript)
+                        self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    }
                     self.statusBarController?.setTransientStatus(statusText)
                 }
             },
@@ -1860,6 +2741,11 @@ final class AppController: NSObject {
             inputMonitoringState: inputMonitoringState,
             accessibilityState: accessibilityState
         )
+        let promptCyclePlan = Self.promptCycleShortcutMonitorPlan(
+            shortcut: model.promptCycleShortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState
+        )
         let processorPlan = Self.processorShortcutMonitorPlan(
             shortcut: model.processorShortcut,
             inputMonitoringState: inputMonitoringState,
@@ -1885,6 +2771,12 @@ final class AppController: NSObject {
             registrationFailureMessage: Self.modeCycleShortcutRegistrationFailureMessage,
             monitoringFailureMessage: Self.modeCycleShortcutMonitoringFailureMessage
         )
+        let promptCycleStatus = applyHotkeyMonitorPlan(
+            promptCyclePlan,
+            actionController: promptCycleShortcutAction,
+            registrationFailureMessage: Self.promptCycleShortcutRegistrationFailureMessage,
+            monitoringFailureMessage: Self.promptCycleShortcutMonitoringFailureMessage
+        )
         let processorStatus = applyHotkeyMonitorPlan(
             processorPlan,
             actionController: processorShortcutAction,
@@ -1892,7 +2784,7 @@ final class AppController: NSObject {
             monitoringFailureMessage: Self.processorShortcutMonitoringFailureMessage
         )
 
-        let statusMessage = activationStatus ?? cycleStatus ?? processorStatus
+        let statusMessage = activationStatus ?? cycleStatus ?? promptCycleStatus ?? processorStatus
         if let statusMessage, statusBarController != nil {
             statusBarController?.setTransientStatus(statusMessage)
         } else if statusBarController != nil, model.errorState == nil {
@@ -1945,7 +2837,8 @@ final class AppController: NSObject {
         Self.shortcutsRequireInputMonitoring(
             activationShortcut: model.activationShortcut,
             modeCycleShortcut: model.modeCycleShortcut,
-            processorShortcut: model.processorShortcut
+            processorShortcut: model.processorShortcut,
+            promptCycleShortcut: model.promptCycleShortcut
         )
     }
 
@@ -2454,6 +3347,13 @@ extension AppController: StatusBarControllerDelegate {
     func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut) {
         model.setModeCycleShortcut(shortcut)
         modeCycleShortcutAction.shortcut = shortcut
+        controller.refreshAll()
+        ensureHotkeyMonitorRunning()
+    }
+
+    func statusBarController(_ controller: StatusBarController, didUpdatePromptCycleShortcut shortcut: ActivationShortcut) {
+        model.setPromptCycleShortcut(shortcut)
+        promptCycleShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
     }

@@ -198,6 +198,32 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func pressStartsSelectionRewriteWhenIdleAndSelectionIsConfirmed() {
+        #expect(
+            AppController.pressAction(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false,
+                hasConfirmedSelectionForRewrite: true
+            ) == .startSelectionRewrite
+        )
+    }
+
+    @Test
+    @MainActor
+    func pressStillStopsRecordingBeforeSelectionRewriteWhenRecordingIsActive() {
+        #expect(
+            AppController.pressAction(
+                isRecording: true,
+                isStartingRecording: false,
+                isProcessingRelease: false,
+                hasConfirmedSelectionForRewrite: true
+            ) == .stopRecording
+        )
+    }
+
+    @Test
+    @MainActor
     func pressCancelsProcessingWhenOverlayIsStillProcessing() {
         #expect(
             AppController.pressAction(
@@ -344,7 +370,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func externalProcessorRefinementUsesResultReviewPanelWhileStandardModesDoNot() {
+    func refinementReviewPanelSupportsBothLLMAndExternalProcessorModes() {
         #expect(
             AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .externalProcessor,
@@ -352,7 +378,7 @@ struct AppControllerInteractionTests {
             )
         )
         #expect(
-            !AppController.shouldPresentResultReviewPanel(
+            AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .llm,
                 postProcessingMode: .refinement
             )
@@ -362,6 +388,201 @@ struct AppControllerInteractionTests {
                 refinementProvider: .externalProcessor,
                 postProcessingMode: .disabled
             )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .translation
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewPromptSelectionDefersPromptCommitUntilRegenerateSuccess() {
+        let updated = AppController.updatedResultReviewPromptSelection(
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            pendingPromptPresetID: nil,
+            pendingPromptTitle: nil,
+            requestedPromptPresetID: "user.meeting",
+            requestedPromptTitle: "Meeting Notes"
+        )
+
+        #expect(updated.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(updated.selectedPromptTitle == PromptPreset.builtInDefault.title)
+        #expect(updated.pendingPromptPresetID == "user.meeting")
+        #expect(updated.pendingPromptTitle == "Meeting Notes")
+    }
+
+    @Test
+    @MainActor
+    func resultReviewPromptSelectionCommitsPendingPromptAfterSuccessfulRegenerate() {
+        let committed = AppController.committedResultReviewPromptSelectionAfterRegenerateSuccess(
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            pendingPromptPresetID: "user.meeting",
+            pendingPromptTitle: "Meeting Notes"
+        )
+
+        #expect(committed.selectedPromptPresetID == "user.meeting")
+        #expect(committed.selectedPromptTitle == "Meeting Notes")
+        #expect(committed.pendingPromptPresetID == nil)
+        #expect(committed.pendingPromptTitle == nil)
+    }
+
+    @Test
+    @MainActor
+    func unconfiguredLLMRefinementDoesNotPresentResultReviewPanel() {
+        #expect(
+            !AppController.canPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .refinement,
+                llmConfigurationIsConfigured: false,
+                didExternalProcessorSucceed: false,
+                processedText: "unchanged transcript"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func configuredLLMRefinementCanPresentResultReviewPanelWithNonEmptyResult() {
+        #expect(
+            AppController.canPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .refinement,
+                llmConfigurationIsConfigured: true,
+                didExternalProcessorSucceed: false,
+                processedText: "refined answer"
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func unconfiguredLLMCannotEnterRefinementReviewFlow() {
+        #expect(
+            !AppController.canEnterRefinementReviewFlow(
+                refinementProvider: .llm,
+                llmConfigurationIsConfigured: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func configuredLLMAndExternalProcessorCanEnterRefinementReviewFlow() {
+        #expect(
+            AppController.canEnterRefinementReviewFlow(
+                refinementProvider: .llm,
+                llmConfigurationIsConfigured: true
+            )
+        )
+        #expect(
+            AppController.canEnterRefinementReviewFlow(
+                refinementProvider: .externalProcessor,
+                llmConfigurationIsConfigured: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewRegenerateUsesStatusBarOnlyRefiningPresentation() {
+        #expect(
+            AppController.refiningPresentationModeForRegenerate() == .statusBarOnly
+        )
+    }
+
+    @Test
+    @MainActor
+    func llmReviewRegenerateRequiresAChangedResult() {
+        #expect(
+            !AppController.didRefinementReviewRegenerateSucceed(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Original transcript",
+                didExternalProcessorSucceed: false
+            )
+        )
+        #expect(
+            !AppController.didRefinementReviewRegenerateSucceed(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Polished result",
+                didExternalProcessorSucceed: false
+            )
+        )
+        #expect(
+            AppController.didRefinementReviewRegenerateSucceed(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Sharpened rewrite",
+                didExternalProcessorSucceed: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func selectedTextRewriteWithoutRecentInsertionMatchUsesReviewPanelFlow() {
+        #expect(
+            AppController.selectionRewritePresentationDecision(hasRecentInsertionMatch: false)
+                == .presentFreshReviewPanelAndStartRewrite
+        )
+    }
+
+    @Test
+    @MainActor
+    func selectedTextRewriteWithRecentInsertionMatchReusesExistingReviewFlow() {
+        #expect(
+            AppController.selectionRewritePresentationDecision(hasRecentInsertionMatch: true)
+                == .presentRecentInsertionReviewPanel
+        )
+    }
+
+    @Test
+    @MainActor
+    func normalRefinementUsesFloatingOverlayRefiningPresentation() {
+        #expect(
+            AppController.refiningPresentationModeForNormalWorkflow() == .floatingOverlayAndStatusBar
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionFullDocumentSelectionDefersPanelForCallToActionFlow() {
+        #expect(
+            AppController.recentInsertionAutoReviewPresentationDecision(
+                selectedRange: NSRange(location: 0, length: 11),
+                textValue: "hello world"
+            ) == .deferToCallToAction
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionPartialSelectionStillAllowsDirectPanelPresentation() {
+        #expect(
+            AppController.recentInsertionAutoReviewPresentationDecision(
+                selectedRange: NSRange(location: 1, length: 5),
+                textValue: "hello world"
+            ) == .presentReviewPanel
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionDecisionFallsBackToDirectPanelWhenTextContextMissing() {
+        #expect(
+            AppController.recentInsertionAutoReviewPresentationDecision(
+                selectedRange: NSRange(location: 0, length: 11),
+                textValue: nil
+            ) == .presentReviewPanel
         )
     }
 
@@ -672,6 +893,35 @@ struct AppControllerInteractionTests {
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
                 processorShortcut: processorShortcut,
+                promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                inputMonitoringState: .unknown
+            ) == .init(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                useSystemAccessibilityPrompt: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func launchPermissionPlanAlsoRequestsInputMonitoringWhenPromptCycleShortcutIsAdvanced() {
+        let activationShortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        let promptCycleShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.launchPermissionPlan(
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                promptCycleShortcut: promptCycleShortcut,
                 inputMonitoringState: .unknown
             ) == .init(
                 requestMediaPermissions: true,

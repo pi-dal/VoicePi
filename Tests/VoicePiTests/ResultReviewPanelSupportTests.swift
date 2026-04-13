@@ -5,24 +5,53 @@ import Testing
 struct ResultReviewPanelSupportTests {
     @Test
     func payloadRejectsEmptyTextAndTrimsWhitespace() throws {
-        #expect(ResultReviewPanelPayload(text: " \n\t ") == nil)
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes")
+        ]
+        #expect(
+            ResultReviewPanelPayload(
+                resultText: " \n\t ",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: PromptPreset.builtInDefault.title,
+                availablePrompts: prompts
+            ) == nil
+        )
 
-        let payload = try #require(ResultReviewPanelPayload(text: "  \nReviewed text\n  "))
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "  \nReviewed text\n  ",
+                originalText: "  \nOriginal transcript\n  ",
+                selectedPromptPresetID: "  user.meeting  ",
+                selectedPromptTitle: "  Meeting Notes  ",
+                availablePrompts: prompts
+            )
+        )
         #expect(payload.resultText == "Reviewed text")
-        #expect(payload.promptText.isEmpty)
         #expect(payload.displayText == "Reviewed text")
-        #expect(payload.isLikelyUnchangedFromSource == false)
+        #expect(payload.originalText == "Original transcript")
+        #expect(payload.selectedPromptPresetID == "user.meeting")
+        #expect(payload.selectedPromptTitle == "Meeting Notes")
+        #expect(payload.isRegenerating == false)
     }
 
     @Test
-    func payloadFlagsWhenOutputIsUnchangedFromSource() throws {
+    func payloadFallsBackToFirstPromptOptionWhenSelectedPromptIsMissing() throws {
         let payload = try #require(
             ResultReviewPanelPayload(
-                text: "  reviewed text  ",
-                sourceText: "reviewed text"
+                resultText: "Reviewed",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.unknown",
+                selectedPromptTitle: "Unknown",
+                availablePrompts: [
+                    .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+                    .init(presetID: "user.focus", title: "Focus Mode")
+                ]
             )
         )
-        #expect(payload.isLikelyUnchangedFromSource)
+        #expect(payload.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(payload.selectedPromptTitle == "VoicePi Default")
     }
 
     @Test
@@ -38,24 +67,197 @@ struct ResultReviewPanelSupportTests {
 
     @Test
     func presentationStateExposesExpectedTitles() throws {
-        let payload = try #require(ResultReviewPanelPayload(text: "Needs review"))
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Needs review",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [
+                    .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+                    .init(presetID: "user.focus", title: "Focus Mode")
+                ]
+            )
+        )
         let state = ResultReviewPanelPresentationState(payload: payload)
 
         #expect(state.titleText == "VoicePi")
+        #expect(state.originalSectionTitle == "Original")
         #expect(state.promptSectionTitle == "Prompt")
-        #expect(state.outputSectionTitle == "Answer")
-        #expect(state.promptCopyButtonTitle == "Copy")
+        #expect(state.outputSectionTitle == "Result")
+        #expect(state.originalDisplayText == "Original transcript")
         #expect(state.outputCopyButtonTitle == "Copy")
-        #expect(state.promptCopyText.isEmpty)
         #expect(state.outputCopyText == "Needs review")
-        #expect(state.promptDisplayText == "No prompt captured.")
         #expect(state.outputDisplayText == "Needs review")
+        #expect(state.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(state.selectedPromptTitle == "VoicePi Default")
+        #expect(state.regenerateButtonTitle == "Regenerate")
+        #expect(state.isRegenerateEnabled)
+        #expect(state.isPromptPickerEnabled)
+        #expect(state.isInsertEnabled)
     }
 
     @Test
-    func presentationStateShowsSanitizedPromptWhenAvailable() throws {
-        let payload = try #require(ResultReviewPanelPayload(text: "Same", sourceText: "  Prompt input  "))
+    func presentationStateShowsRegeneratingState() throws {
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Same",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [.init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default")],
+                isRegenerating: true
+            )
+        )
         let state = ResultReviewPanelPresentationState(payload: payload)
-        #expect(state.promptDisplayText == "Prompt input")
+        #expect(state.regenerateButtonTitle == "Regenerating…")
+        #expect(state.isRegenerateEnabled == false)
+        #expect(state.isPromptPickerEnabled == false)
+        #expect(state.isInsertEnabled == false)
+    }
+
+    @Test
+    func presentationStateKeepsInsertDisabledWhenPayloadDisallowsInsertion() throws {
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Same",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [.init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default")],
+                allowsInsert: false
+            )
+        )
+        let state = ResultReviewPanelPresentationState(payload: payload)
+        #expect(state.isInsertEnabled == false)
+    }
+
+    @Test
+    func promptSelectionStateKeepsAppliedPromptWhilePendingSelectionHasNoNewResult() throws {
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes")
+        ]
+        let initialPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: prompts
+            )
+        )
+        var promptSelectionState = ResultReviewPanelPromptSelectionState(payload: initialPayload)
+        promptSelectionState.setPendingPromptSelection(to: "user.meeting", options: prompts)
+
+        let relabeledPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.meeting",
+                selectedPromptTitle: "Meeting Notes",
+                availablePrompts: prompts
+            )
+        )
+        promptSelectionState.applyPayload(relabeledPayload)
+
+        let presentationState = ResultReviewPanelPresentationState(
+            payload: relabeledPayload,
+            promptSelectionState: promptSelectionState
+        )
+        #expect(presentationState.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(presentationState.selectedPromptTitle == "VoicePi Default")
+        #expect(presentationState.promptPickerSelectedPresetID == "user.meeting")
+        #expect(presentationState.promptSectionTitle == "Prompt (Pending)")
+    }
+
+    @Test
+    func promptSelectionStateCommitsPendingPromptAfterNewResultArrives() throws {
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes")
+        ]
+        let initialPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: prompts
+            )
+        )
+        var promptSelectionState = ResultReviewPanelPromptSelectionState(payload: initialPayload)
+        promptSelectionState.setPendingPromptSelection(to: "user.meeting", options: prompts)
+        _ = promptSelectionState.consumePendingPromptPresetIDForRegenerate()
+
+        let regeneratingPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.meeting",
+                selectedPromptTitle: "Meeting Notes",
+                availablePrompts: prompts,
+                isRegenerating: true
+            )
+        )
+        promptSelectionState.applyPayload(regeneratingPayload)
+
+        let finalPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from B",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.meeting",
+                selectedPromptTitle: "Meeting Notes",
+                availablePrompts: prompts
+            )
+        )
+        promptSelectionState.applyPayload(finalPayload)
+        let presentationState = ResultReviewPanelPresentationState(
+            payload: finalPayload,
+            promptSelectionState: promptSelectionState
+        )
+        #expect(presentationState.selectedPromptPresetID == "user.meeting")
+        #expect(presentationState.selectedPromptTitle == "Meeting Notes")
+        #expect(presentationState.promptPickerSelectedPresetID == "user.meeting")
+        #expect(presentationState.promptSectionTitle == "Prompt")
+    }
+
+    @Test
+    func promptSelectionStateKeepsPendingSelectionAfterFailedRegenerate() throws {
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes")
+        ]
+        let initialPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: prompts
+            )
+        )
+        var promptSelectionState = ResultReviewPanelPromptSelectionState(payload: initialPayload)
+        promptSelectionState.setPendingPromptSelection(to: "user.meeting", options: prompts)
+        _ = promptSelectionState.consumePendingPromptPresetIDForRegenerate()
+
+        let failedPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.meeting",
+                selectedPromptTitle: "Meeting Notes",
+                availablePrompts: prompts
+            )
+        )
+        promptSelectionState.applyPayload(failedPayload)
+        let presentationState = ResultReviewPanelPresentationState(
+            payload: failedPayload,
+            promptSelectionState: promptSelectionState
+        )
+        #expect(presentationState.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(presentationState.selectedPromptTitle == "VoicePi Default")
+        #expect(presentationState.promptPickerSelectedPresetID == "user.meeting")
+        #expect(presentationState.promptSectionTitle == "Prompt (Pending)")
     }
 }

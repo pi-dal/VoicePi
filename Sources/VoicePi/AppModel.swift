@@ -1508,6 +1508,7 @@ final class AppModel: ObservableObject {
         static let activationShortcut = "activationShortcut"
         static let modeCycleShortcut = "modeCycleShortcut"
         static let processorShortcut = "processorShortcut"
+        static let promptCycleShortcut = "promptCycleShortcut"
         static let asrBackend = "asrBackend"
         static let remoteASRConfig = "remoteASRConfig"
         static let interfaceTheme = "interfaceTheme"
@@ -1582,6 +1583,12 @@ final class AppModel: ObservableObject {
     @Published var processorShortcut: ActivationShortcut {
         didSet {
             persistProcessorShortcut()
+        }
+    }
+
+    @Published var promptCycleShortcut: ActivationShortcut {
+        didSet {
+            persistPromptCycleShortcut()
         }
     }
 
@@ -1772,6 +1779,18 @@ final class AppModel: ObservableObject {
             shouldPersistProcessorShortcut = true
         }
 
+        let shouldPersistPromptCycleShortcut: Bool
+        if
+            let data = defaults.data(forKey: Keys.promptCycleShortcut),
+            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
+        {
+            self.promptCycleShortcut = decoded
+            shouldPersistPromptCycleShortcut = false
+        } else {
+            self.promptCycleShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+            shouldPersistPromptCycleShortcut = true
+        }
+
         if
             let storedBackend = defaults.string(forKey: Keys.asrBackend),
             let backend = ASRBackend(rawValue: storedBackend)
@@ -1810,6 +1829,9 @@ final class AppModel: ObservableObject {
         }
         if shouldPersistProcessorShortcut {
             persistProcessorShortcut()
+        }
+        if shouldPersistPromptCycleShortcut {
+            persistPromptCycleShortcut()
         }
 
         refreshDictionaryState()
@@ -1912,6 +1934,40 @@ final class AppModel: ObservableObject {
         }
 
         return starterPromptPresets().first(where: { $0.id == id })
+    }
+
+    func orderedPromptCyclePresets() -> [PromptPreset] {
+        [PromptPreset.builtInDefault]
+            + starterPromptPresets()
+            + promptWorkspace.userPresets.sorted(by: {
+                $0.resolvedTitle.localizedCaseInsensitiveCompare($1.resolvedTitle) == .orderedAscending
+            })
+    }
+
+    func nextPromptCycleSelection(from selection: PromptActiveSelection? = nil) -> PromptActiveSelection? {
+        let orderedPresets = orderedPromptCyclePresets()
+        guard !orderedPresets.isEmpty else { return nil }
+
+        let activeSelection = selection ?? promptWorkspace.activeSelection
+        let activePresetID = AppModel.presetID(for: activeSelection)
+        let currentIndex = orderedPresets.firstIndex(where: { $0.id == activePresetID }) ?? 0
+        let nextIndex = (currentIndex + 1) % orderedPresets.count
+        let nextPresetID = orderedPresets[nextIndex].id
+        return AppModel.selection(forPromptPresetID: nextPresetID)
+    }
+
+    @discardableResult
+    func cycleActivePromptSelection() -> ResolvedPromptPreset? {
+        guard let nextSelection = nextPromptCycleSelection() else { return nil }
+        setActivePromptSelection(nextSelection)
+        return resolvedPromptPresetForExplicitPresetID(AppModel.presetID(for: nextSelection))
+    }
+
+    func resolvedPromptPresetForExplicitPresetID(_ presetID: String) -> ResolvedPromptPreset {
+        let normalizedID = presetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveID = normalizedID.isEmpty ? PromptPreset.builtInDefaultID : normalizedID
+        let preset = promptPreset(id: effectiveID) ?? PromptPreset.builtInDefault
+        return AppModel.makeResolvedPromptPreset(from: preset)
     }
 
     func setActivePromptSelection(_ selection: PromptActiveSelection) {
@@ -2081,6 +2137,10 @@ final class AppModel: ObservableObject {
 
     func setProcessorShortcut(_ shortcut: ActivationShortcut) {
         processorShortcut = shortcut
+    }
+
+    func setPromptCycleShortcut(_ shortcut: ActivationShortcut) {
+        promptCycleShortcut = shortcut
     }
 
     func cyclePostProcessingMode() {
@@ -2382,6 +2442,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func persistPromptCycleShortcut() {
+        if let data = try? encoder.encode(promptCycleShortcut) {
+            defaults.set(data, forKey: Keys.promptCycleShortcut)
+        }
+    }
+
     private func persistRemoteASRConfiguration() {
         if let data = try? encoder.encode(remoteASRConfiguration) {
             defaults.set(data, forKey: Keys.remoteASRConfig)
@@ -2522,12 +2588,49 @@ final class AppModel: ObservableObject {
             Keys.targetLanguage,
             Keys.modeCycleShortcut,
             Keys.processorShortcut,
+            Keys.promptCycleShortcut,
             Keys.asrBackend,
             Keys.remoteASRConfig,
             Keys.interfaceTheme
         ]
 
         return legacyAndCurrentKeys.contains { defaults.object(forKey: $0) != nil }
+    }
+
+    private static func presetID(for selection: PromptActiveSelection) -> String {
+        switch selection.mode {
+        case .builtInDefault:
+            return PromptPreset.builtInDefaultID
+        case .preset:
+            return selection.presetID ?? PromptPreset.builtInDefaultID
+        }
+    }
+
+    private static func selection(forPromptPresetID presetID: String) -> PromptActiveSelection {
+        if presetID == PromptPreset.builtInDefaultID {
+            return .builtInDefault
+        }
+        return .preset(presetID)
+    }
+
+    private static func makeResolvedPromptPreset(from preset: PromptPreset) -> ResolvedPromptPreset {
+        let middleSection = preset.trimmedBody.isEmpty ? nil : preset.trimmedBody
+        let source: ResolvedPromptPresetSource
+        switch preset.source {
+        case .builtInDefault:
+            source = .builtInDefault
+        case .starter:
+            source = .starter
+        case .user:
+            source = .user
+        }
+
+        return .init(
+            presetID: preset.id,
+            title: preset.resolvedTitle,
+            middleSection: middleSection,
+            source: source
+        )
     }
 }
 

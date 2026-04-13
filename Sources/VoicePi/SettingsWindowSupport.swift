@@ -211,6 +211,18 @@ enum SettingsWindowSupport {
         return "Current shortcut: \(shortcut.displayString). It starts a dedicated processor capture. Advanced shortcuts require Input Monitoring, and Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
     }
 
+    static func promptCycleShortcutHintText(for shortcut: ActivationShortcut) -> String {
+        if shortcut.isEmpty {
+            return "Set a prompt-cycle shortcut to quickly rotate the global Active Prompt before recording."
+        }
+
+        if shortcut.isRegisteredHotkeyCompatible {
+            return "Current shortcut: \(shortcut.displayString). It cycles the global Active Prompt by one preset per press, and standard shortcuts work without Input Monitoring."
+        }
+
+        return "Current shortcut: \(shortcut.displayString). It cycles the global Active Prompt by one preset per press. Advanced shortcuts require Input Monitoring, and Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+    }
+
     static func historySummaryText(forEntryCount count: Int) -> String {
         guard count > 0 else {
             return "No history yet. Final transcript outputs will appear here after successful delivery."
