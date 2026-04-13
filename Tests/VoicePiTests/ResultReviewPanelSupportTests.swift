@@ -94,6 +94,7 @@ struct ResultReviewPanelSupportTests {
         #expect(state.regenerateButtonTitle == "Regenerate")
         #expect(state.isRegenerateEnabled)
         #expect(state.isPromptPickerEnabled)
+        #expect(state.isInsertEnabled)
     }
 
     @Test
@@ -112,6 +113,23 @@ struct ResultReviewPanelSupportTests {
         #expect(state.regenerateButtonTitle == "Regenerating…")
         #expect(state.isRegenerateEnabled == false)
         #expect(state.isPromptPickerEnabled == false)
+        #expect(state.isInsertEnabled == false)
+    }
+
+    @Test
+    func presentationStateKeepsInsertDisabledWhenPayloadDisallowsInsertion() throws {
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Same",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [.init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default")],
+                allowsInsert: false
+            )
+        )
+        let state = ResultReviewPanelPresentationState(payload: payload)
+        #expect(state.isInsertEnabled == false)
     }
 
     @Test

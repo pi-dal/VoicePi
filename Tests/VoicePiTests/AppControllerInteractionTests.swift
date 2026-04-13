@@ -461,6 +461,133 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func unconfiguredLLMCannotEnterRefinementReviewFlow() {
+        #expect(
+            !AppController.canEnterRefinementReviewFlow(
+                refinementProvider: .llm,
+                llmConfigurationIsConfigured: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func configuredLLMAndExternalProcessorCanEnterRefinementReviewFlow() {
+        #expect(
+            AppController.canEnterRefinementReviewFlow(
+                refinementProvider: .llm,
+                llmConfigurationIsConfigured: true
+            )
+        )
+        #expect(
+            AppController.canEnterRefinementReviewFlow(
+                refinementProvider: .externalProcessor,
+                llmConfigurationIsConfigured: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func resultReviewRegenerateUsesStatusBarOnlyRefiningPresentation() {
+        #expect(
+            AppController.refiningPresentationModeForRegenerate() == .statusBarOnly
+        )
+    }
+
+    @Test
+    @MainActor
+    func llmReviewRegenerateRequiresAChangedResult() {
+        #expect(
+            !AppController.didRefinementReviewRegenerateSucceed(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Original transcript",
+                didExternalProcessorSucceed: false
+            )
+        )
+        #expect(
+            !AppController.didRefinementReviewRegenerateSucceed(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Polished result",
+                didExternalProcessorSucceed: false
+            )
+        )
+        #expect(
+            AppController.didRefinementReviewRegenerateSucceed(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Sharpened rewrite",
+                didExternalProcessorSucceed: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func selectedTextRewriteWithoutRecentInsertionMatchUsesReviewPanelFlow() {
+        #expect(
+            AppController.selectionRewritePresentationDecision(hasRecentInsertionMatch: false)
+                == .presentFreshReviewPanelAndStartRewrite
+        )
+    }
+
+    @Test
+    @MainActor
+    func selectedTextRewriteWithRecentInsertionMatchReusesExistingReviewFlow() {
+        #expect(
+            AppController.selectionRewritePresentationDecision(hasRecentInsertionMatch: true)
+                == .presentRecentInsertionReviewPanel
+        )
+    }
+
+    @Test
+    @MainActor
+    func normalRefinementUsesFloatingOverlayRefiningPresentation() {
+        #expect(
+            AppController.refiningPresentationModeForNormalWorkflow() == .floatingOverlayAndStatusBar
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionFullDocumentSelectionDefersPanelForCallToActionFlow() {
+        #expect(
+            AppController.recentInsertionAutoReviewPresentationDecision(
+                selectedRange: NSRange(location: 0, length: 11),
+                textValue: "hello world"
+            ) == .deferToCallToAction
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionPartialSelectionStillAllowsDirectPanelPresentation() {
+        #expect(
+            AppController.recentInsertionAutoReviewPresentationDecision(
+                selectedRange: NSRange(location: 1, length: 5),
+                textValue: "hello world"
+            ) == .presentReviewPanel
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionDecisionFallsBackToDirectPanelWhenTextContextMissing() {
+        #expect(
+            AppController.recentInsertionAutoReviewPresentationDecision(
+                selectedRange: NSRange(location: 0, length: 11),
+                textValue: nil
+            ) == .presentReviewPanel
+        )
+    }
+
+    @Test
+    @MainActor
     func resultReviewInsertPrefersCapturedEditableTargetSnapshotOverLivePanelSnapshot() {
         let capturedSnapshot = EditableTextTargetSnapshot(
             inspection: .editable,

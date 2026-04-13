@@ -4,6 +4,7 @@ import QuartzCore
 private final class ResultReviewPanelWindow: NSPanel {
     var onEscapePressed: (() -> Void)?
     var onConfirmPressed: (() -> Void)?
+    var canConsumeConfirmShortcut: ((NSEvent) -> Bool)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
@@ -36,7 +37,7 @@ private final class ResultReviewPanelWindow: NSPanel {
             onEscapePressed?()
             return true
         case 36, 76:
-            guard canConfirmInsert(for: event) else {
+            guard canConsumeConfirmShortcut?(event) == true else {
                 return false
             }
             onConfirmPressed?()
@@ -44,12 +45,6 @@ private final class ResultReviewPanelWindow: NSPanel {
         default:
             return false
         }
-    }
-
-    private func canConfirmInsert(for event: NSEvent) -> Bool {
-        var flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        flags.remove(.numericPad)
-        return flags.isEmpty
     }
 }
 
@@ -104,6 +99,12 @@ final class ResultReviewPanelController: NSWindowController {
         panel.onConfirmPressed = { [weak self] in
             self?.performInsert()
         }
+        panel.canConsumeConfirmShortcut = { [weak self] event in
+            Self.shouldConsumeConfirmShortcut(
+                event,
+                isInsertEnabled: self?.contentController.isInsertEnabled ?? false
+            )
+        }
         contentController.onPromptSelectionChanged = { [weak self] presetID in
             self?.onPromptSelectionChanged?(presetID)
         }
@@ -143,6 +144,10 @@ final class ResultReviewPanelController: NSWindowController {
         outputCopyButtonTitle
     }
 
+    var isInsertEnabled: Bool {
+        contentController.isInsertEnabled
+    }
+
     func show(payload: ResultReviewPanelPayload) {
         contentController.loadViewIfNeeded()
         contentController.setPayload(payload)
@@ -176,6 +181,7 @@ final class ResultReviewPanelController: NSWindowController {
     }
 
     func performInsert() {
+        guard contentController.isInsertEnabled else { return }
         onInsertRequested?(contentController.displayedText)
     }
 
@@ -251,9 +257,10 @@ final class ResultReviewPanelController: NSWindowController {
             performDismiss()
             return true
         case 36, 76:
-            var flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            flags.remove(.numericPad)
-            guard flags.isEmpty else {
+            guard Self.shouldConsumeConfirmShortcut(
+                event,
+                isInsertEnabled: contentController.isInsertEnabled
+            ) else {
                 return false
             }
             performInsert()
@@ -261,6 +268,21 @@ final class ResultReviewPanelController: NSWindowController {
         default:
             return false
         }
+    }
+
+    static func shouldConsumeConfirmShortcut(
+        _ event: NSEvent,
+        isInsertEnabled: Bool
+    ) -> Bool {
+        guard isInsertEnabled else {
+            return false
+        }
+        guard event.isARepeat == false else {
+            return false
+        }
+        var flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        flags.remove(.numericPad)
+        return flags.isEmpty
     }
 }
 
@@ -465,6 +487,10 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
     var outputCopyButtonTitle: String {
         state?.outputCopyButtonTitle ?? "Copy"
+    }
+
+    var isInsertEnabled: Bool {
+        state?.isInsertEnabled ?? false
     }
 
     private func syncState() {

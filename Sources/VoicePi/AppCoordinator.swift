@@ -109,6 +109,21 @@ final class AppController: NSObject {
         case ignore
     }
 
+    enum RefiningPresentationMode: Equatable {
+        case floatingOverlayAndStatusBar
+        case statusBarOnly
+    }
+
+    enum RecentInsertionAutoReviewPresentationDecision: Equatable {
+        case presentReviewPanel
+        case deferToCallToAction
+    }
+
+    enum SelectionRewritePresentationDecision: Equatable {
+        case presentRecentInsertionReviewPanel
+        case presentFreshReviewPanelAndStartRewrite
+    }
+
     struct ProcessingWorkflowSelection: Equatable {
         let postProcessingMode: PostProcessingMode
         let refinementProvider: RefinementProvider
@@ -227,6 +242,7 @@ final class AppController: NSObject {
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
     private let resultReviewPanelController = ResultReviewPanelController()
+    private let selectionRegenerateHintController = SelectionRegenerateHintController()
     private let dictionarySuggestionToastController = DictionarySuggestionToastController()
     private let llmRefiner = LLMRefiner()
     private let externalProcessorRefiner = AppControllerExternalProcessorRefiner()
@@ -471,6 +487,69 @@ final class AppController: NSObject {
         return postProcessingMode == .refinement
     }
 
+    static func refiningPresentationModeForRegenerate() -> RefiningPresentationMode {
+        .statusBarOnly
+    }
+
+    static func refiningPresentationModeForNormalWorkflow() -> RefiningPresentationMode {
+        .floatingOverlayAndStatusBar
+    }
+
+    static func recentInsertionAutoReviewPresentationDecision(
+        selectedRange: NSRange,
+        textValue: String?
+    ) -> RecentInsertionAutoReviewPresentationDecision {
+        guard let textValue, !textValue.isEmpty else {
+            return .presentReviewPanel
+        }
+
+        let fullRange = NSRange(location: 0, length: textValue.utf16.count)
+        return NSEqualRanges(selectedRange, fullRange) ? .deferToCallToAction : .presentReviewPanel
+    }
+
+    static func selectionRewritePresentationDecision(
+        hasRecentInsertionMatch: Bool
+    ) -> SelectionRewritePresentationDecision {
+        hasRecentInsertionMatch
+            ? .presentRecentInsertionReviewPanel
+            : .presentFreshReviewPanelAndStartRewrite
+    }
+
+    static func didRefinementReviewRegenerateSucceed(
+        refinementProvider: RefinementProvider,
+        sourceText: String,
+        previousResultText: String? = nil,
+        regeneratedText: String,
+        didExternalProcessorSucceed: Bool
+    ) -> Bool {
+        let sanitizedRegeneratedText = ExternalProcessorOutputSanitizer.sanitize(regeneratedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedRegeneratedText.isEmpty else {
+            return false
+        }
+
+        switch refinementProvider {
+        case .externalProcessor:
+            return didExternalProcessorSucceed
+        case .llm:
+            let normalizedSourceText = ExternalProcessorOutputSanitizer.sanitize(sourceText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard sanitizedRegeneratedText != normalizedSourceText else {
+                return false
+            }
+
+            if let previousResultText {
+                let normalizedPreviousResultText = ExternalProcessorOutputSanitizer.sanitize(previousResultText)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard sanitizedRegeneratedText != normalizedPreviousResultText else {
+                    return false
+                }
+            }
+
+            return true
+        }
+    }
+
     static func updatedResultReviewPromptSelection(
         selectedPromptPresetID: String,
         selectedPromptTitle: String,
@@ -576,9 +655,28 @@ final class AppController: NSObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sanitizedOutput.isEmpty else { return false }
 
+        guard canEnterRefinementReviewFlow(
+            refinementProvider: refinementProvider,
+            llmConfigurationIsConfigured: llmConfigurationIsConfigured
+        ) else {
+            return false
+        }
+
         switch refinementProvider {
         case .externalProcessor:
             return didExternalProcessorSucceed
+        case .llm:
+            return true
+        }
+    }
+
+    static func canEnterRefinementReviewFlow(
+        refinementProvider: RefinementProvider,
+        llmConfigurationIsConfigured: Bool
+    ) -> Bool {
+        switch refinementProvider {
+        case .externalProcessor:
+            return true
         case .llm:
             return llmConfigurationIsConfigured
         }
@@ -1013,6 +1111,7 @@ final class AppController: NSObject {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.applyInterfaceTheme(model.interfaceTheme)
         resultReviewPanelController.applyInterfaceTheme(model.interfaceTheme)
+        selectionRegenerateHintController.applyInterfaceTheme(model.interfaceTheme)
         dictionarySuggestionToastController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.onCopySuccess = { [weak self] in
             self?.statusBarController?.setTransientStatus("Copied")
@@ -1036,6 +1135,11 @@ final class AppController: NSObject {
         resultReviewPanelController.onDismissRequested = { [weak self] in
             self?.dismissResultReviewPanel()
         }
+        selectionRegenerateHintController.onPrimaryAction = { [weak self] payload in
+            Task { @MainActor [weak self] in
+                self?.openRecentInsertionReviewFromHint(payload)
+            }
+        }
         dictionarySuggestionToastController.onApprove = { [weak self] suggestion in
             guard let self else { return }
             self.model.approveDictionarySuggestion(id: suggestion.id)
@@ -1055,6 +1159,7 @@ final class AppController: NSObject {
                 self?.floatingPanelController.applyInterfaceTheme(theme)
                 self?.inputFallbackPanelController.applyInterfaceTheme(theme)
                 self?.resultReviewPanelController.applyInterfaceTheme(theme)
+                self?.selectionRegenerateHintController.applyInterfaceTheme(theme)
                 self?.dictionarySuggestionToastController.applyInterfaceTheme(theme)
             }
             .store(in: &cancellables)
@@ -1559,6 +1664,7 @@ final class AppController: NSObject {
         selectedPromptPresetIDOverride: String? = nil,
         selectedPromptTitleOverride: String? = nil,
         recordingDurationMilliseconds: Int = 0,
+        isRegenerating: Bool = false,
         isAutoOpened: Bool
     ) {
         let sanitizedOriginalText = ExternalProcessorOutputSanitizer.sanitize(originalText)
@@ -1590,7 +1696,7 @@ final class AppController: NSObject {
             isAutoOpened: isAutoOpened
         )
 
-        guard let payload = resultReviewPayload(for: session, isRegenerating: false) else {
+        guard let payload = resultReviewPayload(for: session, isRegenerating: isRegenerating) else {
             presentTransientError("External processor returned unreadable output.")
             return
         }
@@ -1598,7 +1704,10 @@ final class AppController: NSObject {
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
         refinementReviewSession = session
+        selectionRegenerateHintController.hide()
         floatingPanelController.hide(immediately: true)
+        model.hideOverlay()
+        statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
     }
@@ -1650,6 +1759,7 @@ final class AppController: NSObject {
             selectedPromptPresetID: selectedPromptPresetID,
             selectedPromptTitle: selectedPromptTitle,
             availablePrompts: resultReviewPromptOptions(),
+            allowsInsert: session.sourceType == .recentInsertion,
             isRegenerating: isRegenerating
         )
     }
@@ -1658,6 +1768,7 @@ final class AppController: NSObject {
         resultReviewRetryTask?.cancel()
         resultReviewRetryTask = nil
         refinementReviewSession = nil
+        selectionRegenerateHintController.hide()
         resultReviewPanelController.hide()
     }
 
@@ -1665,7 +1776,9 @@ final class AppController: NSObject {
         clearResultReviewState()
     }
 
-    private func retryReviewedText() {
+    private func retryReviewedText(
+        tracksGlobalProcessingState: Bool = false
+    ) {
         guard let session = refinementReviewSession else {
             return
         }
@@ -1674,8 +1787,21 @@ final class AppController: NSObject {
             presentTransientError("Original text is unavailable for regenerate.")
             return
         }
+        guard Self.canEnterRefinementReviewFlow(
+            refinementProvider: session.workflow.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) else {
+            presentTransientError("LLM refinement is not configured yet.")
+            return
+        }
 
         resultReviewRetryTask?.cancel()
+        if tracksGlobalProcessingState {
+            isProcessingRelease = true
+        }
+        floatingPanelController.hide(immediately: true)
+        model.hideOverlay()
+        statusBarController?.setTransientStatus(nil)
         if let payload = resultReviewPayload(for: session, isRegenerating: true) {
             resultReviewPanelController.show(payload: payload)
         }
@@ -1684,13 +1810,20 @@ final class AppController: NSObject {
             guard let self else { return }
             defer {
                 self.resultReviewRetryTask = nil
+                if tracksGlobalProcessingState {
+                    self.isProcessingRelease = false
+                }
+                self.floatingPanelController.hide(immediately: true)
+                self.model.hideOverlay()
+                self.statusBarController?.setTransientStatus(nil)
             }
 
             let refinedText = await self.refineIfNeeded(
                 sourceText,
                 workflow: session.workflow,
                 workflowOverride: session.workflowOverride,
-                promptPresetOverrideID: session.pendingPromptPresetID ?? session.selectedPromptPresetID
+                promptPresetOverrideID: session.pendingPromptPresetID ?? session.selectedPromptPresetID,
+                refiningPresentationMode: Self.refiningPresentationModeForRegenerate()
             )
             guard !Task.isCancelled else { return }
             guard var latestSession = self.refinementReviewSession,
@@ -1698,13 +1831,13 @@ final class AppController: NSObject {
 
             let sanitizedRefinedText = ExternalProcessorOutputSanitizer.sanitize(refinedText)
             let didExternalProcessorSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
-            let rerunSucceeded: Bool
-            if latestSession.workflow.refinementProvider == .externalProcessor {
-                rerunSucceeded = didExternalProcessorSucceed
-                    && !sanitizedRefinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            } else {
-                rerunSucceeded = !sanitizedRefinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
+            let rerunSucceeded = Self.didRefinementReviewRegenerateSucceed(
+                refinementProvider: latestSession.workflow.refinementProvider,
+                sourceText: latestSession.rawTranscript,
+                previousResultText: latestSession.currentResultText,
+                regeneratedText: sanitizedRefinedText,
+                didExternalProcessorSucceed: didExternalProcessorSucceed
+            )
 
             if rerunSucceeded {
                 latestSession.currentResultText = sanitizedRefinedText
@@ -1730,7 +1863,7 @@ final class AppController: NSObject {
                         : trimmedFailureMessage
                     self.presentTransientError(failureMessage)
                 } else {
-                    self.presentTransientError("Regenerate returned empty output. Previous result is kept.")
+                    self.presentTransientError("Regenerate failed or returned unchanged output. Previous result is kept.")
                 }
             }
 
@@ -1748,6 +1881,10 @@ final class AppController: NSObject {
 
     private func insertReviewedText(_ text: String) {
         guard let session = refinementReviewSession else { return }
+        guard session.sourceType == .recentInsertion else {
+            presentTransientError("Use Copy to reuse regenerated text.")
+            return
+        }
         if session.pendingPromptPresetID != nil {
             presentTransientError("Press Regenerate to apply the selected prompt before inserting.")
             return
@@ -1839,6 +1976,7 @@ final class AppController: NSObject {
 
     private func beginSelectionRewriteFromCurrentSelection() {
         guard !isProcessingRelease else { return }
+        selectionRegenerateHintController.hide()
 
         let sourceApplicationBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let snapshot = editableTextTargetInspector.currentSnapshot()
@@ -1854,91 +1992,41 @@ final class AppController: NSObject {
             postProcessingMode: .refinement,
             refinementProvider: model.refinementProvider
         )
-        if workflow.refinementProvider == .llm, !model.llmConfiguration.isConfigured {
+        if !Self.canEnterRefinementReviewFlow(
+            refinementProvider: workflow.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) {
             presentTransientError("LLM refinement is not configured yet.")
             return
         }
 
-        if let recentSession = recentInsertionRewriteCoordinator.matchingSession(
+        let recentSession = recentInsertionRewriteCoordinator.matchingSession(
             for: snapshot,
             now: Date()
+        )
+        switch Self.selectionRewritePresentationDecision(
+            hasRecentInsertionMatch: recentSession != nil
         ) {
-            let resolvedPrompt = model.resolvedPromptPresetForExplicitPresetID(
-                recentSession.appliedPromptPresetID
-            )
-            presentResultReviewPanel(
-                sourceType: .recentInsertion,
-                resultText: recentSession.insertedText,
-                originalText: recentSession.rawTranscript,
-                workflow: workflow,
-                workflowOverride: nil,
-                selectionAnchor: selectionAnchor,
-                selectedPromptPresetIDOverride: resolvedPrompt.presetID,
-                selectedPromptTitleOverride: resolvedPrompt.title,
+        case .presentRecentInsertionReviewPanel:
+            guard let recentSession else { return }
+            presentRecentInsertionReviewPanel(
+                recentSession,
+                snapshot: snapshot,
                 isAutoOpened: false
             )
-            return
-        }
-
-        let sourceText = selectionAnchor.selectedText
-        isProcessingRelease = true
-        floatingPanelController.showRefining(transcript: sourceText)
-        model.updateOverlayRefining(transcript: sourceText)
-        statusBarController?.setTransientStatus("Refining selected text…")
-
-        processingTask?.cancel()
-        processingTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.processingTask = nil
-                self.isProcessingRelease = false
-                self.floatingPanelController.hide()
-                self.model.hideOverlay()
-            }
-
-            let refinedText = await self.refineIfNeeded(
-                sourceText,
-                workflow: workflow,
-                workflowOverride: nil
-            )
-            guard !Task.isCancelled else { return }
-
-            let sanitizedRefinedText = ExternalProcessorOutputSanitizer.sanitize(refinedText)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalizedSourceText = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let didExternalProcessorSucceed = await self.externalProcessorRefiner
-                .didSucceedOnLastInvocation
-            let rewriteSucceeded = workflow.refinementProvider == .externalProcessor
-                ? didExternalProcessorSucceed && !sanitizedRefinedText.isEmpty
-                : !sanitizedRefinedText.isEmpty && sanitizedRefinedText != normalizedSourceText
-
-            guard rewriteSucceeded else {
-                if workflow.refinementProvider == .externalProcessor {
-                    let processorFailureMessage = await self.externalProcessorRefiner
-                        .lastFailureMessageOnLastInvocation
-                    let trimmedFailureMessage = processorFailureMessage?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let message = trimmedFailureMessage.isEmpty
-                        ? "Selection rewrite failed."
-                        : trimmedFailureMessage
-                    self.presentTransientError(message)
-                } else {
-                    self.presentTransientError("Selection rewrite failed or returned unchanged output.")
-                }
-                self.statusBarController?.setTransientStatus(nil)
-                return
-            }
-
-            self.statusBarController?.setTransientStatus("Refinement ready")
-            self.presentResultReviewPanel(
+        case .presentFreshReviewPanelAndStartRewrite:
+            let sourceText = selectionAnchor.selectedText
+            presentResultReviewPanel(
                 sourceType: .selectedText,
-                resultText: sanitizedRefinedText,
+                resultText: sourceText,
                 originalText: sourceText,
                 workflow: workflow,
                 workflowOverride: nil,
                 selectionAnchor: selectionAnchor,
+                isRegenerating: true,
                 isAutoOpened: false
             )
+            retryReviewedText(tracksGlobalProcessingState: true)
         }
     }
 
@@ -1970,11 +2058,12 @@ final class AppController: NSObject {
             guard let self else { return }
             defer {
                 self.postInjectionLearningTask = nil
+                self.selectionRegenerateHintController.hide()
             }
 
             while !Task.isCancelled, self.postInjectionLearningCoordinator.isTracking {
                 let snapshot = self.editableTextTargetInspector.currentSnapshot()
-                self.autoOpenResultReviewPanelIfEligible(from: snapshot)
+                self.refreshSelectionRegenerateHint(from: snapshot)
                 if let suggestion = self.postInjectionLearningCoordinator.processSnapshot(
                     snapshot,
                     now: Date()
@@ -2021,29 +2110,29 @@ final class AppController: NSObject {
         recentInsertionRewriteCoordinator.startTracking(session)
     }
 
-    private func autoOpenResultReviewPanelIfEligible(from snapshot: EditableTextTargetSnapshot) {
-        guard !isProcessingRelease else { return }
-        guard refinementReviewSession == nil else { return }
-
-        guard let recentSession = recentInsertionRewriteCoordinator.processSnapshotForAutoOpen(
-            snapshot,
-            now: Date(),
-            reviewPanelVisible: resultReviewPanelController.window?.isVisible == true
-        ) else {
-            return
-        }
-
+    private func presentRecentInsertionReviewPanel(
+        _ recentSession: RecentInsertionRewriteSession,
+        snapshot: EditableTextTargetSnapshot,
+        isAutoOpened: Bool
+    ) {
         guard let selectionAnchor = rewriteSelectionAnchor(
             from: snapshot,
             sourceApplicationBundleID: recentSession.sourceApplicationBundleID
         ) else {
+            presentTransientError("No selected text available for rewrite.")
             return
         }
-
         let workflow = ProcessingWorkflowSelection(
             postProcessingMode: .refinement,
             refinementProvider: model.refinementProvider
         )
+        guard Self.canEnterRefinementReviewFlow(
+            refinementProvider: workflow.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) else {
+            presentTransientError("LLM refinement is not configured yet.")
+            return
+        }
         let resolvedPrompt = model.resolvedPromptPresetForExplicitPresetID(
             recentSession.appliedPromptPresetID
         )
@@ -2056,7 +2145,108 @@ final class AppController: NSObject {
             selectionAnchor: selectionAnchor,
             selectedPromptPresetIDOverride: resolvedPrompt.presetID,
             selectedPromptTitleOverride: resolvedPrompt.title,
-            isAutoOpened: true
+            isAutoOpened: isAutoOpened
+        )
+    }
+
+    private func refreshSelectionRegenerateHint(from snapshot: EditableTextTargetSnapshot) {
+        guard !isProcessingRelease else {
+            selectionRegenerateHintController.hide()
+            return
+        }
+        guard refinementReviewSession == nil else {
+            selectionRegenerateHintController.hide()
+            return
+        }
+        guard Self.canEnterRefinementReviewFlow(
+            refinementProvider: model.refinementProvider,
+            llmConfigurationIsConfigured: model.llmConfiguration.isConfigured
+        ) else {
+            selectionRegenerateHintController.hide()
+            return
+        }
+
+        let now = Date()
+        if let currentPayload = selectionRegenerateHintController.currentPayload {
+            if let matchingSession = recentInsertionRewriteCoordinator.matchingSession(
+                for: snapshot,
+                now: now
+            ),
+               matchingSession.id == currentPayload.sessionID {
+                if let selectedRange = snapshot.selectedTextRange,
+                   Self.recentInsertionAutoReviewPresentationDecision(
+                    selectedRange: selectedRange,
+                    textValue: snapshot.textValue
+                   ) == .presentReviewPanel {
+                    selectionRegenerateHintController.hide()
+                    presentRecentInsertionReviewPanel(
+                        matchingSession,
+                        snapshot: snapshot,
+                        isAutoOpened: true
+                    )
+                    return
+                }
+                let refreshedPayload = SelectionRegenerateHintPayload(
+                    sessionID: matchingSession.id,
+                    selectedText: matchingSession.insertedText,
+                    anchorRectInScreen: snapshot.selectedTextBoundsInScreen
+                )
+                if currentPayload != refreshedPayload {
+                    selectionRegenerateHintController.show(payload: refreshedPayload)
+                }
+                return
+            }
+            selectionRegenerateHintController.hide()
+        }
+
+        guard let recentSession = recentInsertionRewriteCoordinator.processSnapshotForAutoOpen(
+            snapshot,
+            now: now,
+            reviewPanelVisible: resultReviewPanelController.window?.isVisible == true
+        ) else {
+            return
+        }
+
+        if let selectedRange = snapshot.selectedTextRange,
+           Self.recentInsertionAutoReviewPresentationDecision(
+            selectedRange: selectedRange,
+            textValue: snapshot.textValue
+           ) == .presentReviewPanel {
+            presentRecentInsertionReviewPanel(
+                recentSession,
+                snapshot: snapshot,
+                isAutoOpened: true
+            )
+            return
+        }
+
+        selectionRegenerateHintController.show(
+            payload: SelectionRegenerateHintPayload(
+                sessionID: recentSession.id,
+                selectedText: recentSession.insertedText,
+                anchorRectInScreen: snapshot.selectedTextBoundsInScreen
+            )
+        )
+    }
+
+    private func openRecentInsertionReviewFromHint(_ payload: SelectionRegenerateHintPayload) {
+        selectionRegenerateHintController.hide()
+        guard !isProcessingRelease else { return }
+
+        let snapshot = editableTextTargetInspector.currentSnapshot()
+        guard let recentSession = recentInsertionRewriteCoordinator.matchingSession(
+            for: snapshot,
+            now: Date()
+        ),
+        recentSession.id == payload.sessionID else {
+            presentTransientError("Selection changed. Re-select the text and try again.")
+            return
+        }
+
+        presentRecentInsertionReviewPanel(
+            recentSession,
+            snapshot: snapshot,
+            isAutoOpened: false
         )
     }
 
@@ -2308,7 +2498,8 @@ final class AppController: NSObject {
         _ text: String,
         workflow: ProcessingWorkflowSelection? = nil,
         workflowOverride: RecordingWorkflowOverride? = nil,
-        promptPresetOverrideID: String? = nil
+        promptPresetOverrideID: String? = nil,
+        refiningPresentationMode: RefiningPresentationMode = .floatingOverlayAndStatusBar
     ) async -> String {
         let effectiveWorkflow = workflow ?? Self.effectiveProcessingWorkflow(
             postProcessingMode: model.postProcessingMode,
@@ -2346,8 +2537,10 @@ final class AppController: NSObject {
                 case .transcribing:
                     break
                 case .refining(let overlayTranscript, let statusText):
-                    self.floatingPanelController.showRefining(transcript: overlayTranscript)
-                    self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    if refiningPresentationMode == .floatingOverlayAndStatusBar {
+                        self.floatingPanelController.showRefining(transcript: overlayTranscript)
+                        self.model.updateOverlayRefining(transcript: overlayTranscript)
+                    }
                     self.statusBarController?.setTransientStatus(statusText)
                 }
             },

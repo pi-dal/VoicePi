@@ -7,6 +7,7 @@ struct EditableTextTargetSnapshot: Equatable {
     let textValue: String?
     let selectedText: String?
     let selectedTextRange: NSRange?
+    let selectedTextBoundsInScreen: CGRect?
     let canSetSelectedTextRange: Bool
 
     init(
@@ -15,6 +16,7 @@ struct EditableTextTargetSnapshot: Equatable {
         textValue: String?,
         selectedText: String? = nil,
         selectedTextRange: NSRange? = nil,
+        selectedTextBoundsInScreen: CGRect? = nil,
         canSetSelectedTextRange: Bool = false
     ) {
         self.inspection = inspection
@@ -22,6 +24,7 @@ struct EditableTextTargetSnapshot: Equatable {
         self.textValue = textValue
         self.selectedText = selectedText
         self.selectedTextRange = selectedTextRange
+        self.selectedTextBoundsInScreen = selectedTextBoundsInScreen
         self.canSetSelectedTextRange = canSetSelectedTextRange
     }
 }
@@ -78,6 +81,7 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
                 textValue: nil,
                 selectedText: nil,
                 selectedTextRange: nil,
+                selectedTextBoundsInScreen: nil,
                 canSetSelectedTextRange: false
             )
         }
@@ -98,6 +102,9 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
         let textValue = copyStringLikeAttribute(kAXValueAttribute, from: focusedElement)
         let selectedText = copyStringLikeAttribute(kAXSelectedTextAttribute as String, from: focusedElement)
         let selectedTextRange = copySelectedTextRange(from: focusedElement)
+        let selectedTextBoundsInScreen = selectedTextRange.flatMap {
+            copyBounds(for: $0, from: focusedElement)
+        }
 
         return EditableTextTargetSnapshot(
             inspection: inspection,
@@ -105,6 +112,7 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
             textValue: textValue,
             selectedText: selectedText,
             selectedTextRange: selectedTextRange,
+            selectedTextBoundsInScreen: selectedTextBoundsInScreen,
             canSetSelectedTextRange: selectedTextRangeSettable == true
         )
     }
@@ -243,6 +251,43 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
         }
 
         return NSRange(location: range.location, length: range.length)
+    }
+
+    private func copyBounds(for range: NSRange, from element: AXUIElement) -> CGRect? {
+        guard range.location >= 0, range.length >= 0 else {
+            return nil
+        }
+
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let parameter = AXValueCreate(.cfRange, &cfRange) else {
+            return nil
+        }
+
+        var value: CFTypeRef?
+        let status = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXBoundsForRangeParameterizedAttribute as CFString,
+            parameter,
+            &value
+        )
+        guard status == .success, let value else {
+            return nil
+        }
+        guard CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cgRect else {
+            return nil
+        }
+
+        var rect = CGRect.zero
+        guard AXValueGetValue(axValue, .cgRect, &rect), !rect.isEmpty else {
+            return nil
+        }
+
+        return rect
     }
 
     private func buildTargetIdentifier(for element: AXUIElement, role: String?) -> String? {

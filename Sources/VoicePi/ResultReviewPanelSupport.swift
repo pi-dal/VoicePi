@@ -21,6 +21,7 @@ struct ResultReviewPanelPayload: Equatable {
     let selectedPromptPresetID: String
     let selectedPromptTitle: String
     let availablePrompts: [ResultReviewPanelPromptOption]
+    let allowsInsert: Bool
     let isRegenerating: Bool
 
     init?(
@@ -29,6 +30,7 @@ struct ResultReviewPanelPayload: Equatable {
         selectedPromptPresetID: String,
         selectedPromptTitle: String,
         availablePrompts: [ResultReviewPanelPromptOption],
+        allowsInsert: Bool = true,
         isRegenerating: Bool = false
     ) {
         let sanitizedOriginal = ExternalProcessorOutputSanitizer.sanitize(originalText)
@@ -59,6 +61,7 @@ struct ResultReviewPanelPayload: Equatable {
             ? sanitizedPromptTitle
             : effectivePromptOption.title
         self.availablePrompts = normalizedPromptOptions
+        self.allowsInsert = allowsInsert
         self.isRegenerating = isRegenerating
     }
 
@@ -198,6 +201,7 @@ struct ResultReviewPanelPresentationState: Equatable {
     let regenerateButtonTitle: String
     let isRegenerateEnabled: Bool
     let isPromptPickerEnabled: Bool
+    let isInsertEnabled: Bool
 
     init(
         payload: ResultReviewPanelPayload,
@@ -221,5 +225,6 @@ struct ResultReviewPanelPresentationState: Equatable {
         self.regenerateButtonTitle = payload.isRegenerating ? "Regenerating…" : "Regenerate"
         self.isRegenerateEnabled = !payload.isRegenerating
         self.isPromptPickerEnabled = !payload.isRegenerating
+        self.isInsertEnabled = payload.allowsInsert && !payload.isRegenerating
     }
 }
