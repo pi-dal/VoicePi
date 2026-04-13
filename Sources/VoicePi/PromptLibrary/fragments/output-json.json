@@ -1,5 +1,5 @@
 {
   "id": "output-json",
   "title": "JSON",
-  "body": "Return valid JSON only. Use the schema: { \"text\": string }."
+  "body": "Return valid JSON only. Use exactly this schema: { \"text\": string }. Always return a single JSON object. Do not wrap the JSON object in markdown, code fences, quotes, or explanations."
 }

@@ -1,5 +1,5 @@
 {
   "id": "strictness-conservative",
   "title": "Conservative",
-  "body": "Keep formatting changes conservative and prefer minimal edits."
+  "body": "Prefer the smallest possible edits. Keep formatting changes conservative, avoid expanding casual speech into more formal prose, and do not add implied details. If something is uncertain, preserve the original meaning instead of resolving it."
 }

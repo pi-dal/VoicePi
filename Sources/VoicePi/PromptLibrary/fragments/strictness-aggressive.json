@@ -1,5 +1,5 @@
 {
   "id": "strictness-aggressive",
   "title": "Aggressive",
-  "body": "Apply the most assertive formatting choices allowed by the selected profile while preserving transcript meaning."
+  "body": "Apply the most assertive formatting choices allowed by the selected profile while preserving transcript meaning. You may reorganize phrasing and formatting more assertively, but you must not change or add facts. Do not turn ambiguity into certainty."
 }

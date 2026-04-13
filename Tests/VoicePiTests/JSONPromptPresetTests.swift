@@ -15,6 +15,8 @@ struct JSONPromptPresetTests {
 
         #expect(preset.body.contains("Return valid JSON only.") == true)
         #expect(preset.body.contains(#"Use exactly this schema: { "text": string }."#) == true)
+        #expect(preset.body.contains("Always return a single JSON object, even when no edits are needed.") == true)
+        #expect(preset.body.contains("Do not wrap the JSON object in markdown, code fences, quotes, or explanations.") == true)
         #expect(preset.body.contains("Do not include extra keys such as `input`, `target`, `source`, or `language`.") == true)
     }
 }

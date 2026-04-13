@@ -2,6 +2,6 @@
   "id": "support_reply",
   "title": "Support Reply",
   "description": "Produce a concise customer-facing reply.",
-  "body": "Write the result as a short support reply. Keep the tone calm and direct, and do not invent policy details not implied by the transcript.",
+  "body": "Write the result as a short support reply that can be sent as-is. Keep the original intent, tone direction, and stated constraints grounded in the transcript. Keep the tone calm and direct, but do not over-formalize casual wording unless the transcript already supports it. Do not invent policy, compensation, timelines, investigation results, or commitments. If the transcript does not support a specific answer, use a cautious reply that does not add new facts.",
   "optionGroupIDs": ["output_format", "strictness"]
 }

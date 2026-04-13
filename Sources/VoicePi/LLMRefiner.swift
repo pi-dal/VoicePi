@@ -294,7 +294,14 @@ final class LLMRefiner {
         let normalized = refinementPrompt.lowercased()
         let requestsJSON = normalized.contains("json")
         let specifiesTextSchema = normalized.contains("\"text\"") || normalized.contains("`text`")
-        let referencesSchema = normalized.contains("schema") || normalized.contains("valid json only")
+        let referencesSchema = normalized.contains("schema")
+            || normalized.contains("valid json only")
+            || normalized.contains("json only")
+            || normalized.contains("只返回 json")
+            || normalized.contains("仅返回 json")
+            || normalized.contains("只输出 json")
+            || normalized.contains("仅输出 json")
+            || containsTextJSONSchemaExample(refinementPrompt)
 
         guard requestsJSON, specifiesTextSchema, referencesSchema else {
             return .plainText
@@ -333,8 +340,10 @@ final class LLMRefiner {
     private static let jsonRefinementSystemPromptSuffix = """
     8. Return valid JSON only.
     9. Use exactly this schema: { "text": string }.
-    10. The `text` value must contain only the minimally edited final output.
-    11. Do not include extra keys such as `input`, `target`, `source`, `language`, `summary`, or `notes`.
+    10. Always return a single JSON object, even when the input is already correct.
+    11. The `text` value must contain only the minimally edited final output.
+    12. Do not wrap the JSON object in markdown, code fences, quotes, or explanations.
+    13. Do not include extra keys such as `input`, `target`, `source`, `language`, `summary`, or `notes`.
     """
 
     private static func jsonTranslationSystemPromptSuffix(targetLanguage: SupportedLanguage) -> String {
@@ -343,8 +352,10 @@ final class LLMRefiner {
         5. If some parts are already in \(targetLanguage.recognitionDisplayName), keep them natural and consistent with the final translated output.
         6. Return valid JSON only.
         7. Use exactly this schema: { "text": string }.
-        8. The `text` value must contain only the final translated text in \(targetLanguage.recognitionDisplayName).
-        9. Do not include source text, input text, target text, language labels, or extra keys such as `input`, `target`, `source`, `summary`, or `notes`.
+        8. Always return a single JSON object, even when the input is already correct before translation.
+        9. The `text` value must contain only the final translated text in \(targetLanguage.recognitionDisplayName).
+        10. Do not wrap the JSON object in markdown, code fences, quotes, or explanations.
+        11. Do not include source text, input text, target text, language labels, or extra keys such as `input`, `target`, `source`, `summary`, or `notes`.
         """
     }
 
@@ -382,9 +393,14 @@ final class LLMRefiner {
         }
 
         value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = stripLeadingOutputLabel(from: value)
 
         if value.isEmpty {
             return fallback
+        }
+
+        if outputContract == .jsonText {
+            return try canonicalStructuredJSON(from: value)
         }
 
         if let wrapped = try? JSONDecoder().decode(StructuredTextResponse.self, from: Data(value.utf8)) {
@@ -392,11 +408,34 @@ final class LLMRefiner {
             return candidate.isEmpty ? fallback : candidate
         }
 
-        if outputContract == .jsonText {
-            throw LLMRefinerError.invalidStructuredResponse
+        return value
+    }
+
+    private static func stripLeadingOutputLabel(from value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return trimmed
         }
 
-        return value
+        guard let expression = try? NSRegularExpression(
+            pattern: #"(?i)^(?:refined(?:\s+text)?|rewritten(?:\s+text)?|final(?:\s+text)?|output|result|translation|translated(?:\s+text)?|改写后|改写结果|输出|结果|最终文本|润色后)\s*[:：]\s*"#,
+            options: []
+        ) else {
+            return trimmed
+        }
+
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        guard let match = expression.firstMatch(in: trimmed, options: [], range: range), match.range.location == 0 else {
+            return trimmed
+        }
+
+        let stripped = expression.stringByReplacingMatches(
+            in: trimmed,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func stripThinkBlocks(from value: String) -> String {
@@ -425,6 +464,43 @@ final class LLMRefiner {
             lines.removeLast()
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func canonicalStructuredJSON(from value: String) throws -> String {
+        guard let data = value.data(using: .utf8) else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+        guard let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []) else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+        guard
+            let dictionary = jsonObject as? [String: Any],
+            dictionary.count == 1,
+            let text = dictionary["text"] as? String
+        else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+
+        let encoder = JSONEncoder()
+        guard let canonicalData = try? encoder.encode(StructuredTextResponse(text: text)),
+              let canonicalJSON = String(data: canonicalData, encoding: .utf8)
+        else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+
+        return canonicalJSON
+    }
+
+    private static func containsTextJSONSchemaExample(_ value: String) -> Bool {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"\{\s*["`]text["`]\s*:\s*string\s*\}"#,
+            options: [.caseInsensitive]
+        ) else {
+            return false
+        }
+
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.firstMatch(in: value, options: [], range: range) != nil
     }
 }
 
@@ -485,6 +561,6 @@ private struct APIErrorEnvelope: Decodable {
     let error: APIError
 }
 
-private struct StructuredTextResponse: Decodable {
+private struct StructuredTextResponse: Codable {
     let text: String
 }
