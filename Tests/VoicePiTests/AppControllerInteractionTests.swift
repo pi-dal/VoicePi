@@ -344,7 +344,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func externalProcessorRefinementUsesResultReviewPanelWhileStandardModesDoNot() {
+    func refinementReviewPanelSupportsBothLLMAndExternalProcessorModes() {
         #expect(
             AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .externalProcessor,
@@ -352,7 +352,7 @@ struct AppControllerInteractionTests {
             )
         )
         #expect(
-            !AppController.shouldPresentResultReviewPanel(
+            AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .llm,
                 postProcessingMode: .refinement
             )
@@ -361,6 +361,154 @@ struct AppControllerInteractionTests {
             !AppController.shouldPresentResultReviewPanel(
                 refinementProvider: .externalProcessor,
                 postProcessingMode: .disabled
+            )
+        )
+        #expect(
+            !AppController.shouldPresentResultReviewPanel(
+                refinementProvider: .llm,
+                postProcessingMode: .translation
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func refinementSuccessTreatsExternalAndLLMProvidersDifferently() {
+        #expect(
+            AppController.didRefinementSucceed(
+                workflow: .init(postProcessingMode: .refinement, refinementProvider: .llm),
+                didExternalProcessorSucceed: false
+            )
+        )
+        #expect(
+            !AppController.didRefinementSucceed(
+                workflow: .init(postProcessingMode: .refinement, refinementProvider: .externalProcessor),
+                didExternalProcessorSucceed: false
+            )
+        )
+        #expect(
+            AppController.didRefinementSucceed(
+                workflow: .init(postProcessingMode: .refinement, refinementProvider: .externalProcessor),
+                didExternalProcessorSucceed: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func retryProviderFallsBackFromExternalToLLMWhenProcessorUnavailable() {
+        #expect(
+            AppController.preferredRetryRefinementProvider(
+                requestedProvider: .externalProcessor,
+                llmConfigured: true,
+                hasEnabledExternalProcessor: false
+            ) == .llm
+        )
+    }
+
+    @Test
+    @MainActor
+    func retryProviderFallsBackFromLLMToExternalWhenLLMIsUnavailable() {
+        #expect(
+            AppController.preferredRetryRefinementProvider(
+                requestedProvider: .llm,
+                llmConfigured: false,
+                hasEnabledExternalProcessor: true
+            ) == .externalProcessor
+        )
+    }
+
+    @Test
+    @MainActor
+    func retryProviderKeepsRequestedProviderWhenConfigurationIsReady() {
+        #expect(
+            AppController.preferredRetryRefinementProvider(
+                requestedProvider: .externalProcessor,
+                llmConfigured: true,
+                hasEnabledExternalProcessor: true
+            ) == .externalProcessor
+        )
+        #expect(
+            AppController.preferredRetryRefinementProvider(
+                requestedProvider: .llm,
+                llmConfigured: true,
+                hasEnabledExternalProcessor: true
+            ) == .llm
+        )
+    }
+
+    @Test
+    @MainActor
+    func promptCycleShortcutStartsOnlyWhileIdle() {
+        #expect(
+            AppController.shouldHandlePromptCycleShortcutPress(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false
+            )
+        )
+        #expect(
+            !AppController.shouldHandlePromptCycleShortcutPress(
+                isRecording: true,
+                isStartingRecording: false,
+                isProcessingRelease: false
+            )
+        )
+        #expect(
+            !AppController.shouldHandlePromptCycleShortcutPress(
+                isRecording: false,
+                isStartingRecording: true,
+                isProcessingRelease: false
+            )
+        )
+        #expect(
+            !AppController.shouldHandlePromptCycleShortcutPress(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func promptCycleShortcutMonitorPlanMatchesModeShortcutPermissions() {
+        let registeredShortcut = ActivationShortcut(
+            keyCodes: [35],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.promptCycleShortcutMonitorPlan(
+                shortcut: registeredShortcut,
+                inputMonitoringState: .unknown,
+                accessibilityState: .denied
+            ) == .init(strategy: .registeredHotkey, statusMessage: nil)
+        )
+
+        let advancedShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.promptCycleShortcutMonitorPlan(
+                shortcut: advancedShortcut,
+                inputMonitoringState: .unknown,
+                accessibilityState: .granted
+            ) == .init(
+                strategy: nil,
+                statusMessage: AppController.promptCycleShortcutMonitoringFailureMessage
+            )
+        )
+        #expect(
+            AppController.promptCycleShortcutMonitorPlan(
+                shortcut: advancedShortcut,
+                inputMonitoringState: .granted,
+                accessibilityState: .denied
+            ) == .init(
+                strategy: .eventTap(.listenOnly),
+                statusMessage: AppController.promptCycleShortcutSuppressionWarningMessage
             )
         )
     }
@@ -672,6 +820,35 @@ struct AppControllerInteractionTests {
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
                 processorShortcut: processorShortcut,
+                promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                inputMonitoringState: .unknown
+            ) == .init(
+                requestMediaPermissions: true,
+                promptAccessibility: true,
+                requestInputMonitoringPermission: true,
+                useSystemAccessibilityPrompt: true
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func launchPermissionPlanAlsoRequestsInputMonitoringWhenPromptCycleShortcutIsAdvanced() {
+        let activationShortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        let promptCycleShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.launchPermissionPlan(
+                activationShortcut: activationShortcut,
+                modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                promptCycleShortcut: promptCycleShortcut,
                 inputMonitoringState: .unknown
             ) == .init(
                 requestMediaPermissions: true,

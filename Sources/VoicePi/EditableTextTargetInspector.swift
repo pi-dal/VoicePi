@@ -5,6 +5,19 @@ struct EditableTextTargetSnapshot: Equatable {
     let inspection: EditableTextTargetInspection
     let targetIdentifier: String?
     let textValue: String?
+    let selectedText: String?
+
+    init(
+        inspection: EditableTextTargetInspection,
+        targetIdentifier: String?,
+        textValue: String?,
+        selectedText: String? = nil
+    ) {
+        self.inspection = inspection
+        self.targetIdentifier = targetIdentifier
+        self.textValue = textValue
+        self.selectedText = selectedText
+    }
 }
 
 protocol EditableTextTargetInspecting {
@@ -64,7 +77,8 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
             return EditableTextTargetSnapshot(
                 inspection: .unavailable,
                 targetIdentifier: nil,
-                textValue: nil
+                textValue: nil,
+                selectedText: nil
             )
         }
 
@@ -79,11 +93,13 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
         )
         let targetIdentifier = buildTargetIdentifier(for: focusedElement, role: role)
         let textValue = copyStringLikeAttribute(kAXValueAttribute, from: focusedElement)
+        let selectedText = copyStringLikeAttribute(kAXSelectedTextAttribute, from: focusedElement)
 
         return EditableTextTargetSnapshot(
             inspection: inspection,
             targetIdentifier: targetIdentifier,
-            textValue: textValue
+            textValue: textValue,
+            selectedText: selectedText
         )
     }
 

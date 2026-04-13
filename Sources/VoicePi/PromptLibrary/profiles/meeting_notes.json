@@ -2,6 +2,6 @@
   "id": "meeting_notes",
   "title": "Meeting Notes",
   "description": "Turn the transcript into concise structured notes.",
-  "body": "Organize the result as concise structured notes. Preserve the speaker intent and keep details grounded in the transcript.",
+  "body": "Organize the result as concise structured meeting notes. Preserve the speaker intent and keep every detail grounded in the transcript. Only include decisions, action items, open questions, dates, and owners when they are explicit in the transcript. Do not invent conclusions, owners, deadlines, or implied decisions. If a detail is missing or uncertain, leave it as unspecified rather than filling it in. Prefer short sections or short bullets over polished summary prose.",
   "optionGroupIDs": ["output_format", "strictness"]
 }

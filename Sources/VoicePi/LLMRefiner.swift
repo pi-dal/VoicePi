@@ -88,6 +88,17 @@ final class LLMRefiner {
     3. Do not add explanations, markdown, quotes, or commentary.
     """
 
+    private static let maxDictionaryEntriesInPrompt = 40
+    private static let plainTextJSONCandidateKeys = [
+        "text",
+        "output",
+        "result",
+        "content",
+        "answer",
+        "final_text",
+        "finalText"
+    ]
+
     private let session: URLSession
 
     init(session: URLSession = .shared) {
@@ -114,6 +125,9 @@ final class LLMRefiner {
             targetLanguage: targetLanguage,
             refinementPrompt: configuration.trimmedRefinementPrompt
         )
+        let promptDictionaryEntries = mode == .refinement
+            ? Self.dictionaryEntriesForPrompt(dictionaryEntries, input: input)
+            : []
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -135,7 +149,7 @@ final class LLMRefiner {
                         mode: mode,
                         targetLanguage: targetLanguage,
                         refinementPrompt: configuration.trimmedRefinementPrompt,
-                        dictionaryEntries: mode == .refinement ? dictionaryEntries : []
+                        dictionaryEntries: promptDictionaryEntries
                     )
                 ),
                 .init(role: "user", content: input)
@@ -282,6 +296,66 @@ final class LLMRefiner {
         return lines.joined(separator: "\n")
     }
 
+    private static func dictionaryEntriesForPrompt(
+        _ entries: [DictionaryEntry],
+        input: String
+    ) -> [DictionaryEntry] {
+        let candidates = entries.filter {
+            !$0.canonical.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !candidates.isEmpty else {
+            return []
+        }
+
+        let normalizedInput = normalizedDictionaryMatchText(input)
+        var prioritized: [DictionaryEntry] = []
+        var remaining: [DictionaryEntry] = []
+        prioritized.reserveCapacity(min(maxDictionaryEntriesInPrompt, candidates.count))
+        remaining.reserveCapacity(candidates.count)
+
+        for entry in candidates {
+            let isRelevant = !normalizedInput.isEmpty
+                && dictionaryMatchTerms(for: entry).contains(where: { normalizedInput.contains($0) })
+            if isRelevant {
+                prioritized.append(entry)
+            } else {
+                remaining.append(entry)
+            }
+        }
+
+        let ordered = prioritized + remaining
+        if ordered.count <= maxDictionaryEntriesInPrompt {
+            return ordered
+        }
+        return Array(ordered.prefix(maxDictionaryEntriesInPrompt))
+    }
+
+    private static func dictionaryMatchTerms(for entry: DictionaryEntry) -> [String] {
+        let canonical = normalizedDictionaryMatchText(entry.canonical)
+        let aliases = DictionaryNormalization.uniqueAliases(
+            entry.aliases,
+            excluding: entry.canonical
+        )
+        .map(normalizedDictionaryMatchText)
+        .filter { !$0.isEmpty }
+
+        if canonical.isEmpty {
+            return aliases
+        }
+        return [canonical] + aliases
+    }
+
+    private static func normalizedDictionaryMatchText(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(
+                of: #"\s+"#,
+                with: " ",
+                options: .regularExpression
+            )
+    }
+
     private static func outputContract(
         mode: LLMRefinerPromptMode,
         targetLanguage: SupportedLanguage?,
@@ -294,7 +368,14 @@ final class LLMRefiner {
         let normalized = refinementPrompt.lowercased()
         let requestsJSON = normalized.contains("json")
         let specifiesTextSchema = normalized.contains("\"text\"") || normalized.contains("`text`")
-        let referencesSchema = normalized.contains("schema") || normalized.contains("valid json only")
+        let referencesSchema = normalized.contains("schema")
+            || normalized.contains("valid json only")
+            || normalized.contains("json only")
+            || normalized.contains("只返回 json")
+            || normalized.contains("仅返回 json")
+            || normalized.contains("只输出 json")
+            || normalized.contains("仅输出 json")
+            || containsTextJSONSchemaExample(refinementPrompt)
 
         guard requestsJSON, specifiesTextSchema, referencesSchema else {
             return .plainText
@@ -333,8 +414,10 @@ final class LLMRefiner {
     private static let jsonRefinementSystemPromptSuffix = """
     8. Return valid JSON only.
     9. Use exactly this schema: { "text": string }.
-    10. The `text` value must contain only the minimally edited final output.
-    11. Do not include extra keys such as `input`, `target`, `source`, `language`, `summary`, or `notes`.
+    10. Always return a single JSON object, even when the input is already correct.
+    11. The `text` value must contain only the minimally edited final output.
+    12. Do not wrap the JSON object in markdown, code fences, quotes, or explanations.
+    13. Do not include extra keys such as `input`, `target`, `source`, `language`, `summary`, or `notes`.
     """
 
     private static func jsonTranslationSystemPromptSuffix(targetLanguage: SupportedLanguage) -> String {
@@ -343,8 +426,10 @@ final class LLMRefiner {
         5. If some parts are already in \(targetLanguage.recognitionDisplayName), keep them natural and consistent with the final translated output.
         6. Return valid JSON only.
         7. Use exactly this schema: { "text": string }.
-        8. The `text` value must contain only the final translated text in \(targetLanguage.recognitionDisplayName).
-        9. Do not include source text, input text, target text, language labels, or extra keys such as `input`, `target`, `source`, `summary`, or `notes`.
+        8. Always return a single JSON object, even when the input is already correct before translation.
+        9. The `text` value must contain only the final translated text in \(targetLanguage.recognitionDisplayName).
+        10. Do not wrap the JSON object in markdown, code fences, quotes, or explanations.
+        11. Do not include source text, input text, target text, language labels, or extra keys such as `input`, `target`, `source`, `summary`, or `notes`.
         """
     }
 
@@ -382,9 +467,14 @@ final class LLMRefiner {
         }
 
         value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = stripLeadingOutputLabel(from: value)
 
         if value.isEmpty {
             return fallback
+        }
+
+        if outputContract == .jsonText {
+            return try canonicalStructuredJSON(from: value)
         }
 
         if let wrapped = try? JSONDecoder().decode(StructuredTextResponse.self, from: Data(value.utf8)) {
@@ -392,11 +482,85 @@ final class LLMRefiner {
             return candidate.isEmpty ? fallback : candidate
         }
 
-        if outputContract == .jsonText {
-            throw LLMRefinerError.invalidStructuredResponse
+        if
+            let data = value.data(using: .utf8),
+            let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
+            let extracted = extractPlainText(from: jsonObject)
+        {
+            let candidate = extracted.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !candidate.isEmpty {
+                return candidate
+            }
         }
 
         return value
+    }
+
+    private static func stripLeadingOutputLabel(from value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return trimmed
+        }
+
+        if let stripped = removingLeadingLabelPrefix(from: trimmed) {
+            return stripped
+        }
+
+        var lines = trimmed.components(separatedBy: .newlines)
+        guard lines.count > 1 else {
+            return trimmed
+        }
+
+        let firstLine = lines.removeFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        if removingLeadingLabelPrefix(from: firstLine) != nil {
+            return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return trimmed
+    }
+
+    private static func removingLeadingLabelPrefix(from value: String) -> String? {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"(?i)^(?:refined(?:\s+text)?|rewritten(?:\s+text)?|final(?:\s+text)?|output|result|translation|translated(?:\s+text)?|改写后|改写结果|输出|结果|最终文本|润色后)\s*[:：]\s*"#,
+            options: []
+        ) else {
+            return nil
+        }
+
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = expression.firstMatch(in: value, options: [], range: range), match.range.location == 0 else {
+            return nil
+        }
+
+        let stripped = expression.stringByReplacingMatches(
+            in: value,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func extractPlainText(from jsonObject: Any) -> String? {
+        guard let dictionary = jsonObject as? [String: Any] else {
+            return nil
+        }
+
+        for key in plainTextJSONCandidateKeys {
+            guard let value = dictionary[key] else { continue }
+            if let string = value as? String {
+                return string
+            }
+        }
+
+        for key in plainTextJSONCandidateKeys {
+            guard let nested = dictionary[key] else { continue }
+            if let nestedText = extractPlainText(from: nested) {
+                return nestedText
+            }
+        }
+
+        return nil
     }
 
     private static func stripThinkBlocks(from value: String) -> String {
@@ -425,6 +589,43 @@ final class LLMRefiner {
             lines.removeLast()
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func canonicalStructuredJSON(from value: String) throws -> String {
+        guard let data = value.data(using: .utf8) else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+        guard let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []) else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+        guard
+            let dictionary = jsonObject as? [String: Any],
+            dictionary.count == 1,
+            let text = dictionary["text"] as? String
+        else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+
+        let encoder = JSONEncoder()
+        guard let canonicalData = try? encoder.encode(StructuredTextResponse(text: text)),
+              let canonicalJSON = String(data: canonicalData, encoding: .utf8)
+        else {
+            throw LLMRefinerError.invalidStructuredResponse
+        }
+
+        return canonicalJSON
+    }
+
+    private static func containsTextJSONSchemaExample(_ value: String) -> Bool {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"\{\s*["`]text["`]\s*:\s*string\s*\}"#,
+            options: [.caseInsensitive]
+        ) else {
+            return false
+        }
+
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.firstMatch(in: value, options: [], range: range) != nil
     }
 }
 
@@ -485,6 +686,6 @@ private struct APIErrorEnvelope: Decodable {
     let error: APIError
 }
 
-private struct StructuredTextResponse: Decodable {
+private struct StructuredTextResponse: Codable {
     let text: String
 }

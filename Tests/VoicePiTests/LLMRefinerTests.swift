@@ -53,6 +53,32 @@ struct LLMRefinerTests {
     }
 
     @Test
+    func sanitizeExtractsTextFromCommonJSONEnvelopeWhenPlainTextOutputIsAllowed() throws {
+        let sanitized = try LLMRefiner.sanitize(
+            content: #"{"output":" polished result "}"#,
+            fallback: "fallback",
+            outputContract: .plainText
+        )
+
+        #expect(sanitized == "polished result")
+    }
+
+    @Test
+    func sanitizeStripsLeadingOutputLabels() throws {
+        let sanitizedEnglish = try LLMRefiner.sanitize(
+            content: "Refined text: polished output",
+            fallback: "fallback"
+        )
+        let sanitizedChinese = try LLMRefiner.sanitize(
+            content: "改写后：最终文本",
+            fallback: "fallback"
+        )
+
+        #expect(sanitizedEnglish == "polished output")
+        #expect(sanitizedChinese == "最终文本")
+    }
+
+    @Test
     func refineBuildsChatCompletionRequest() async throws {
         let (session, capturedRequests) = makeSession()
         let refiner = LLMRefiner(session: session)
@@ -161,12 +187,90 @@ struct LLMRefinerTests {
 
         let result = try await refiner.refine(text: "raw input", configuration: configuration)
 
-        #expect(result == "refined output")
+        #expect(result == #"{"text":"refined output"}"#)
 
         let request = try #require(capturedRequests.snapshot.first)
         let body = try #require(requestBody(from: request))
         let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
         #expect(payload.responseFormat?.type == "json_object")
+    }
+
+    @Test
+    func refineAddsJSONResponseFormatForChineseJSONPromptInstructions() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configuration = LLMRefinerConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "gpt-test",
+            refinementPrompt: #"只返回 JSON。使用 { "text": string }。`text` 里只能放最终结果，不要额外字段。"#
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"{\"text\":\"refined output\"}"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        let result = try await refiner.refine(text: "raw input", configuration: configuration)
+
+        #expect(result == #"{"text":"refined output"}"#)
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
+        #expect(payload.responseFormat?.type == "json_object")
+    }
+
+    @Test
+    func refinePrioritizesRelevantDictionaryEntriesAndCapsPromptDictionarySize() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configuration = LLMRefinerConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "gpt-test",
+            refinementPrompt: ""
+        )
+        let dictionaryEntries = (0..<50).map { index in
+            let token = String(format: "dict-entry-%02d", index)
+            return DictionaryEntry(canonical: token, aliases: [], isEnabled: true)
+        }
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"refined output"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        _ = try await refiner.refine(
+            text: "please keep dict-entry-49 intact",
+            configuration: configuration,
+            targetLanguage: nil,
+            dictionaryEntries: dictionaryEntries
+        )
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try JSONDecoder().decode(LLMRefinerRequestPayload.self, from: body)
+        let systemPrompt = payload.messages[0].content
+
+        #expect(systemPrompt.contains("- dict-entry-49"))
+        #expect(systemPrompt.contains("- dict-entry-39") == false)
     }
 
     @Test
@@ -194,6 +298,17 @@ struct LLMRefinerTests {
 
         await #expect(throws: LLMRefinerError.invalidStructuredResponse) {
             try await refiner.refine(text: "raw input", configuration: configuration)
+        }
+    }
+
+    @Test
+    func sanitizeRejectsExtraKeysWhenJSONOutputIsRequired() {
+        #expect(throws: LLMRefinerError.invalidStructuredResponse) {
+            _ = try LLMRefiner.sanitize(
+                content: #"{"text":"refined output","summary":"extra"}"#,
+                fallback: "fallback",
+                outputContract: .jsonText
+            )
         }
     }
 

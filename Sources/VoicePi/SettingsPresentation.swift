@@ -20,12 +20,14 @@ struct PermissionPresentation: Equatable {
 struct HomeSectionPresentation: Equatable {
     let shortcutSummary: String
     let modeShortcutSummary: String
+    let promptShortcutSummary: String
     let languageSummary: String
     let permissionSummary: String
     let asrSummary: String
     let llmSummary: String
     let shortcutHint: String
     let modeShortcutHint: String
+    let promptShortcutHint: String
     let statusSummary: String
     let statusTone: SettingsPresentationStatusTone
 }
@@ -83,6 +85,15 @@ enum PermissionsCopy {
 
     static let unsetModeShortcutHint =
         "Mode-switch shortcut is not set. Click the field above and press a combination to enable quick cycling between Disabled, Refinement, and Translate."
+
+    static let standardPromptShortcutHint =
+        "Current prompt-cycle shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+
+    static let advancedPromptShortcutHint =
+        "Current prompt-cycle shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+
+    static let unsetPromptShortcutHint =
+        "Prompt-cycle shortcut is not set. Click the field above and press a combination to rotate the global Active Prompt before recording."
 }
 
 enum SettingsPresentation {
@@ -163,15 +174,30 @@ enum SettingsPresentation {
             modeShortcutHint = String(format: modeShortcutHintFormat, model.modeCycleShortcut.displayString)
         }
 
+        let promptShortcutHint: String
+        if model.promptCycleShortcut.isEmpty {
+            promptShortcutHint = PermissionsCopy.unsetPromptShortcutHint
+        } else {
+            let promptShortcutHintFormat = model.promptCycleShortcut.isRegisteredHotkeyCompatible
+                ? PermissionsCopy.standardPromptShortcutHint
+                : PermissionsCopy.advancedPromptShortcutHint
+            promptShortcutHint = String(
+                format: promptShortcutHintFormat,
+                model.promptCycleShortcut.displayString
+            )
+        }
+
         return HomeSectionPresentation(
             shortcutSummary: "Current shortcut: \(model.activationShortcut.menuTitle)",
             modeShortcutSummary: "Mode-switch shortcut: \(model.modeCycleShortcut.menuTitle)",
+            promptShortcutSummary: "Prompt-cycle shortcut: \(model.promptCycleShortcut.menuTitle)",
             languageSummary: "Recognition language: \(model.selectedLanguage.menuTitle)",
             permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title), Input Monitoring \(permissionPresentation(for: model.inputMonitoringAuthorization).title)",
             asrSummary: "ASR backend: \(model.asrBackend.title) • \(model.remoteASRConfiguration.isConfigured ? "Remote configured" : "Remote not configured")",
             llmSummary: llmSummary,
             shortcutHint: String(format: shortcutHintFormat, model.activationShortcut.displayString),
             modeShortcutHint: modeShortcutHint,
+            promptShortcutHint: promptShortcutHint,
             statusSummary: statusSummary,
             statusTone: statusTone
         )

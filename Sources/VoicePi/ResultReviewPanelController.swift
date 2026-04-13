@@ -61,7 +61,7 @@ final class ResultReviewPanelController: NSWindowController {
 
     var onInsertRequested: ((String) -> Void)?
     var onCopyRequested: ((String) -> Void)?
-    var onRetryRequested: (() -> Void)?
+    var onRetryRequested: ((String) -> Void)?
     var onDismissRequested: (() -> Void)?
 
     init(clipboardWriter: ClipboardWriting? = nil) {
@@ -101,6 +101,9 @@ final class ResultReviewPanelController: NSWindowController {
             self?.performDismiss()
         }
         panel.onConfirmPressed = { [weak self] in
+            guard self?.contentController.isInsertEnabled == true else {
+                return
+            }
             self?.performInsert()
         }
         contentController.onPromptCopyRequested = { [weak self] in
@@ -108,6 +111,12 @@ final class ResultReviewPanelController: NSWindowController {
         }
         contentController.onOutputCopyRequested = { [weak self] in
             _ = self?.performCopy()
+        }
+        contentController.onRetryRequested = { [weak self] in
+            self?.performRetry()
+        }
+        contentController.onInsertRequested = { [weak self] in
+            self?.performInsert()
         }
         contentController.onDismissRequested = { [weak self] in
             self?.performDismiss()
@@ -148,6 +157,9 @@ final class ResultReviewPanelController: NSWindowController {
         contentController.setPayload(payload)
         applyCurrentFrame(animated: window?.isVisible == true)
         installKeyMonitorIfNeeded()
+        if RuntimeEnvironment.isRunningTests {
+            return
+        }
 
         guard let panel = window else { return }
         NSApp.activate(ignoringOtherApps: true)
@@ -204,7 +216,7 @@ final class ResultReviewPanelController: NSWindowController {
     }
 
     func performRetry() {
-        onRetryRequested?()
+        onRetryRequested?(contentController.selectedPromptPresetID)
     }
 
     func performDismiss() {
@@ -267,7 +279,7 @@ final class ResultReviewPanelController: NSWindowController {
         case 36, 76:
             var flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             flags.remove(.numericPad)
-            guard flags.isEmpty else {
+            guard flags.isEmpty, contentController.isInsertEnabled else {
                 return false
             }
             performInsert()
@@ -292,6 +304,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private let promptIconView = NSImageView()
     private let promptTextLabel = NSTextField(wrappingLabelWithString: "")
     private let promptCopyButton = NSButton(title: "", target: nil, action: nil)
+    private let promptPicker = ThemedPopUpButton()
 
     private let answerContainer = NSView()
     private let answerHeader = NSView()
@@ -302,11 +315,20 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private let outputCopyButton = NSButton(title: "", target: nil, action: nil)
     private let outputScrollView = NSScrollView()
     private let outputTextView = NSTextView()
+    private let answerActionRow = NSStackView()
+    private let answerStatusRow = NSStackView()
+    private let regenerationProgressIndicator = NSProgressIndicator()
+    private let answerStatusLabel = NSTextField(labelWithString: "")
+    private let regenerateButton = NSButton(title: "", target: nil, action: nil)
+    private let insertButton = NSButton(title: "", target: nil, action: nil)
 
+    private var payload: ResultReviewPanelPayload?
     private var state: ResultReviewPanelPresentationState?
 
     var onPromptCopyRequested: (() -> Void)?
     var onOutputCopyRequested: (() -> Void)?
+    var onRetryRequested: (() -> Void)?
+    var onInsertRequested: (() -> Void)?
     var onDismissRequested: (() -> Void)?
 
     override func loadView() {
@@ -359,7 +381,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
             promptRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             answerContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             promptRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 38),
-            answerContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 170)
+            answerContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 208)
         ])
 
         setPayload(ResultReviewPanelPayload(text: "Preview output", sourceText: "Preview prompt")!)
@@ -371,6 +393,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     }
 
     func setPayload(_ payload: ResultReviewPanelPayload) {
+        self.payload = payload
         state = ResultReviewPanelPresentationState(payload: payload)
         syncState()
     }
@@ -394,10 +417,6 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         let separatorColor = isDark
             ? NSColor(calibratedWhite: 1.0, alpha: 0.1)
             : NSColor(calibratedWhite: 0.0, alpha: 0.08)
-        let iconTint = isDark
-            ? NSColor(calibratedWhite: 0.9, alpha: 0.95)
-            : NSColor.secondaryLabelColor
-
         cardView.layer?.backgroundColor = cardBackground.cgColor
         cardView.layer?.borderColor = cardBorder.cgColor
         answerContainer.layer?.backgroundColor = answerBackground.cgColor
@@ -409,12 +428,33 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         promptTextLabel.textColor = .labelColor
         answerIconView.contentTintColor = .secondaryLabelColor
         answerTitleLabel.textColor = .labelColor
+        answerStatusLabel.textColor = .secondaryLabelColor
         outputTextView.textColor = .labelColor
         outputTextView.backgroundColor = .clear
+        promptPicker.syncTheme()
 
-        for button in [promptCopyButton, outputCopyButton] {
-            button.contentTintColor = iconTint
-        }
+        OverlayButtonStyler.style(
+            promptCopyButton,
+            role: .subtle,
+            appearance: view.effectiveAppearance,
+            cornerRadius: 12
+        )
+        OverlayButtonStyler.style(
+            outputCopyButton,
+            role: .subtle,
+            appearance: view.effectiveAppearance,
+            cornerRadius: 12
+        )
+        OverlayButtonStyler.style(
+            regenerateButton,
+            role: .secondary,
+            appearance: view.effectiveAppearance
+        )
+        OverlayButtonStyler.style(
+            insertButton,
+            role: .primary,
+            appearance: view.effectiveAppearance
+        )
 
         closeButton.contentTintColor = .secondaryLabelColor
     }
@@ -447,15 +487,41 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         state?.outputCopyButtonTitle ?? "Copy"
     }
 
+    var selectedPromptPresetID: String {
+        guard let selectedPresetID = promptPicker.selectedItem?.representedObject as? String else {
+            return state?.selectedPromptPresetID ?? PromptPreset.builtInDefaultID
+        }
+        return selectedPresetID
+    }
+
+    var isInsertEnabled: Bool {
+        insertButton.isEnabled
+    }
+
     private func syncState() {
         guard let state else { return }
         brandLabel.stringValue = state.titleText
         promptTextLabel.stringValue = state.promptDisplayText
         answerTitleLabel.stringValue = state.outputSectionTitle
-        promptCopyButton.toolTip = state.promptCopyButtonTitle
-        outputCopyButton.toolTip = state.outputCopyButtonTitle
+        promptCopyButton.title = state.promptCopyButtonTitle
+        outputCopyButton.title = state.outputCopyButtonTitle
+        promptCopyButton.toolTip = nil
+        outputCopyButton.toolTip = nil
         promptCopyButton.isEnabled = !state.promptCopyText.isEmpty
         outputCopyButton.isEnabled = !state.outputCopyText.isEmpty
+        regenerateButton.title = state.regenerateButtonTitle
+        regenerateButton.isEnabled = state.isRegenerateEnabled
+        insertButton.title = state.insertButtonTitle
+        insertButton.isEnabled = state.isInsertEnabled
+        insertButton.toolTip = state.showsFooterProgress ? nil : state.footerStatusText
+        promptPicker.isEnabled = state.isPromptPickerEnabled
+        answerStatusLabel.stringValue = state.footerStatusText
+        if state.showsFooterProgress {
+            regenerationProgressIndicator.startAnimation(nil)
+        } else {
+            regenerationProgressIndicator.stopAnimation(nil)
+        }
+        reloadPromptPickerItems()
         outputTextView.string = state.outputDisplayText
         updateOutputTextLayout()
     }
@@ -514,7 +580,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         promptTextLabel.maximumNumberOfLines = 2
         promptTextLabel.lineBreakMode = .byTruncatingTail
 
-        configureActionIconButton(promptCopyButton, action: #selector(promptCopyPressed))
+        configureInlineActionButton(promptCopyButton, action: #selector(promptCopyPressed))
 
         promptRow.addSubview(promptIconView)
         promptRow.addSubview(promptTextLabel)
@@ -530,8 +596,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
             promptCopyButton.trailingAnchor.constraint(equalTo: promptRow.trailingAnchor, constant: -1),
             promptCopyButton.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
-            promptCopyButton.widthAnchor.constraint(equalToConstant: 22),
-            promptCopyButton.heightAnchor.constraint(equalToConstant: 22),
+            promptCopyButton.heightAnchor.constraint(equalToConstant: 24),
 
             promptTextLabel.leadingAnchor.constraint(equalTo: promptIconView.trailingAnchor, constant: 10),
             promptTextLabel.trailingAnchor.constraint(equalTo: promptCopyButton.leadingAnchor, constant: -12),
@@ -566,7 +631,45 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         answerTitleStack.addArrangedSubview(answerIconView)
         answerTitleStack.addArrangedSubview(answerTitleLabel)
 
-        configureActionIconButton(outputCopyButton, action: #selector(outputCopyPressed))
+        configureInlineActionButton(outputCopyButton, action: #selector(outputCopyPressed))
+        configureInlineActionButton(regenerateButton, action: #selector(regeneratePressed))
+        configureInlineActionButton(insertButton, action: #selector(insertPressed))
+        insertButton.bezelColor = NSColor.controlAccentColor
+        insertButton.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        promptPicker.translatesAutoresizingMaskIntoConstraints = false
+        promptPicker.target = self
+        promptPicker.action = #selector(promptPickerChanged(_:))
+        promptPicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        answerActionRow.translatesAutoresizingMaskIntoConstraints = false
+        answerActionRow.orientation = .horizontal
+        answerActionRow.alignment = .centerY
+        answerActionRow.spacing = 8
+        answerActionRow.addArrangedSubview(promptPicker)
+        answerActionRow.addArrangedSubview(NSView())
+        answerActionRow.addArrangedSubview(regenerateButton)
+        answerActionRow.addArrangedSubview(insertButton)
+
+        answerStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        answerStatusLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
+        answerStatusLabel.maximumNumberOfLines = 1
+        answerStatusLabel.lineBreakMode = .byTruncatingTail
+        answerStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        regenerationProgressIndicator.translatesAutoresizingMaskIntoConstraints = false
+        regenerationProgressIndicator.style = .spinning
+        regenerationProgressIndicator.controlSize = .small
+        regenerationProgressIndicator.isIndeterminate = true
+        regenerationProgressIndicator.isDisplayedWhenStopped = false
+        regenerationProgressIndicator.setContentHuggingPriority(.required, for: .horizontal)
+        regenerationProgressIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        answerStatusRow.translatesAutoresizingMaskIntoConstraints = false
+        answerStatusRow.orientation = .horizontal
+        answerStatusRow.alignment = .centerY
+        answerStatusRow.spacing = 6
+        answerStatusRow.addArrangedSubview(regenerationProgressIndicator)
+        answerStatusRow.addArrangedSubview(answerStatusLabel)
+        answerStatusRow.addArrangedSubview(NSView())
         configureOutputScrollView()
 
         answerContainer.addSubview(answerHeader)
@@ -574,6 +677,8 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         answerHeader.addSubview(outputCopyButton)
         answerHeader.addSubview(answerHeaderSeparator)
         answerContainer.addSubview(outputScrollView)
+        answerContainer.addSubview(answerStatusRow)
+        answerContainer.addSubview(answerActionRow)
 
         NSLayoutConstraint.activate([
             answerHeader.leadingAnchor.constraint(equalTo: answerContainer.leadingAnchor),
@@ -588,8 +693,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
             outputCopyButton.trailingAnchor.constraint(equalTo: answerHeader.trailingAnchor, constant: -10),
             outputCopyButton.centerYAnchor.constraint(equalTo: answerHeader.centerYAnchor),
-            outputCopyButton.widthAnchor.constraint(equalToConstant: 22),
-            outputCopyButton.heightAnchor.constraint(equalToConstant: 22),
+            outputCopyButton.heightAnchor.constraint(equalToConstant: 24),
 
             answerHeaderSeparator.leadingAnchor.constraint(equalTo: answerHeader.leadingAnchor),
             answerHeaderSeparator.trailingAnchor.constraint(equalTo: answerHeader.trailingAnchor),
@@ -599,20 +703,31 @@ private final class ResultReviewPanelContentViewController: NSViewController {
             outputScrollView.leadingAnchor.constraint(equalTo: answerContainer.leadingAnchor, constant: 12),
             outputScrollView.trailingAnchor.constraint(equalTo: answerContainer.trailingAnchor, constant: -12),
             outputScrollView.topAnchor.constraint(equalTo: answerHeader.bottomAnchor, constant: 8),
-            outputScrollView.bottomAnchor.constraint(equalTo: answerContainer.bottomAnchor, constant: -12)
+            outputScrollView.bottomAnchor.constraint(equalTo: answerStatusRow.topAnchor, constant: -8),
+
+            answerStatusRow.leadingAnchor.constraint(equalTo: answerContainer.leadingAnchor, constant: 12),
+            answerStatusRow.trailingAnchor.constraint(equalTo: answerContainer.trailingAnchor, constant: -12),
+            answerStatusRow.bottomAnchor.constraint(equalTo: answerActionRow.topAnchor, constant: -8),
+            answerStatusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 14),
+
+            answerActionRow.leadingAnchor.constraint(equalTo: answerContainer.leadingAnchor, constant: 12),
+            answerActionRow.trailingAnchor.constraint(equalTo: answerContainer.trailingAnchor, constant: -12),
+            answerActionRow.bottomAnchor.constraint(equalTo: answerContainer.bottomAnchor, constant: -12),
+
+            regenerateButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 30),
+            regenerateButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 126),
+            insertButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 30),
+            insertButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96)
         ])
     }
 
-    private func configureActionIconButton(_ button: NSButton, action: Selector) {
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.target = self
-        button.action = action
-        button.isBordered = false
-        button.bezelStyle = .regularSquare
-        button.title = ""
-        button.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy")
-        button.imagePosition = .imageOnly
-        button.imageScaling = .scaleProportionallyDown
+    private func configureInlineActionButton(_ button: NSButton, action: Selector) {
+        OverlayButtonStyler.configureBase(
+            button,
+            action: action,
+            target: self,
+            font: .systemFont(ofSize: 12.5, weight: .medium)
+        )
     }
 
     private func configureOutputScrollView() {
@@ -671,6 +786,30 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         outputTextView.frame = NSRect(x: 0, y: 0, width: max(contentSize.width, 1), height: height)
     }
 
+    private func reloadPromptPickerItems() {
+        guard let payload else { return }
+        promptPicker.removeAllItems()
+
+        for option in payload.availablePrompts {
+            let title = option.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayTitle = title.isEmpty ? PromptPreset.builtInDefault.title : title
+            promptPicker.addItem(withTitle: displayTitle)
+            promptPicker.lastItem?.representedObject = option.presetID
+        }
+
+        if promptPicker.numberOfItems == 0 {
+            promptPicker.addItem(withTitle: PromptPreset.builtInDefault.title)
+            promptPicker.lastItem?.representedObject = PromptPreset.builtInDefaultID
+        }
+
+        let selectedIndex = promptPicker.indexOfItem(withRepresentedObject: state?.selectedPromptPresetID ?? PromptPreset.builtInDefaultID)
+        if selectedIndex >= 0 {
+            promptPicker.selectItem(at: selectedIndex)
+        } else {
+            promptPicker.selectItem(at: 0)
+        }
+    }
+
     @objc
     private func closePressed() {
         onDismissRequested?()
@@ -684,5 +823,20 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     @objc
     private func outputCopyPressed() {
         onOutputCopyRequested?()
+    }
+
+    @objc
+    private func regeneratePressed() {
+        onRetryRequested?()
+    }
+
+    @objc
+    private func insertPressed() {
+        onInsertRequested?()
+    }
+
+    @objc
+    private func promptPickerChanged(_ sender: NSPopUpButton) {
+        guard sender.selectedItem != nil else { return }
     }
 }

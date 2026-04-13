@@ -1,5 +1,5 @@
 {
   "id": "strictness-balanced",
   "title": "Balanced",
-  "body": "Balance readability improvements with fidelity to the transcript wording."
+  "body": "Balance readability improvements with fidelity to the transcript wording. You may improve structure and readability, but do not add new facts, policy, promises, dates, or ownership. When information is incomplete, keep it explicitly incomplete."
 }

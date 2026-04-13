@@ -66,6 +66,12 @@ struct SettingsPresentationTests {
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .shift]).intersection(.deviceIndependentFlagsMask).rawValue
             )
         )
+        model.setPromptCycleShortcut(
+            ActivationShortcut(
+                keyCodes: [35],
+                modifierFlagsRawValue: NSEvent.ModifierFlags.command.intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
         model.selectedLanguage = .english
         model.setMicrophoneAuthorization(.granted)
         model.setSpeechAuthorization(.denied)
@@ -85,6 +91,7 @@ struct SettingsPresentationTests {
 
         #expect(presentation.shortcutSummary == "Current shortcut: A + S")
         #expect(presentation.modeShortcutSummary == "Mode-switch shortcut: Command + Shift + Space")
+        #expect(presentation.promptShortcutSummary == "Prompt-cycle shortcut: Command + P")
         #expect(presentation.languageSummary == "Recognition language: English")
         #expect(presentation.permissionSummary == "Permissions: Mic Granted, Speech Denied, Accessibility Unknown, Input Monitoring Granted")
         #expect(presentation.asrSummary == "ASR backend: Remote OpenAI-Compatible ASR • Remote configured")
@@ -96,6 +103,10 @@ struct SettingsPresentationTests {
         #expect(
             presentation.modeShortcutHint
                 == "Current mode-switch shortcut: ⌘⇧ + Space. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+        )
+        #expect(
+            presentation.promptShortcutHint
+                == "Current prompt-cycle shortcut: ⌘ + P. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
         )
         #expect(presentation.statusTone == .secondary)
     }
@@ -205,6 +216,29 @@ struct SettingsPresentationTests {
         #expect(
             presentation.modeShortcutHint
                 == "Current mode-switch shortcut: ⌘ + A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+        )
+    }
+
+    @Test
+    @MainActor
+    func homePresentationExplainsThatAdvancedPromptShortcutNeedsInputMonitoringAndAccessibilityForSuppression() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationExplainsThatAdvancedPromptShortcutNeedsInputMonitoringAndAccessibilityForSuppression.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setPromptCycleShortcut(
+            ActivationShortcut(
+                keyCodes: [0, 1],
+                modifierFlagsRawValue: NSEvent.ModifierFlags.command.intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
+
+        let presentation = SettingsPresentation.homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: true
+        )
+
+        #expect(
+            presentation.promptShortcutHint
+                == "Current prompt-cycle shortcut: ⌘ + A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
         )
     }
 

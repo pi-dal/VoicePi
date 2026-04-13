@@ -1508,6 +1508,7 @@ final class AppModel: ObservableObject {
         static let activationShortcut = "activationShortcut"
         static let modeCycleShortcut = "modeCycleShortcut"
         static let processorShortcut = "processorShortcut"
+        static let promptCycleShortcut = "promptCycleShortcut"
         static let asrBackend = "asrBackend"
         static let remoteASRConfig = "remoteASRConfig"
         static let interfaceTheme = "interfaceTheme"
@@ -1582,6 +1583,12 @@ final class AppModel: ObservableObject {
     @Published var processorShortcut: ActivationShortcut {
         didSet {
             persistProcessorShortcut()
+        }
+    }
+
+    @Published var promptCycleShortcut: ActivationShortcut {
+        didSet {
+            persistPromptCycleShortcut()
         }
     }
 
@@ -1772,6 +1779,18 @@ final class AppModel: ObservableObject {
             shouldPersistProcessorShortcut = true
         }
 
+        let shouldPersistPromptCycleShortcut: Bool
+        if
+            let data = defaults.data(forKey: Keys.promptCycleShortcut),
+            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
+        {
+            self.promptCycleShortcut = decoded
+            shouldPersistPromptCycleShortcut = false
+        } else {
+            self.promptCycleShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+            shouldPersistPromptCycleShortcut = true
+        }
+
         if
             let storedBackend = defaults.string(forKey: Keys.asrBackend),
             let backend = ASRBackend(rawValue: storedBackend)
@@ -1810,6 +1829,9 @@ final class AppModel: ObservableObject {
         }
         if shouldPersistProcessorShortcut {
             persistProcessorShortcut()
+        }
+        if shouldPersistPromptCycleShortcut {
+            persistPromptCycleShortcut()
         }
 
         refreshDictionaryState()
@@ -1900,6 +1922,50 @@ final class AppModel: ObservableObject {
 
     func starterPromptPresets() -> [PromptPreset] {
         cachedPromptLibrary?.starterPresets ?? []
+    }
+
+    func orderedPromptCyclePresets() -> [PromptPreset] {
+        let sortedUserPresets = promptWorkspace.userPresets.sorted { lhs, rhs in
+            let titleOrder = lhs.resolvedTitle.localizedCaseInsensitiveCompare(rhs.resolvedTitle)
+            if titleOrder == .orderedSame {
+                return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+            }
+            return titleOrder == .orderedAscending
+        }
+
+        return [PromptPreset.builtInDefault] + starterPromptPresets() + sortedUserPresets
+    }
+
+    func nextPromptCycleSelection(from selection: PromptActiveSelection) -> PromptActiveSelection? {
+        let orderedPresets = orderedPromptCyclePresets()
+        guard !orderedPresets.isEmpty else {
+            return nil
+        }
+
+        let currentPresetID: String
+        switch selection.mode {
+        case .builtInDefault:
+            currentPresetID = PromptPreset.builtInDefaultID
+        case .preset:
+            currentPresetID = selection.presetID ?? PromptPreset.builtInDefaultID
+        }
+
+        let currentIndex = orderedPresets.firstIndex(where: { $0.id == currentPresetID }) ?? 0
+        let nextIndex = (currentIndex + 1) % orderedPresets.count
+        let nextPresetID = orderedPresets[nextIndex].id
+
+        if nextPresetID == PromptPreset.builtInDefaultID {
+            return .builtInDefault
+        }
+
+        return .preset(nextPresetID)
+    }
+
+    @discardableResult
+    func cycleActivePromptSelection() -> PromptActiveSelection {
+        let nextSelection = nextPromptCycleSelection(from: promptWorkspace.activeSelection) ?? .builtInDefault
+        setActivePromptSelection(nextSelection)
+        return nextSelection
     }
 
     func promptPreset(id: String) -> PromptPreset? {
@@ -1998,6 +2064,31 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func resolvedPromptPresetForExplicitPresetID(_ presetID: String) -> ResolvedPromptPreset {
+        let normalizedPresetID = presetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitSelection: PromptActiveSelection = normalizedPresetID == PromptPreset.builtInDefaultID
+            ? .builtInDefault
+            : .preset(normalizedPresetID)
+        let explicitWorkspace = PromptWorkspaceSettings(
+            activeSelection: explicitSelection,
+            strictModeEnabled: false,
+            userPresets: promptWorkspace.userPresets
+        )
+
+        let library = cachedPromptLibrary ?? PromptLibrary(
+            optionGroups: [:],
+            profiles: [:],
+            fragments: [:],
+            appPolicies: [:]
+        )
+
+        return PromptWorkspaceResolver.resolve(
+            workspace: explicitWorkspace,
+            destination: nil,
+            library: library
+        )
+    }
+
     func resolvedRefinementPrompt(
         for appID: PromptAppID = .voicePi,
         destination: PromptDestinationContext? = nil
@@ -2081,6 +2172,10 @@ final class AppModel: ObservableObject {
 
     func setProcessorShortcut(_ shortcut: ActivationShortcut) {
         processorShortcut = shortcut
+    }
+
+    func setPromptCycleShortcut(_ shortcut: ActivationShortcut) {
+        promptCycleShortcut = shortcut
     }
 
     func cyclePostProcessingMode() {
@@ -2382,6 +2477,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func persistPromptCycleShortcut() {
+        if let data = try? encoder.encode(promptCycleShortcut) {
+            defaults.set(data, forKey: Keys.promptCycleShortcut)
+        }
+    }
+
     private func persistRemoteASRConfiguration() {
         if let data = try? encoder.encode(remoteASRConfiguration) {
             defaults.set(data, forKey: Keys.remoteASRConfig)
@@ -2522,6 +2623,7 @@ final class AppModel: ObservableObject {
             Keys.targetLanguage,
             Keys.modeCycleShortcut,
             Keys.processorShortcut,
+            Keys.promptCycleShortcut,
             Keys.asrBackend,
             Keys.remoteASRConfig,
             Keys.interfaceTheme
@@ -2560,6 +2662,9 @@ extension AppWorkflowSupport {
                     externalProcessor.isEnabled,
                     let externalProcessorRefiner
                 else {
+                    await MainActor.run {
+                        onError("External processor refinement is selected, but no enabled processor is configured.")
+                    }
                     return text
                 }
 

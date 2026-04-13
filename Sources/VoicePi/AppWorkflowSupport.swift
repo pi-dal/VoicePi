@@ -112,6 +112,9 @@ enum AppWorkflowSupport {
             return text
         case .refinement:
             guard configuration.isConfigured else {
+                await MainActor.run {
+                    onError("LLM refinement is selected, but LLM is not fully configured.")
+                }
                 return text
             }
 

@@ -253,6 +253,32 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
+    func refinementReturnsOriginalTextWhenLLMConfigurationIsMissing() async {
+        let refiner = RefinerStub(result: .success("refined"))
+        let translator = TranslatorStub(result: .success("translated"))
+        var errors: [String] = []
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .refinement,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(),
+            resolvedRefinementPrompt: nil,
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { errors.append($0) }
+        )
+
+        #expect(text == "original")
+        #expect(errors == ["LLM refinement is selected, but LLM is not fully configured."])
+        #expect(refiner.calls == 0)
+        #expect(translator.calls == 0)
+    }
+
+    @Test
     func externalProcessorPathUsesProvidedRunnerAndComposesPromptWithTargetLanguage() async throws {
         let refiner = RefinerStub(result: .success("llm"))
         let translator = TranslatorStub(result: .success("apple"))
@@ -362,6 +388,37 @@ struct AppWorkflowSupportTests {
             - If the transcript is already clean, return the cleaned final text only.
             """
         )
+    }
+
+    @Test
+    func externalProcessorPathSurfacesConfigurationErrorWhenNoEnabledProcessorIsConfigured() async {
+        let refiner = RefinerStub(result: .success("llm"))
+        let translator = TranslatorStub(result: .success("apple"))
+        let externalProcessorRefiner = ExternalProcessorRefinerStub(result: .success("unused"))
+        var errors: [String] = []
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "original",
+            mode: .refinement,
+            refinementProvider: .externalProcessor,
+            externalProcessor: nil,
+            externalProcessorRefiner: externalProcessorRefiner,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(),
+            resolvedRefinementPrompt: nil,
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { errors.append($0) }
+        )
+
+        #expect(text == "original")
+        #expect(errors == ["External processor refinement is selected, but no enabled processor is configured."])
+        #expect(externalProcessorRefiner.calls == 0)
+        #expect(refiner.calls == 0)
+        #expect(translator.calls == 0)
     }
 
     @Test

@@ -87,6 +87,7 @@ final class DictionarySuggestionToastController: NSWindowController {
 
     func applyInterfaceTheme(_ theme: InterfaceTheme) {
         window?.appearance = theme.appearance
+        syncAppearance()
     }
 
     func show(payload: DictionarySuggestionToastPayload) {
@@ -97,6 +98,10 @@ final class DictionarySuggestionToastController: NSWindowController {
         currentPayload = payload
         lastPresentedSessionID = payload.sessionID
         summaryLabel.stringValue = payload.summaryText
+        syncAppearance()
+        if RuntimeEnvironment.isRunningTests {
+            return
+        }
         positionPanel()
 
         guard let panel = window else { return }
@@ -193,14 +198,37 @@ final class DictionarySuggestionToastController: NSWindowController {
             buttonRow.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 12),
             buttonRow.bottomAnchor.constraint(equalTo: blurView.bottomAnchor, constant: -12)
         ])
+
+        syncAppearance()
     }
 
     private func configureButton(_ button: NSButton, action: Selector) {
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.target = self
-        button.action = action
-        button.bezelStyle = .rounded
-        button.setContentHuggingPriority(.required, for: .horizontal)
+        OverlayButtonStyler.configureBase(
+            button,
+            action: action,
+            target: self
+        )
+    }
+
+    private func syncAppearance() {
+        let appearance = window?.effectiveAppearance ?? rootView.effectiveAppearance
+        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+
+        if isDarkTheme {
+            blurView.layer?.backgroundColor = NSColor(calibratedWhite: 0.15, alpha: 0.96).cgColor
+            blurView.layer?.borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.12).cgColor
+            titleLabel.textColor = NSColor.white.withAlphaComponent(0.95)
+            summaryLabel.textColor = NSColor.white.withAlphaComponent(0.72)
+        } else {
+            blurView.layer?.backgroundColor = NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 0.96).cgColor
+            blurView.layer?.borderColor = NSColor(calibratedWhite: 0.0, alpha: 0.08).cgColor
+            titleLabel.textColor = NSColor(calibratedWhite: 0.13, alpha: 1)
+            summaryLabel.textColor = NSColor(calibratedWhite: 0.2, alpha: 0.82)
+        }
+        blurView.layer?.borderWidth = 1
+        OverlayButtonStyler.style(approveButton, role: .primary, appearance: appearance)
+        OverlayButtonStyler.style(reviewButton, role: .secondary, appearance: appearance)
+        OverlayButtonStyler.style(dismissButton, role: .subtle, appearance: appearance)
     }
 
     private func positionPanel() {

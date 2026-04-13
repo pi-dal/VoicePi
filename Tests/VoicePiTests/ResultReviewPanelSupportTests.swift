@@ -5,24 +5,49 @@ import Testing
 struct ResultReviewPanelSupportTests {
     @Test
     func payloadRejectsEmptyTextAndTrimsWhitespace() throws {
-        #expect(ResultReviewPanelPayload(text: " \n\t ") == nil)
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes")
+        ]
+        #expect(
+            ResultReviewPanelPayload(
+                resultText: " \n\t ",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: PromptPreset.builtInDefault.title,
+                availablePrompts: prompts
+            ) == nil
+        )
 
-        let payload = try #require(ResultReviewPanelPayload(text: "  \nReviewed text\n  "))
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "  \nReviewed text\n  ",
+                selectedPromptPresetID: "  user.meeting  ",
+                selectedPromptTitle: "  Meeting Notes  ",
+                availablePrompts: prompts
+            )
+        )
         #expect(payload.resultText == "Reviewed text")
-        #expect(payload.promptText.isEmpty)
         #expect(payload.displayText == "Reviewed text")
-        #expect(payload.isLikelyUnchangedFromSource == false)
+        #expect(payload.selectedPromptPresetID == "user.meeting")
+        #expect(payload.selectedPromptTitle == "Meeting Notes")
+        #expect(payload.isRegenerating == false)
     }
 
     @Test
-    func payloadFlagsWhenOutputIsUnchangedFromSource() throws {
+    func payloadFallsBackToFirstPromptOptionWhenSelectedPromptIsMissing() throws {
         let payload = try #require(
             ResultReviewPanelPayload(
-                text: "  reviewed text  ",
-                sourceText: "reviewed text"
+                resultText: "Reviewed",
+                selectedPromptPresetID: "user.unknown",
+                selectedPromptTitle: "Unknown",
+                availablePrompts: [
+                    .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+                    .init(presetID: "user.focus", title: "Focus Mode")
+                ]
             )
         )
-        #expect(payload.isLikelyUnchangedFromSource)
+        #expect(payload.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(payload.selectedPromptTitle == "VoicePi Default")
     }
 
     @Test
@@ -38,24 +63,87 @@ struct ResultReviewPanelSupportTests {
 
     @Test
     func presentationStateExposesExpectedTitles() throws {
-        let payload = try #require(ResultReviewPanelPayload(text: "Needs review"))
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Needs review",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [
+                    .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+                    .init(presetID: "user.focus", title: "Focus Mode")
+                ]
+            )
+        )
         let state = ResultReviewPanelPresentationState(payload: payload)
 
         #expect(state.titleText == "VoicePi")
         #expect(state.promptSectionTitle == "Prompt")
         #expect(state.outputSectionTitle == "Answer")
-        #expect(state.promptCopyButtonTitle == "Copy")
         #expect(state.outputCopyButtonTitle == "Copy")
-        #expect(state.promptCopyText.isEmpty)
         #expect(state.outputCopyText == "Needs review")
-        #expect(state.promptDisplayText == "No prompt captured.")
         #expect(state.outputDisplayText == "Needs review")
+        #expect(state.selectedPromptPresetID == PromptPreset.builtInDefaultID)
+        #expect(state.selectedPromptTitle == "VoicePi Default")
+        #expect(state.regenerateButtonTitle == "Regenerate")
+        #expect(state.isRegenerateEnabled)
+        #expect(state.insertButtonTitle == "Insert")
+        #expect(state.isInsertEnabled)
+        #expect(state.isPromptPickerEnabled)
+        #expect(state.footerStatusText == "Press Enter to insert.")
+        #expect(state.showsFooterProgress == false)
     }
 
     @Test
-    func presentationStateShowsSanitizedPromptWhenAvailable() throws {
-        let payload = try #require(ResultReviewPanelPayload(text: "Same", sourceText: "  Prompt input  "))
+    func presentationStateShowsRegeneratingState() throws {
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Same",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [.init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default")],
+                isRegenerating: true,
+                regenerationStatusText: "Regenerating…"
+            )
+        )
         let state = ResultReviewPanelPresentationState(payload: payload)
-        #expect(state.promptDisplayText == "Prompt input")
+        #expect(state.regenerateButtonTitle == "Regenerating…")
+        #expect(state.isRegenerateEnabled == false)
+        #expect(state.isInsertEnabled == false)
+        #expect(state.isPromptPickerEnabled == false)
+        #expect(state.footerStatusText == "Regenerating…")
+        #expect(state.showsFooterProgress)
+    }
+
+    @Test
+    func payloadKeepsProvidedPromptTextWhenPromptSelectionIsExplicit() throws {
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Refined output",
+                promptText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [.init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default")]
+            )
+        )
+        #expect(payload.promptText == "Original transcript")
+    }
+
+    @Test
+    func payloadTruncatesLongRegenerationStatusText() throws {
+        let longStatusText = String(repeating: "A", count: 140)
+        let payload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Refined output",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: [.init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default")],
+                isRegenerating: true,
+                regenerationStatusText: longStatusText
+            )
+        )
+
+        let statusText = try #require(payload.regenerationStatusText)
+        #expect(statusText.hasSuffix("…"))
+        #expect(statusText.count == 97)
     }
 }

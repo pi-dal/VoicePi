@@ -169,6 +169,9 @@ final class FloatingPanelController: NSWindowController {
     }
 
     private func presentIfNeeded() {
+        if RuntimeEnvironment.isRunningTests {
+            return
+        }
         guard let panel = window else { return }
 
         let width = clampedWidth(contentController.preferredPanelWidth)

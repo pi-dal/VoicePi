@@ -47,6 +47,37 @@ struct SettingsWindowLayoutTests {
     }
 
     @Test
+    func promptCycleShortcutHintExplainsEmptyAndStandardShortcutModes() {
+        let standardShortcut = ActivationShortcut(
+            keyCodes: [35],
+            modifierFlagsRawValue: NSEvent.ModifierFlags.command.rawValue
+        )
+        let emptyShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
+
+        #expect(
+            SettingsWindowSupport.promptCycleShortcutHintText(for: emptyShortcut)
+                == "Set a prompt-cycle shortcut to quickly rotate the global Active Prompt before recording."
+        )
+        #expect(
+            SettingsWindowSupport.promptCycleShortcutHintText(for: standardShortcut)
+                == "Current shortcut: ⌘ + P. It cycles the global Active Prompt by one preset per press, and standard shortcuts work without Input Monitoring."
+        )
+    }
+
+    @Test
+    func promptCycleShortcutHintExplainsAdvancedShortcutMode() {
+        let advancedShortcut = ActivationShortcut(
+            keyCodes: [35, 31],
+            modifierFlagsRawValue: NSEvent.ModifierFlags.command.rawValue
+        )
+
+        #expect(
+            SettingsWindowSupport.promptCycleShortcutHintText(for: advancedShortcut)
+                == "Current shortcut: ⌘ + P + O. It cycles the global Active Prompt by one preset per press. Advanced shortcuts require Input Monitoring, and Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+        )
+    }
+
+    @Test
     func externalProcessorsSectionPresentationHandlesEmptyAndSelectedStates() {
         let entry = ExternalProcessorEntry(
             name: "Alma CLI",
