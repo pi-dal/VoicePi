@@ -8,6 +8,7 @@ All notable changes to VoicePi are tracked in versioned release notes under `doc
 
 ## Versions
 
+- [v1.9.0](docs/changelogs/v1.9.0.md) — Selection review reruns, safer regenerate retries, and stronger prompt source handling
 - [v1.8.0](docs/changelogs/v1.8.0.md) — History dashboard, usage metrics, and adaptive refining banners
 - [v1.7.1](docs/changelogs/v1.7.1.md) — Reviewed-text insertion fix and tighter dictionary learning
 - [v1.7.0](docs/changelogs/v1.7.0.md) — Realtime capture fallback and stronger dictionary learning
