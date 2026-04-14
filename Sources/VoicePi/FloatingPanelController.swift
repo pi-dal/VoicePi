@@ -173,6 +173,12 @@ final class FloatingPanelController: NSWindowController {
 
         let width = clampedWidth(contentController.preferredPanelWidth)
         let targetFrame = frameForCurrentScreen(width: width)
+        if RuntimeEnvironment.isRunningTests {
+            panel.setFrame(targetFrame, display: false)
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
 
         if panel.isVisible {
             panel.orderFrontRegardless()

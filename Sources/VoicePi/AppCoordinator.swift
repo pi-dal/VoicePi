@@ -121,7 +121,7 @@ final class AppController: NSObject {
 
     enum SelectionRewritePresentationDecision: Equatable {
         case presentRecentInsertionReviewPanel
-        case presentFreshReviewPanelAndStartRewrite
+        case presentFreshReviewPanel
     }
 
     struct ProcessingWorkflowSelection: Equatable {
@@ -132,6 +132,12 @@ final class AppController: NSObject {
     enum ResultReviewSourceType: Equatable {
         case recentInsertion
         case selectedText
+    }
+
+    enum ResultReviewRegenerateOutcome: Equatable {
+        case applyRegeneratedText
+        case keepPreviousResult
+        case failed
     }
 
     struct ResultReviewSelectionAnchor: Equatable {
@@ -145,6 +151,7 @@ final class AppController: NSObject {
         let sessionID: UUID
         let sourceType: ResultReviewSourceType
         let rawTranscript: String
+        let regenerateSourceText: String
         var selectedPromptPresetID: String
         var selectedPromptTitle: String
         var pendingPromptPresetID: String?
@@ -159,6 +166,7 @@ final class AppController: NSObject {
         init(
             sourceType: ResultReviewSourceType,
             rawTranscript: String,
+            regenerateSourceText: String? = nil,
             selectedPromptPresetID: String,
             selectedPromptTitle: String,
             pendingPromptPresetID: String? = nil,
@@ -173,6 +181,30 @@ final class AppController: NSObject {
             self.sessionID = UUID()
             self.sourceType = sourceType
             self.rawTranscript = rawTranscript
+            let normalizedExplicitSource = ExternalProcessorOutputSanitizer.sanitize(
+                regenerateSourceText ?? ""
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedExplicitSource.isEmpty {
+                self.regenerateSourceText = normalizedExplicitSource
+            } else {
+                let normalizedSelectedSource = ExternalProcessorOutputSanitizer.sanitize(
+                    selectionAnchor.selectedText
+                )
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedRawTranscript = ExternalProcessorOutputSanitizer.sanitize(rawTranscript)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                switch sourceType {
+                case .recentInsertion:
+                    self.regenerateSourceText = !normalizedSelectedSource.isEmpty
+                        ? normalizedSelectedSource
+                        : normalizedRawTranscript
+                case .selectedText:
+                    self.regenerateSourceText = !normalizedRawTranscript.isEmpty
+                        ? normalizedRawTranscript
+                        : normalizedSelectedSource
+                }
+            }
             self.selectedPromptPresetID = selectedPromptPresetID
             self.selectedPromptTitle = selectedPromptTitle
             self.pendingPromptPresetID = pendingPromptPresetID
@@ -512,7 +544,26 @@ final class AppController: NSObject {
     ) -> SelectionRewritePresentationDecision {
         hasRecentInsertionMatch
             ? .presentRecentInsertionReviewPanel
-            : .presentFreshReviewPanelAndStartRewrite
+            : .presentFreshReviewPanel
+    }
+
+    static func resultReviewSourceText(for session: RefinementReviewSession) -> String {
+        let normalizedSessionSource = ExternalProcessorOutputSanitizer.sanitize(session.regenerateSourceText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedSessionSource.isEmpty {
+            return normalizedSessionSource
+        }
+
+        let normalizedSelectionText = ExternalProcessorOutputSanitizer.sanitize(
+            session.selectionAnchor.selectedText
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedSelectionText.isEmpty {
+            return normalizedSelectionText
+        }
+
+        return ExternalProcessorOutputSanitizer.sanitize(session.rawTranscript)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func didRefinementReviewRegenerateSucceed(
@@ -522,31 +573,46 @@ final class AppController: NSObject {
         regeneratedText: String,
         didExternalProcessorSucceed: Bool
     ) -> Bool {
+        resultReviewRegenerateOutcome(
+            refinementProvider: refinementProvider,
+            sourceText: sourceText,
+            previousResultText: previousResultText,
+            regeneratedText: regeneratedText,
+            didExternalProcessorSucceed: didExternalProcessorSucceed
+        ) != .failed
+    }
+
+    static func resultReviewRegenerateOutcome(
+        refinementProvider: RefinementProvider,
+        sourceText: String,
+        previousResultText: String? = nil,
+        regeneratedText: String,
+        didExternalProcessorSucceed: Bool
+    ) -> ResultReviewRegenerateOutcome {
         let sanitizedRegeneratedText = ExternalProcessorOutputSanitizer.sanitize(regeneratedText)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sanitizedRegeneratedText.isEmpty else {
-            return false
+            return .failed
         }
 
         switch refinementProvider {
         case .externalProcessor:
-            return didExternalProcessorSucceed
+            return didExternalProcessorSucceed ? .applyRegeneratedText : .failed
         case .llm:
             let normalizedSourceText = ExternalProcessorOutputSanitizer.sanitize(sourceText)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard sanitizedRegeneratedText != normalizedSourceText else {
-                return false
+            guard sanitizedRegeneratedText == normalizedSourceText else {
+                return .applyRegeneratedText
             }
-
-            if let previousResultText {
-                let normalizedPreviousResultText = ExternalProcessorOutputSanitizer.sanitize(previousResultText)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard sanitizedRegeneratedText != normalizedPreviousResultText else {
-                    return false
-                }
+            let normalizedPreviousResultText = ExternalProcessorOutputSanitizer.sanitize(
+                previousResultText ?? ""
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedPreviousResultText.isEmpty,
+                  normalizedPreviousResultText != normalizedSourceText else {
+                return .applyRegeneratedText
             }
-
-            return true
+            return .keepPreviousResult
         }
     }
 
@@ -691,7 +757,9 @@ final class AppController: NSObject {
 
     static func resultReviewInsertionSourceApplicationBundleID(
         capturedSourceApplicationBundleID: String?,
-        currentFrontmostApplicationBundleID: String?
+        currentFrontmostApplicationBundleID: String?,
+        targetIdentifier: String? = nil,
+        voicePiBundleID: String? = Bundle.main.bundleIdentifier
     ) -> String? {
         let capturedBundleID = capturedSourceApplicationBundleID?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -701,11 +769,75 @@ final class AppController: NSObject {
 
         let currentBundleID = currentFrontmostApplicationBundleID?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let currentBundleID, !currentBundleID.isEmpty {
+        let normalizedVoicePiBundleID = voicePiBundleID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let currentBundleID, !currentBundleID.isEmpty, currentBundleID != normalizedVoicePiBundleID {
             return currentBundleID
         }
 
+        if let targetProcessIdentifier = resultReviewTargetProcessIdentifier(targetIdentifier),
+           let targetApplication = NSRunningApplication(processIdentifier: targetProcessIdentifier),
+           !targetApplication.isTerminated {
+            let targetBundleID = targetApplication.bundleIdentifier?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let targetBundleID, !targetBundleID.isEmpty {
+                return targetBundleID
+            }
+        }
+
         return nil
+    }
+
+    static func resultReviewSelectionMatchesAnchor(
+        _ snapshot: EditableTextTargetSnapshot,
+        selectionAnchor: ResultReviewSelectionAnchor
+    ) -> Bool {
+        guard snapshot.inspection == .editable else {
+            return false
+        }
+
+        if let anchorTargetIdentifier = selectionAnchor.targetIdentifier {
+            guard snapshot.targetIdentifier == anchorTargetIdentifier else {
+                return false
+            }
+        }
+
+        guard let currentSelectedRange = snapshot.selectedTextRange,
+              currentSelectedRange == selectionAnchor.selectedRange else {
+            return false
+        }
+
+        let normalizedAnchorText = ExternalProcessorOutputSanitizer.sanitize(selectionAnchor.selectedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedAnchorText.isEmpty else {
+            return false
+        }
+
+        let normalizedSelectedText = ExternalProcessorOutputSanitizer.sanitize(snapshot.selectedText ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSelectedText.isEmpty else {
+            // Some editors expose selection range but not selected text after focus switches.
+            return true
+        }
+
+        return normalizedSelectedText == normalizedAnchorText
+    }
+
+    private static func resultReviewTargetProcessIdentifier(
+        _ targetIdentifier: String?
+    ) -> pid_t? {
+        guard let targetIdentifier else { return nil }
+        let trimmedTargetIdentifier = targetIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTargetIdentifier.isEmpty else { return nil }
+        guard let processComponent = trimmedTargetIdentifier
+            .split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            .first else {
+            return nil
+        }
+        guard let processID = Int32(processComponent), processID > 0 else {
+            return nil
+        }
+        return pid_t(processID)
     }
 
     private static func normalizedResultReviewPromptPresetID(_ presetID: String?) -> String? {
@@ -1755,11 +1887,11 @@ final class AppController: NSObject {
 
         return ResultReviewPanelPayload(
             resultText: session.currentResultText,
-            originalText: session.rawTranscript,
+            originalText: Self.resultReviewSourceText(for: session),
             selectedPromptPresetID: selectedPromptPresetID,
             selectedPromptTitle: selectedPromptTitle,
             availablePrompts: resultReviewPromptOptions(),
-            allowsInsert: session.sourceType == .recentInsertion,
+            allowsInsert: true,
             isRegenerating: isRegenerating
         )
     }
@@ -1782,7 +1914,7 @@ final class AppController: NSObject {
         guard let session = refinementReviewSession else {
             return
         }
-        let sourceText = session.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceText = Self.resultReviewSourceText(for: session)
         guard !sourceText.isEmpty else {
             presentTransientError("Original text is unavailable for regenerate.")
             return
@@ -1831,16 +1963,18 @@ final class AppController: NSObject {
 
             let sanitizedRefinedText = ExternalProcessorOutputSanitizer.sanitize(refinedText)
             let didExternalProcessorSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
-            let rerunSucceeded = Self.didRefinementReviewRegenerateSucceed(
+            let rerunOutcome = Self.resultReviewRegenerateOutcome(
                 refinementProvider: latestSession.workflow.refinementProvider,
-                sourceText: latestSession.rawTranscript,
+                sourceText: Self.resultReviewSourceText(for: latestSession),
                 previousResultText: latestSession.currentResultText,
                 regeneratedText: sanitizedRefinedText,
                 didExternalProcessorSucceed: didExternalProcessorSucceed
             )
 
-            if rerunSucceeded {
-                latestSession.currentResultText = sanitizedRefinedText
+            if rerunOutcome != .failed {
+                if rerunOutcome == .applyRegeneratedText {
+                    latestSession.currentResultText = sanitizedRefinedText
+                }
                 let committedSelection = Self.committedResultReviewPromptSelectionAfterRegenerateSuccess(
                     selectedPromptPresetID: latestSession.selectedPromptPresetID,
                     selectedPromptTitle: latestSession.selectedPromptTitle,
@@ -1863,7 +1997,7 @@ final class AppController: NSObject {
                         : trimmedFailureMessage
                     self.presentTransientError(failureMessage)
                 } else {
-                    self.presentTransientError("Regenerate failed or returned unchanged output. Previous result is kept.")
+                    self.presentTransientError("Regenerate failed. Previous result is kept.")
                 }
             }
 
@@ -1881,15 +2015,15 @@ final class AppController: NSObject {
 
     private func insertReviewedText(_ text: String) {
         guard let session = refinementReviewSession else { return }
-        guard session.sourceType == .recentInsertion else {
-            presentTransientError("Use Copy to reuse regenerated text.")
-            return
-        }
         if session.pendingPromptPresetID != nil {
             presentTransientError("Press Regenerate to apply the selected prompt before inserting.")
             return
         }
-        let sourceApplicationBundleID = session.selectionAnchor.sourceApplicationBundleID
+        let sourceApplicationBundleID = Self.resultReviewInsertionSourceApplicationBundleID(
+            capturedSourceApplicationBundleID: session.selectionAnchor.sourceApplicationBundleID,
+            currentFrontmostApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            targetIdentifier: session.selectionAnchor.targetIdentifier
+        )
         let recordingDurationMilliseconds = session.recordingDurationMilliseconds
         let reviewPayload = resultReviewPayload(for: session, isRegenerating: false)
         let trimmedText = ExternalProcessorOutputSanitizer.sanitize(text)
@@ -2014,7 +2148,7 @@ final class AppController: NSObject {
                 snapshot: snapshot,
                 isAutoOpened: false
             )
-        case .presentFreshReviewPanelAndStartRewrite:
+        case .presentFreshReviewPanel:
             let sourceText = selectionAnchor.selectedText
             presentResultReviewPanel(
                 sourceType: .selectedText,
@@ -2023,10 +2157,9 @@ final class AppController: NSObject {
                 workflow: workflow,
                 workflowOverride: nil,
                 selectionAnchor: selectionAnchor,
-                isRegenerating: true,
+                isRegenerating: false,
                 isAutoOpened: false
             )
-            retryReviewedText(tracksGlobalProcessingState: true)
         }
     }
 
@@ -2115,9 +2248,14 @@ final class AppController: NSObject {
         snapshot: EditableTextTargetSnapshot,
         isAutoOpened: Bool
     ) {
+        let sourceApplicationBundleID = Self.resultReviewInsertionSourceApplicationBundleID(
+            capturedSourceApplicationBundleID: recentSession.sourceApplicationBundleID,
+            currentFrontmostApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            targetIdentifier: snapshot.targetIdentifier
+        )
         guard let selectionAnchor = rewriteSelectionAnchor(
             from: snapshot,
-            sourceApplicationBundleID: recentSession.sourceApplicationBundleID
+            sourceApplicationBundleID: sourceApplicationBundleID
         ) else {
             presentTransientError("No selected text available for rewrite.")
             return
@@ -2316,30 +2454,7 @@ final class AppController: NSObject {
         _ snapshot: EditableTextTargetSnapshot,
         selectionAnchor: ResultReviewSelectionAnchor
     ) -> Bool {
-        guard snapshot.inspection == .editable else {
-            return false
-        }
-
-        if let anchorTargetIdentifier = selectionAnchor.targetIdentifier {
-            guard snapshot.targetIdentifier == anchorTargetIdentifier else {
-                return false
-            }
-        }
-
-        guard let currentSelectedRange = snapshot.selectedTextRange,
-              currentSelectedRange == selectionAnchor.selectedRange else {
-            return false
-        }
-
-        let normalizedSelectedText = ExternalProcessorOutputSanitizer.sanitize(snapshot.selectedText ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedAnchorText = ExternalProcessorOutputSanitizer.sanitize(selectionAnchor.selectedText)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedSelectedText.isEmpty, !normalizedAnchorText.isEmpty else {
-            return false
-        }
-
-        return normalizedSelectedText == normalizedAnchorText
+        Self.resultReviewSelectionMatchesAnchor(snapshot, selectionAnchor: selectionAnchor)
     }
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {

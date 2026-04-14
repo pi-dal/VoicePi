@@ -100,6 +100,11 @@ final class DictionarySuggestionToastController: NSWindowController {
         positionPanel()
 
         guard let panel = window else { return }
+        if RuntimeEnvironment.isRunningTests {
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
         if panel.isVisible {
             panel.orderFrontRegardless()
             return

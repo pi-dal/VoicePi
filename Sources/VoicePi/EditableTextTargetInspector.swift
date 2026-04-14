@@ -100,8 +100,16 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
         )
         let targetIdentifier = buildTargetIdentifier(for: focusedElement, role: role)
         let textValue = copyStringLikeAttribute(kAXValueAttribute, from: focusedElement)
-        let selectedText = copyStringLikeAttribute(kAXSelectedTextAttribute as String, from: focusedElement)
         let selectedTextRange = copySelectedTextRange(from: focusedElement)
+        let selectedTextFromAttribute = copyStringLikeAttribute(
+            kAXSelectedTextAttribute as String,
+            from: focusedElement
+        )
+        let selectedText = Self.selectedTextFromValue(
+            textValue,
+            range: selectedTextRange,
+            preferredSelectedText: selectedTextFromAttribute
+        )
         let selectedTextBoundsInScreen = selectedTextRange.flatMap {
             copyBounds(for: $0, from: focusedElement)
         }
@@ -115,6 +123,28 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
             selectedTextBoundsInScreen: selectedTextBoundsInScreen,
             canSetSelectedTextRange: selectedTextRangeSettable == true
         )
+    }
+
+    static func selectedTextFromValue(
+        _ textValue: String?,
+        range: NSRange?,
+        preferredSelectedText: String? = nil
+    ) -> String? {
+        if let preferredSelectedText, !preferredSelectedText.isEmpty {
+            return preferredSelectedText
+        }
+        guard let textValue, let range, range.location >= 0, range.length > 0 else {
+            return preferredSelectedText
+        }
+
+        let nsText = textValue as NSString
+        guard range.location <= nsText.length else {
+            return preferredSelectedText
+        }
+        guard range.location + range.length <= nsText.length else {
+            return preferredSelectedText
+        }
+        return nsText.substring(with: range)
     }
 
     func restoreSelectionRange(targetIdentifier: String?, range: NSRange) -> Bool {
@@ -305,7 +335,11 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
         }
 
         let roleComponent = role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown"
-        let hashComponent = String(CFHash(element))
-        return "\(processComponent):\(roleComponent):\(hashComponent)"
+        let subroleComponent = copyStringAttribute(kAXSubroleAttribute as String, from: element)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let subroleComponent, !subroleComponent.isEmpty {
+            return "\(processComponent):\(roleComponent):\(subroleComponent)"
+        }
+        return "\(processComponent):\(roleComponent)"
     }
 }

@@ -104,6 +104,12 @@ final class InputFallbackPanelController: NSWindowController {
         contentController.loadViewIfNeeded()
         contentController.setPayload(payload)
         applyCurrentFrame(animated: window?.isVisible == true)
+        if RuntimeEnvironment.isRunningTests {
+            autoHideTask?.cancel()
+            autoHideTask = nil
+            window?.orderOut(nil)
+            return
+        }
         scheduleAutoHide()
 
         guard let panel = window else { return }

@@ -1,4 +1,5 @@
 import ApplicationServices
+import Foundation
 import Testing
 @testable import VoicePi
 
@@ -56,5 +57,35 @@ struct EditableTextTargetInspectorTests {
                 valueAttributeSettable: nil
             ) == .unavailable
         )
+    }
+
+    @Test
+    func selectedTextFromValuePrefersProvidedSelectedText() {
+        let selected = EditableTextTargetInspector.selectedTextFromValue(
+            "Hello VoicePi",
+            range: NSRange(location: 6, length: 7),
+            preferredSelectedText: "VoicePi"
+        )
+        #expect(selected == "VoicePi")
+    }
+
+    @Test
+    func selectedTextFromValueExtractsSubstringWhenSelectionAttributeIsUnavailable() {
+        let selected = EditableTextTargetInspector.selectedTextFromValue(
+            "Hello VoicePi",
+            range: NSRange(location: 6, length: 7),
+            preferredSelectedText: nil
+        )
+        #expect(selected == "VoicePi")
+    }
+
+    @Test
+    func selectedTextFromValueIgnoresInvalidRanges() {
+        let selected = EditableTextTargetInspector.selectedTextFromValue(
+            "Hello",
+            range: NSRange(location: 3, length: 99),
+            preferredSelectedText: nil
+        )
+        #expect(selected == nil)
     }
 }

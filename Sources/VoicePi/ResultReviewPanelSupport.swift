@@ -97,6 +97,7 @@ struct ResultReviewPanelPromptSelectionState: Equatable {
     private(set) var appliedResultText: String
     private(set) var pendingPromptPresetID: String?
     private(set) var pendingPromptTitle: String?
+    private(set) var isAwaitingRegenerateResultForPendingPrompt: Bool
 
     init(payload: ResultReviewPanelPayload) {
         self.appliedPromptPresetID = payload.selectedPromptPresetID
@@ -104,6 +105,7 @@ struct ResultReviewPanelPromptSelectionState: Equatable {
         self.appliedResultText = payload.resultText
         self.pendingPromptPresetID = nil
         self.pendingPromptTitle = nil
+        self.isAwaitingRegenerateResultForPendingPrompt = false
     }
 
     var hasPendingPromptSelection: Bool {
@@ -121,22 +123,36 @@ struct ResultReviewPanelPromptSelectionState: Equatable {
         guard let resolvedOption = resolvedOption(for: requestedPresetID, options: options) else {
             pendingPromptPresetID = nil
             pendingPromptTitle = nil
+            isAwaitingRegenerateResultForPendingPrompt = false
             return
         }
         guard resolvedOption.presetID != appliedPromptPresetID else {
             pendingPromptPresetID = nil
             pendingPromptTitle = nil
+            isAwaitingRegenerateResultForPendingPrompt = false
             return
         }
         pendingPromptPresetID = resolvedOption.presetID
         pendingPromptTitle = resolvedOption.title
+        isAwaitingRegenerateResultForPendingPrompt = false
     }
 
     mutating func consumePendingPromptPresetIDForRegenerate() -> String? {
-        pendingPromptPresetID
+        guard let pendingPromptPresetID else {
+            isAwaitingRegenerateResultForPendingPrompt = false
+            return nil
+        }
+        isAwaitingRegenerateResultForPendingPrompt = true
+        return pendingPromptPresetID
     }
 
     mutating func applyPayload(_ payload: ResultReviewPanelPayload) {
+        defer {
+            if !payload.isRegenerating {
+                isAwaitingRegenerateResultForPendingPrompt = false
+            }
+        }
+
         let didResultChange = payload.resultText != appliedResultText
         if didResultChange {
             appliedResultText = payload.resultText
@@ -154,6 +170,17 @@ struct ResultReviewPanelPromptSelectionState: Equatable {
             appliedPromptPresetID = payload.selectedPromptPresetID
             appliedPromptTitle = payload.selectedPromptTitle
             return
+        }
+
+        let shouldCommitPendingPrompt = !payload.isRegenerating
+            && isAwaitingRegenerateResultForPendingPrompt
+            && payload.selectedPromptPresetID == pendingPromptPresetID
+        if shouldCommitPendingPrompt {
+            appliedResultText = payload.resultText
+            appliedPromptPresetID = payload.selectedPromptPresetID
+            appliedPromptTitle = payload.selectedPromptTitle
+            pendingPromptPresetID = nil
+            pendingPromptTitle = nil
         }
     }
 
@@ -202,6 +229,7 @@ struct ResultReviewPanelPresentationState: Equatable {
     let isRegenerateEnabled: Bool
     let isPromptPickerEnabled: Bool
     let isInsertEnabled: Bool
+    let interactionHintText: String?
 
     init(
         payload: ResultReviewPanelPayload,
@@ -226,5 +254,12 @@ struct ResultReviewPanelPresentationState: Equatable {
         self.isRegenerateEnabled = !payload.isRegenerating
         self.isPromptPickerEnabled = !payload.isRegenerating
         self.isInsertEnabled = payload.allowsInsert && !payload.isRegenerating
+        if payload.isRegenerating {
+            self.interactionHintText = "Regenerating…"
+        } else if payload.allowsInsert {
+            self.interactionHintText = "Press Enter to insert"
+        } else {
+            self.interactionHintText = nil
+        }
     }
 }

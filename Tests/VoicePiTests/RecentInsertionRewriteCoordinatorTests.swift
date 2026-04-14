@@ -114,7 +114,7 @@ struct RecentInsertionRewriteCoordinatorTests {
     }
 
     @Test
-    func trackingCancelsWhenFocusedTargetChanges() {
+    func trackingSurvivesTemporaryFocusedTargetChanges() {
         let coordinator = RecentInsertionRewriteCoordinator(
             configuration: .init(
                 watchWindow: 8,
@@ -139,7 +139,21 @@ struct RecentInsertionRewriteCoordinatorTests {
                 reviewPanelVisible: false
             ) == nil
         )
-        #expect(coordinator.isTracking == false)
+        #expect(coordinator.isTracking)
+        #expect(
+            coordinator.processSnapshotForAutoOpen(
+                matchingSelectionSnapshot(target: "target-4", selectedText: "Refined output"),
+                now: baseTime.addingTimeInterval(0.3),
+                reviewPanelVisible: false
+            ) == nil
+        )
+        #expect(
+            coordinator.processSnapshotForAutoOpen(
+                matchingSelectionSnapshot(target: "target-4", selectedText: "Refined output"),
+                now: baseTime.addingTimeInterval(0.8),
+                reviewPanelVisible: false
+            ) == session
+        )
     }
 
     @Test

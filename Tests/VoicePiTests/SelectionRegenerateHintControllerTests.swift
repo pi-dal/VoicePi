@@ -5,13 +5,19 @@ import Testing
 @MainActor
 struct SelectionRegenerateHintControllerTests {
     @Test
+    func runtimeEnvironmentDetectsTests() {
+        #expect(RuntimeEnvironment.isRunningTests)
+    }
+
+    @Test
     func payloadUsesDefaultActionTitle() {
         let payload = SelectionRegenerateHintPayload(
             sessionID: UUID(),
             selectedText: "Refined output"
         )
 
-        #expect(payload.actionTitle == "Regenerate")
+        #expect(payload.actionTitle == "Review")
+        #expect(payload.hintText == "Review selection")
     }
 
     @Test
@@ -76,6 +82,19 @@ struct SelectionRegenerateHintControllerTests {
     }
 
     @Test
+    func showDoesNotPresentWindowDuringTests() {
+        let controller = SelectionRegenerateHintController()
+        let payload = SelectionRegenerateHintPayload(
+            sessionID: UUID(),
+            selectedText: "Sample text inserted by VoicePi"
+        )
+
+        controller.show(payload: payload)
+
+        #expect(controller.window?.isVisible == false)
+    }
+
+    @Test
     func primaryActionInvokesCallbackAndClearsPayload() {
         let controller = SelectionRegenerateHintController()
         let payload = SelectionRegenerateHintPayload(
@@ -92,5 +111,35 @@ struct SelectionRegenerateHintControllerTests {
         #expect(receivedPayload == payload)
         #expect(controller.currentPayload == nil)
         #expect(controller.isHintVisible == false)
+    }
+
+    @Test
+    func actionButtonKeepsIconAwayFromLeadingEdge() throws {
+        let controller = SelectionRegenerateHintController()
+        controller.show(
+            payload: SelectionRegenerateHintPayload(
+                sessionID: UUID(),
+                selectedText: "Sentence to regenerate",
+                actionTitle: "Review"
+            )
+        )
+        let contentView = try #require(controller.window?.contentView)
+        contentView.layoutSubtreeIfNeeded()
+        let actionButton = try #require(findFirstButton(in: contentView))
+
+        let imageRect = actionButton.cell?.imageRect(forBounds: actionButton.bounds) ?? .zero
+        #expect(imageRect.minX >= 10)
+    }
+
+    private func findFirstButton(in view: NSView) -> NSButton? {
+        if let button = view as? NSButton {
+            return button
+        }
+        for subview in view.subviews {
+            if let match = findFirstButton(in: subview) {
+                return match
+            }
+        }
+        return nil
     }
 }

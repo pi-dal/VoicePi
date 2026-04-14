@@ -155,6 +155,11 @@ final class ResultReviewPanelController: NSWindowController {
         installKeyMonitorIfNeeded()
 
         guard let panel = window else { return }
+        if RuntimeEnvironment.isRunningTests {
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         if panel.isVisible {
             panel.makeKeyAndOrderFront(nil)
@@ -281,7 +286,7 @@ final class ResultReviewPanelController: NSWindowController {
             return false
         }
         var flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        flags.remove(.numericPad)
+        flags.subtract([.numericPad, .function, .capsLock])
         return flags.isEmpty
     }
 }
@@ -307,6 +312,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
     private let promptSectionLabel = NSTextField(labelWithString: "")
     private let promptPresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let regenerateButton = NSButton(title: "", target: nil, action: nil)
+    private let interactionHintLabel = NSTextField(labelWithString: "")
 
     private let answerContainer = NSView()
     private let answerHeader = NSView()
@@ -379,7 +385,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
             promptRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             answerContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             originalRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
-            promptRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 38),
+            promptRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
             answerContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 170)
         ])
 
@@ -452,6 +458,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         originalTextLabel.textColor = .secondaryLabelColor
         promptIconView.contentTintColor = .secondaryLabelColor
         promptSectionLabel.textColor = .labelColor
+        interactionHintLabel.textColor = .secondaryLabelColor
         answerIconView.contentTintColor = .secondaryLabelColor
         answerTitleLabel.textColor = .labelColor
         outputTextView.textColor = .labelColor
@@ -505,6 +512,13 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         promptPresetPopup.isEnabled = state.isPromptPickerEnabled
         regenerateButton.title = state.regenerateButtonTitle
         regenerateButton.isEnabled = state.isRegenerateEnabled
+        if let interactionHintText = state.interactionHintText {
+            interactionHintLabel.stringValue = interactionHintText
+            interactionHintLabel.isHidden = false
+        } else {
+            interactionHintLabel.stringValue = ""
+            interactionHintLabel.isHidden = true
+        }
         reloadPromptPresetPopup(
             options: state.promptOptions,
             selectedPresetID: state.promptPickerSelectedPresetID
@@ -621,30 +635,40 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         regenerateButton.setContentHuggingPriority(.required, for: .horizontal)
         regenerateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        interactionHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        interactionHintLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        interactionHintLabel.lineBreakMode = .byTruncatingTail
+        interactionHintLabel.maximumNumberOfLines = 1
+
         promptRow.addSubview(promptIconView)
         promptRow.addSubview(promptSectionLabel)
         promptRow.addSubview(promptPresetPopup)
         promptRow.addSubview(regenerateButton)
+        promptRow.addSubview(interactionHintLabel)
 
         NSLayoutConstraint.activate([
             promptIconView.leadingAnchor.constraint(equalTo: promptRow.leadingAnchor, constant: 2),
             promptIconView.topAnchor.constraint(greaterThanOrEqualTo: promptRow.topAnchor, constant: 8),
-            promptIconView.bottomAnchor.constraint(lessThanOrEqualTo: promptRow.bottomAnchor, constant: -8),
-            promptIconView.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
             promptIconView.widthAnchor.constraint(equalToConstant: 14),
             promptIconView.heightAnchor.constraint(equalToConstant: 14),
 
             regenerateButton.trailingAnchor.constraint(equalTo: promptRow.trailingAnchor, constant: -1),
-            regenerateButton.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
+            regenerateButton.centerYAnchor.constraint(equalTo: promptPresetPopup.centerYAnchor),
 
             promptSectionLabel.leadingAnchor.constraint(equalTo: promptIconView.trailingAnchor, constant: 10),
-            promptSectionLabel.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
+            promptSectionLabel.topAnchor.constraint(equalTo: promptRow.topAnchor, constant: 6),
+            promptIconView.centerYAnchor.constraint(equalTo: promptSectionLabel.centerYAnchor),
 
             promptPresetPopup.leadingAnchor.constraint(equalTo: promptSectionLabel.trailingAnchor, constant: 10),
             promptPresetPopup.trailingAnchor.constraint(equalTo: regenerateButton.leadingAnchor, constant: -10),
-            promptPresetPopup.centerYAnchor.constraint(equalTo: promptRow.centerYAnchor),
+            promptPresetPopup.centerYAnchor.constraint(equalTo: promptSectionLabel.centerYAnchor),
             promptPresetPopup.heightAnchor.constraint(equalToConstant: 28),
-            promptPresetPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 170)
+            promptPresetPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 170),
+
+            interactionHintLabel.leadingAnchor.constraint(equalTo: promptSectionLabel.leadingAnchor),
+            interactionHintLabel.trailingAnchor.constraint(lessThanOrEqualTo: promptRow.trailingAnchor, constant: -1),
+            interactionHintLabel.topAnchor.constraint(equalTo: promptPresetPopup.bottomAnchor, constant: 3),
+            interactionHintLabel.bottomAnchor.constraint(equalTo: promptRow.bottomAnchor, constant: -2)
         ])
     }
 
@@ -819,6 +843,7 @@ private final class ResultReviewPanelContentViewController: NSViewController {
         }
         promptSelectionState.setPendingPromptSelection(to: presetID, options: payload.availablePrompts)
         self.promptSelectionState = promptSelectionState
+        onPromptSelectionChanged?(presetID)
         state = ResultReviewPanelPresentationState(
             payload: payload,
             promptSelectionState: promptSelectionState
@@ -828,11 +853,13 @@ private final class ResultReviewPanelContentViewController: NSViewController {
 
     @objc
     private func regeneratePressed() {
+        let selectedPresetID = promptPresetPopup.selectedItem?.representedObject as? String
         if var promptSelectionState {
-            if let pendingPromptPresetID = promptSelectionState.consumePendingPromptPresetIDForRegenerate() {
-                onPromptSelectionChanged?(pendingPromptPresetID)
-            }
+            _ = promptSelectionState.consumePendingPromptPresetIDForRegenerate()
             self.promptSelectionState = promptSelectionState
+        }
+        if let selectedPresetID {
+            onPromptSelectionChanged?(selectedPresetID)
         }
         onRegenerateRequested?()
     }

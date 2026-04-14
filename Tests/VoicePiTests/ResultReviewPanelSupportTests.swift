@@ -95,6 +95,7 @@ struct ResultReviewPanelSupportTests {
         #expect(state.isRegenerateEnabled)
         #expect(state.isPromptPickerEnabled)
         #expect(state.isInsertEnabled)
+        #expect(state.interactionHintText == "Press Enter to insert")
     }
 
     @Test
@@ -114,6 +115,7 @@ struct ResultReviewPanelSupportTests {
         #expect(state.isRegenerateEnabled == false)
         #expect(state.isPromptPickerEnabled == false)
         #expect(state.isInsertEnabled == false)
+        #expect(state.interactionHintText == "Regenerating…")
     }
 
     @Test
@@ -130,6 +132,7 @@ struct ResultReviewPanelSupportTests {
         )
         let state = ResultReviewPanelPresentationState(payload: payload)
         #expect(state.isInsertEnabled == false)
+        #expect(state.interactionHintText == nil)
     }
 
     @Test
@@ -223,7 +226,7 @@ struct ResultReviewPanelSupportTests {
     }
 
     @Test
-    func promptSelectionStateKeepsPendingSelectionAfterFailedRegenerate() throws {
+    func promptSelectionStateCommitsPendingSelectionWhenPromptAppliesWithoutTextChange() throws {
         let prompts: [ResultReviewPanelPromptOption] = [
             .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
             .init(presetID: "user.meeting", title: "Meeting Notes")
@@ -255,9 +258,102 @@ struct ResultReviewPanelSupportTests {
             payload: failedPayload,
             promptSelectionState: promptSelectionState
         )
+        #expect(presentationState.selectedPromptPresetID == "user.meeting")
+        #expect(presentationState.selectedPromptTitle == "Meeting Notes")
+        #expect(presentationState.promptPickerSelectedPresetID == "user.meeting")
+        #expect(presentationState.promptSectionTitle == "Prompt")
+    }
+
+    @Test
+    func promptSelectionStateKeepsPendingSelectionAfterActualRegenerateFailure() throws {
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes")
+        ]
+        let initialPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: prompts
+            )
+        )
+        var promptSelectionState = ResultReviewPanelPromptSelectionState(payload: initialPayload)
+        promptSelectionState.setPendingPromptSelection(to: "user.meeting", options: prompts)
+        _ = promptSelectionState.consumePendingPromptPresetIDForRegenerate()
+
+        let failedPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: prompts
+            )
+        )
+        promptSelectionState.applyPayload(failedPayload)
+        let presentationState = ResultReviewPanelPresentationState(
+            payload: failedPayload,
+            promptSelectionState: promptSelectionState
+        )
         #expect(presentationState.selectedPromptPresetID == PromptPreset.builtInDefaultID)
         #expect(presentationState.selectedPromptTitle == "VoicePi Default")
         #expect(presentationState.promptPickerSelectedPresetID == "user.meeting")
         #expect(presentationState.promptSectionTitle == "Prompt (Pending)")
+    }
+
+    @Test
+    func promptSelectionStateAllowsSecondRegenerateAfterPromptChangeWhenResultStaysUnchanged() throws {
+        let prompts: [ResultReviewPanelPromptOption] = [
+            .init(presetID: PromptPreset.builtInDefaultID, title: "VoicePi Default"),
+            .init(presetID: "user.meeting", title: "Meeting Notes"),
+            .init(presetID: "user.concise", title: "Concise")
+        ]
+        let initialPayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from A",
+                originalText: "Original transcript",
+                selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                selectedPromptTitle: "VoicePi Default",
+                availablePrompts: prompts
+            )
+        )
+        var promptSelectionState = ResultReviewPanelPromptSelectionState(payload: initialPayload)
+
+        promptSelectionState.setPendingPromptSelection(to: "user.meeting", options: prompts)
+        _ = promptSelectionState.consumePendingPromptPresetIDForRegenerate()
+        let firstRegeneratePayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from B",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.meeting",
+                selectedPromptTitle: "Meeting Notes",
+                availablePrompts: prompts
+            )
+        )
+        promptSelectionState.applyPayload(firstRegeneratePayload)
+
+        promptSelectionState.setPendingPromptSelection(to: "user.concise", options: prompts)
+        _ = promptSelectionState.consumePendingPromptPresetIDForRegenerate()
+        let secondRegeneratePayload = try #require(
+            ResultReviewPanelPayload(
+                resultText: "Result from B",
+                originalText: "Original transcript",
+                selectedPromptPresetID: "user.concise",
+                selectedPromptTitle: "Concise",
+                availablePrompts: prompts
+            )
+        )
+        promptSelectionState.applyPayload(secondRegeneratePayload)
+
+        let presentationState = ResultReviewPanelPresentationState(
+            payload: secondRegeneratePayload,
+            promptSelectionState: promptSelectionState
+        )
+        #expect(presentationState.selectedPromptPresetID == "user.concise")
+        #expect(presentationState.selectedPromptTitle == "Concise")
+        #expect(presentationState.promptPickerSelectedPresetID == "user.concise")
+        #expect(presentationState.promptSectionTitle == "Prompt")
     }
 }

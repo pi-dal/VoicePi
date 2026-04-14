@@ -141,7 +141,7 @@ final class RecentInsertionRewriteCoordinator {
         snapshot: EditableTextTargetSnapshot?,
         now: Date
     ) -> ActiveState? {
-        guard let state = activeState else {
+        guard var state = activeState else {
             return nil
         }
 
@@ -153,7 +153,8 @@ final class RecentInsertionRewriteCoordinator {
         if let trackedTargetIdentifier = state.session.targetIdentifier,
            let snapshot,
            snapshot.targetIdentifier != trackedTargetIdentifier {
-            activeState = nil
+            state.pendingAutoOpenSince = nil
+            activeState = state
             return nil
         }
 

@@ -253,7 +253,7 @@ struct SettingsWindowPromptTemplateTests {
 
         #expect(duplicated.source == .user)
         #expect(duplicated.title == "Meeting Notes Copy")
-        #expect(duplicated.body.contains("concise structured notes") == true)
+        #expect(duplicated.body.contains("concise structured meeting notes") == true)
         #expect(model.promptWorkspace.activeSelection == .preset(duplicated.id))
         #expect(model.promptWorkspace.userPresets == [duplicated])
     }

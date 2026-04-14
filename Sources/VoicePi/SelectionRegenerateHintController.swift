@@ -12,12 +12,12 @@ struct SelectionRegenerateHintPayload: Equatable {
         sessionID: UUID,
         selectedText: String,
         hintText: String? = nil,
-        actionTitle: String = "Regenerate",
+        actionTitle: String = "Review",
         anchorRectInScreen: NSRect? = nil
     ) {
         self.sessionID = sessionID
         self.selectedText = selectedText
-        self.hintText = hintText ?? "Regenerate selection"
+        self.hintText = hintText ?? "Review selection"
         self.actionTitle = actionTitle
         self.anchorRectInScreen = anchorRectInScreen
     }
@@ -126,6 +126,55 @@ struct SelectionRegenerateHintPalette {
     }
 }
 
+private final class SelectionRegenerateHintActionButtonCell: NSButtonCell {
+    private let leadingInset: CGFloat
+    private let trailingInset: CGFloat
+
+    init(
+        leadingInset: CGFloat = 10,
+        trailingInset: CGFloat = 6
+    ) {
+        self.leadingInset = leadingInset
+        self.trailingInset = trailingInset
+        super.init(textCell: "")
+        lineBreakMode = .byTruncatingTail
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        NSRect(
+            x: rect.minX + leadingInset,
+            y: rect.minY,
+            width: max(0, rect.width - leadingInset - trailingInset),
+            height: rect.height
+        )
+    }
+
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        super.imageRect(forBounds: drawingRect(forBounds: rect))
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        super.titleRect(forBounds: drawingRect(forBounds: rect))
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        super.drawInterior(withFrame: drawingRect(forBounds: cellFrame), in: controlView)
+    }
+
+    override func cellSize(forBounds aRect: NSRect) -> NSSize {
+        let baseSize = super.cellSize(forBounds: aRect)
+        return NSSize(
+            width: baseSize.width + leadingInset + trailingInset,
+            height: baseSize.height
+        )
+    }
+}
+
 private final class SelectionRegenerateHintActionButton: NSButton {
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
@@ -175,6 +224,7 @@ private final class SelectionRegenerateHintActionButton: NSButton {
     }
 
     private func configure() {
+        cell = SelectionRegenerateHintActionButtonCell()
         setButtonType(.momentaryPushIn)
         isBordered = false
         bezelStyle = .regularSquare
@@ -183,8 +233,8 @@ private final class SelectionRegenerateHintActionButton: NSButton {
         layer?.cornerRadius = 13
         layer?.borderWidth = 1
         image = NSImage(
-            systemSymbolName: "arrow.triangle.2.circlepath",
-            accessibilityDescription: "Regenerate"
+            systemSymbolName: "doc.text.magnifyingglass",
+            accessibilityDescription: "Review"
         )
         imagePosition = .imageLeading
         imageScaling = .scaleProportionallyDown
@@ -321,6 +371,11 @@ final class SelectionRegenerateHintController: NSWindowController {
         positionPanel(anchorRectInScreen: payload.anchorRectInScreen)
 
         guard let panel = window else { return }
+        if RuntimeEnvironment.isRunningTests {
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
         if panel.isVisible {
             panel.orderFrontRegardless()
             return
@@ -378,7 +433,7 @@ final class SelectionRegenerateHintController: NSWindowController {
         badgeImageView.translatesAutoresizingMaskIntoConstraints = false
         badgeImageView.image = NSImage(
             systemSymbolName: "sparkles",
-            accessibilityDescription: "VoicePi regenerate"
+            accessibilityDescription: "VoicePi review"
         )
         badgeImageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
         badgeImageView.imageScaling = .scaleProportionallyDown

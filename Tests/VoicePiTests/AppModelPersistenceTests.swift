@@ -295,7 +295,7 @@ struct AppModelPersistenceTests {
         #expect(model.promptWorkspace.activeSelection.mode == .preset)
         #expect(model.promptWorkspace.userPresets.count == 1)
         #expect(model.promptWorkspace.userPresets[0].title == "Meeting Notes")
-        #expect(model.promptWorkspace.userPresets[0].body.contains("concise structured notes") == true)
+        #expect(model.promptWorkspace.userPresets[0].body.contains("concise structured meeting notes") == true)
         #expect(model.promptWorkspace.userPresets[0].body.contains("Markdown") == true)
         #expect(model.resolvedPromptPreset().source == .user)
     }

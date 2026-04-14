@@ -497,9 +497,18 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func llmReviewRegenerateRequiresAChangedResult() {
+    func llmReviewRegenerateAllowsSourceEchoAsNoopWhenPreviousRewriteExists() {
         #expect(
-            !AppController.didRefinementReviewRegenerateSucceed(
+            AppController.resultReviewRegenerateOutcome(
+                refinementProvider: .llm,
+                sourceText: "Original transcript",
+                previousResultText: "Polished result",
+                regeneratedText: "Original transcript",
+                didExternalProcessorSucceed: false
+            ) == .keepPreviousResult
+        )
+        #expect(
+            AppController.didRefinementReviewRegenerateSucceed(
                 refinementProvider: .llm,
                 sourceText: "Original transcript",
                 previousResultText: "Polished result",
@@ -508,7 +517,7 @@ struct AppControllerInteractionTests {
             )
         )
         #expect(
-            !AppController.didRefinementReviewRegenerateSucceed(
+            AppController.didRefinementReviewRegenerateSucceed(
                 refinementProvider: .llm,
                 sourceText: "Original transcript",
                 previousResultText: "Polished result",
@@ -529,10 +538,153 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func selectedTextRewriteWithoutRecentInsertionMatchUsesReviewPanelFlow() {
+    func resultReviewInsertFallsBackToTargetProcessBundleIDWhenSourceBundleIsMissing() {
+        let currentProcessID = ProcessInfo.processInfo.processIdentifier
+        let targetIdentifier = "\(currentProcessID):AXTextArea"
+
+        let resolvedBundleID = AppController.resultReviewInsertionSourceApplicationBundleID(
+            capturedSourceApplicationBundleID: nil,
+            currentFrontmostApplicationBundleID: nil,
+            targetIdentifier: targetIdentifier
+        )
+
+        #expect(resolvedBundleID == NSRunningApplication.current.bundleIdentifier)
+    }
+
+    @Test
+    @MainActor
+    func resultReviewInsertDoesNotFallbackToVoicePiBundleIDWhenNoSourceAppIsKnown() {
+        let resolvedBundleID = AppController.resultReviewInsertionSourceApplicationBundleID(
+            capturedSourceApplicationBundleID: nil,
+            currentFrontmostApplicationBundleID: "com.pi-dal.VoicePi",
+            targetIdentifier: nil,
+            voicePiBundleID: "com.pi-dal.VoicePi"
+        )
+
+        #expect(resolvedBundleID == nil)
+    }
+
+    @Test
+    @MainActor
+    func resultReviewSelectionMatchAllowsRangeValidationWhenSelectedTextIsUnavailable() {
+        let selectionAnchor = AppController.ResultReviewSelectionAnchor(
+            targetIdentifier: "target-1",
+            selectedText: "Original selected text",
+            selectedRange: NSRange(location: 5, length: 8),
+            sourceApplicationBundleID: "com.apple.TextEdit"
+        )
+        let snapshot = EditableTextTargetSnapshot(
+            inspection: .editable,
+            targetIdentifier: "target-1",
+            textValue: "prefix Original selected text suffix",
+            selectedText: nil,
+            selectedTextRange: NSRange(location: 5, length: 8),
+            selectedTextBoundsInScreen: nil,
+            canSetSelectedTextRange: true
+        )
+
+        #expect(
+            AppController.resultReviewSelectionMatchesAnchor(
+                snapshot,
+                selectionAnchor: selectionAnchor
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func recentInsertionRegenerateUsesSelectionTextAsSource() {
+        let selectionText = "Selected paragraph in editor"
+        let session = AppController.RefinementReviewSession(
+            sourceType: .recentInsertion,
+            rawTranscript: "Original dictated transcript",
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            currentResultText: selectionText,
+            selectionAnchor: AppController.ResultReviewSelectionAnchor(
+                targetIdentifier: "target-1",
+                selectedText: selectionText,
+                selectedRange: NSRange(location: 0, length: selectionText.utf16.count),
+                sourceApplicationBundleID: "com.apple.TextEdit"
+            ),
+            recordingDurationMilliseconds: 900,
+            workflow: AppController.ProcessingWorkflowSelection(
+                postProcessingMode: .refinement,
+                refinementProvider: .llm
+            ),
+            workflowOverride: nil,
+            isAutoOpened: false
+        )
+
+        #expect(AppController.resultReviewSourceText(for: session) == selectionText)
+    }
+
+    @Test
+    @MainActor
+    func reviewSourceStaysStableAcrossMultipleRegenerates() {
+        let initialSourceText = "Initial selected source text"
+        var session = AppController.RefinementReviewSession(
+            sourceType: .recentInsertion,
+            rawTranscript: "Raw transcript",
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            currentResultText: "First regenerate result",
+            selectionAnchor: AppController.ResultReviewSelectionAnchor(
+                targetIdentifier: "target-1",
+                selectedText: initialSourceText,
+                selectedRange: NSRange(location: 0, length: initialSourceText.utf16.count),
+                sourceApplicationBundleID: "com.apple.TextEdit"
+            ),
+            recordingDurationMilliseconds: 500,
+            workflow: AppController.ProcessingWorkflowSelection(
+                postProcessingMode: .refinement,
+                refinementProvider: .llm
+            ),
+            workflowOverride: nil,
+            isAutoOpened: false
+        )
+
+        #expect(AppController.resultReviewSourceText(for: session) == initialSourceText)
+        session.currentResultText = "Second regenerate result"
+        #expect(AppController.resultReviewSourceText(for: session) == initialSourceText)
+        session.currentResultText = "Third regenerate result"
+        #expect(AppController.resultReviewSourceText(for: session) == initialSourceText)
+    }
+
+    @Test
+    @MainActor
+    func selectedTextRegenerateKeepsRawTranscriptAsSource() {
+        let selectedText = "Direct selection source"
+        let session = AppController.RefinementReviewSession(
+            sourceType: .selectedText,
+            rawTranscript: selectedText,
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            currentResultText: selectedText,
+            selectionAnchor: AppController.ResultReviewSelectionAnchor(
+                targetIdentifier: "target-2",
+                selectedText: "Stale selection",
+                selectedRange: NSRange(location: 0, length: 5),
+                sourceApplicationBundleID: "com.apple.Notes"
+            ),
+            recordingDurationMilliseconds: 900,
+            workflow: AppController.ProcessingWorkflowSelection(
+                postProcessingMode: .refinement,
+                refinementProvider: .llm
+            ),
+            workflowOverride: nil,
+            isAutoOpened: false
+        )
+
+        #expect(AppController.resultReviewSourceText(for: session) == selectedText)
+    }
+
+    @Test
+    @MainActor
+    func selectedTextRewriteWithoutRecentInsertionMatchOpensReviewPanelWithoutAutoRegenerate() {
         #expect(
             AppController.selectionRewritePresentationDecision(hasRecentInsertionMatch: false)
-                == .presentFreshReviewPanelAndStartRewrite
+                == .presentFreshReviewPanel
         )
     }
 
