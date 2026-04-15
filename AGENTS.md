@@ -8,6 +8,7 @@ Use the checked-in scripts instead of ad hoc commands when possible.
 
 - `./Scripts/test.sh` or `make test`: run Swift tests and shell script tests.
 - `./Scripts/verify.sh` or `make verify`: run tests, build the debug target, and assemble `dist/debug/VoicePi.app`.
+- `./Scripts/benchmark.sh`: print the current performance benchmark snapshot, including deterministic legacy-vs-current budgets and lightweight microbenchmark samples for pure performance helpers.
 - `./Scripts/package.sh` or `make package`: run verification, stamp bundle versions, and export `dist/release/VoicePi.app`.
 - `./Scripts/package_zip.sh`: create `dist/release/VoicePi-<version>.zip` (versioned release archive).
 - `make zip`: create `dist/release/VoicePi-macOS.zip` (internal testing archive).
@@ -19,6 +20,29 @@ Follow the existing Swift style: four-space indentation, `UpperCamelCase` for ty
 
 ## Testing Guidelines
 Swift tests use the `Testing` framework with `@Test` and `#expect`. Name Swift test files `*Tests.swift` and group test functions around observable behavior. Add shell regression tests in `Tests/` with a `_test.sh` suffix for script changes. Run `./Scripts/test.sh` before opening a PR; run `./Scripts/verify.sh` for changes that affect bundling, signing, or app startup.
+
+For performance-sensitive changes, treat tests and benchmarks as a pair:
+
+- Add behavior tests first for every new abstraction or refactor that changes latency-sensitive logic.
+- Prefer deterministic performance budget tests for policy/value types such as timing plans, polling cadence, and routing decisions.
+- When introducing or changing a benchmark entrypoint, add a shell regression test that locks the script contract and output shape.
+- Run `./Scripts/benchmark.sh` after performance work and include the relevant budget deltas or microbenchmark samples in your notes, PR description, or handoff.
+
+Interpret benchmark output conservatively:
+
+- `Budgets` are the strongest signal. They compare the previous built-in latency or polling cost against the current implementation and can justify claims such as “this path now blocks 70% less by design.”
+- `Recent sessions` summarize persisted successful runs from the in-app latency trace pipeline. Use them as the best available real-session signal for median first-partial, stop-to-transcript, and stop-to-delivery timings, but only after enough sessions have been recorded locally.
+- `Microbenchmarks` are useful for catching regressions in pure helpers, but they are machine-dependent and should not be used alone to claim end-to-end UX improvements.
+- Do not claim the whole app is faster unless the changed path is directly represented by a budget reduction or by end-to-end measurements gathered from the latency trace/logging pipeline.
+
+Current benchmark scope:
+
+- text injection blocking latency for ASCII and CJK paths
+- modeled post-recording stop-to-delivery latency under fixed transcript-finalize and refine assumptions
+- post-injection Accessibility polling load
+- floating panel repeated-partial layout invalidations
+- recent real-session latency summaries persisted from the recording trace reporter
+- pure helper microbenchmarks such as latency trace reporting and execution-plan construction
 
 ## Commit & Pull Request Guidelines
 Recent history uses Conventional Commit prefixes such as `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, and `chore:`; optional scopes like `refactor(SpeechRecorder):` are already in use. Keep commit subjects imperative and concise. PRs should explain user-facing impact, list verification steps, link related issues, and include screenshots when menu-bar UI, settings, or onboarding behavior changes. If a change affects releases, note updates to `Scripts/`, `.github/workflows/`, or `Casks/voicepi.rb`.
