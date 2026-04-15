@@ -16,8 +16,6 @@ final class FloatingPanelController: NSWindowController {
 
     private let minWidth: CGFloat = 260
     private let maxWidth: CGFloat = 660
-    private let bannerHeight: CGFloat = 56
-    private let hudHeight: CGFloat = 136
     private let bottomInset: CGFloat = 44
 
     private let contentController = FloatingPanelContentViewController()
@@ -27,7 +25,12 @@ final class FloatingPanelController: NSWindowController {
 
     init() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 56),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: FloatingPanelSupport.compactBannerWidth,
+                height: FloatingPanelSupport.compactBannerHeight
+            ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -53,8 +56,8 @@ final class FloatingPanelController: NSWindowController {
         super.init(window: panel)
 
         panel.contentViewController = contentController
-        contentController.widthDidChange = { [weak self] width in
-            self?.animateWidth(to: width)
+        contentController.panelSizeDidChange = { [weak self] width, height in
+            self?.animatePanelFrame(toWidth: width, height: height)
         }
     }
 
@@ -63,12 +66,16 @@ final class FloatingPanelController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func showRecording(transcript: String = "") {
+    func showRecording(
+        transcript: String = "",
+        sourcePreviewText: String? = nil
+    ) {
         contentController.loadViewIfNeeded()
         autoHideTask?.cancel()
         presentationStyle = .banner
         contentController.setPhase(.recording)
         contentController.updateTranscript(transcript)
+        contentController.updateSourcePreview(sourcePreviewText)
         contentController.updateAudioLevel(0.02)
         presentIfNeeded()
     }
@@ -78,12 +85,16 @@ final class FloatingPanelController: NSWindowController {
         contentController.updateAudioLevel(level)
     }
 
-    func showRefining(transcript: String) {
+    func showRefining(
+        transcript: String,
+        sourcePreviewText: String? = nil
+    ) {
         contentController.loadViewIfNeeded()
         autoHideTask?.cancel()
         presentationStyle = .banner
         contentController.setPhase(.refining)
         contentController.updateTranscript(transcript)
+        contentController.updateSourcePreview(sourcePreviewText)
         contentController.updateAudioLevel(0.02)
         presentIfNeeded()
     }
@@ -172,7 +183,10 @@ final class FloatingPanelController: NSWindowController {
         guard let panel = window else { return }
 
         let width = clampedWidth(contentController.preferredPanelWidth)
-        let targetFrame = frameForCurrentScreen(width: width)
+        let targetFrame = frameForCurrentScreen(
+            width: width,
+            height: contentController.preferredPanelHeight
+        )
         if RuntimeEnvironment.isRunningTests {
             panel.setFrame(targetFrame, display: false)
             panel.orderOut(nil)
@@ -200,10 +214,13 @@ final class FloatingPanelController: NSWindowController {
         }
     }
 
-    private func animateWidth(to width: CGFloat) {
+    private func animatePanelFrame(toWidth width: CGFloat, height: CGFloat) {
         guard let panel = window else { return }
 
-        let targetFrame = frameForCurrentScreen(width: clampedWidth(width))
+        let targetFrame = frameForCurrentScreen(
+            width: clampedWidth(width),
+            height: height
+        )
 
         guard panel.isVisible else {
             panel.setFrame(targetFrame, display: true)
@@ -221,10 +238,9 @@ final class FloatingPanelController: NSWindowController {
         max(minWidth, min(maxWidth, width))
     }
 
-    private func frameForCurrentScreen(width: CGFloat) -> NSRect {
+    private func frameForCurrentScreen(width: CGFloat, height: CGFloat) -> NSRect {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let height = presentationStyle == .hud ? hudHeight : bannerHeight
 
         switch presentationStyle {
         case .banner:
@@ -249,15 +265,17 @@ final class FloatingPanelController: NSWindowController {
 private final class FloatingPanelContentViewController: NSViewController {
     typealias Phase = FloatingPanelController.Phase
 
-    var widthDidChange: ((CGFloat) -> Void)?
+    var panelSizeDidChange: ((CGFloat, CGFloat) -> Void)?
 
     private let rootView = AppearanceAwareView()
     private let blurView = NSVisualEffectView()
     private let stackView = NSStackView()
+    private let textStackView = NSStackView()
     private let modeSwitchContainer = NSStackView()
     private let waveformView = WaveformBarsView(frame: .zero)
     private let refiningIndicatorView = RefiningDotsView(frame: .zero)
     private let transcriptLabel = NSTextField(labelWithString: "")
+    private let sourcePreviewLabel = NSTextField(labelWithString: "")
     private let modeCapsules: [ModeSwitchCapsuleView] = [
         ModeSwitchCapsuleView(title: "Disabled"),
         ModeSwitchCapsuleView(title: "Refinement"),
@@ -268,8 +286,10 @@ private final class FloatingPanelContentViewController: NSViewController {
     private var bannerLayoutConstraints: [NSLayoutConstraint] = []
     private var modeSwitchLayoutConstraints: [NSLayoutConstraint] = []
 
-    private(set) var preferredPanelWidth: CGFloat = 260
+    private(set) var preferredPanelWidth: CGFloat = FloatingPanelSupport.compactBannerWidth
+    private(set) var preferredPanelHeight: CGFloat = FloatingPanelSupport.compactBannerHeight
     private var phase: Phase = .recording
+    private var sourcePreview: String?
     private let compactBannerWidth: CGFloat = FloatingPanelSupport.compactBannerWidth
     private let maximumBannerWidth: CGFloat = FloatingPanelSupport.maximumBannerWidth
     private let bannerHorizontalInset: CGFloat = FloatingPanelSupport.bannerHorizontalInset
@@ -314,6 +334,23 @@ private final class FloatingPanelContentViewController: NSViewController {
         transcriptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         transcriptLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        sourcePreviewLabel.translatesAutoresizingMaskIntoConstraints = false
+        sourcePreviewLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
+        sourcePreviewLabel.textColor = NSColor.white.withAlphaComponent(0.62)
+        sourcePreviewLabel.lineBreakMode = .byTruncatingTail
+        sourcePreviewLabel.maximumNumberOfLines = 1
+        sourcePreviewLabel.isHidden = true
+        sourcePreviewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        sourcePreviewLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        textStackView.translatesAutoresizingMaskIntoConstraints = false
+        textStackView.orientation = .vertical
+        textStackView.spacing = 1
+        textStackView.alignment = .leading
+        textStackView.detachesHiddenViews = true
+        textStackView.addArrangedSubview(transcriptLabel)
+        textStackView.addArrangedSubview(sourcePreviewLabel)
+
         waveformView.translatesAutoresizingMaskIntoConstraints = false
         waveformView.identifier = NSUserInterfaceItemIdentifier("voicepi-recording-waveform")
         waveformView.setContentHuggingPriority(.required, for: .horizontal)
@@ -347,7 +384,7 @@ private final class FloatingPanelContentViewController: NSViewController {
 
         stackView.addArrangedSubview(waveformView)
         stackView.addArrangedSubview(refiningIndicatorView)
-        stackView.addArrangedSubview(transcriptLabel)
+        stackView.addArrangedSubview(textStackView)
         stackView.setCustomSpacing(recordingIndicatorSpacing, after: waveformView)
         stackView.setCustomSpacing(refiningIndicatorSpacing, after: refiningIndicatorView)
         modeCapsules.forEach(modeSwitchContainer.addArrangedSubview)
@@ -377,7 +414,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         ]
         NSLayoutConstraint.activate(bannerLayoutConstraints)
 
-        let heightConstraint = rootView.heightAnchor.constraint(equalToConstant: 56)
+        let heightConstraint = rootView.heightAnchor.constraint(equalToConstant: FloatingPanelSupport.compactBannerHeight)
         heightConstraint.isActive = true
         self.heightConstraint = heightConstraint
 
@@ -410,13 +447,24 @@ private final class FloatingPanelContentViewController: NSViewController {
         recalculatePreferredWidth()
     }
 
+    func updateSourcePreview(_ sourcePreview: String?) {
+        self.sourcePreview = sourcePreview?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayedPreview = FloatingPanelSupport.displayedSourcePreview(self.sourcePreview)
+        sourcePreviewLabel.stringValue = displayedPreview ?? ""
+        sourcePreviewLabel.isHidden = displayedPreview == nil
+        recalculatePreferredWidth()
+    }
+
     func updateAudioLevel(_ level: CGFloat) {
         waveformView.update(level: level)
     }
 
     func resetForNextSession() {
         phase = .recording
+        sourcePreview = nil
         transcriptLabel.stringValue = ""
+        sourcePreviewLabel.stringValue = ""
+        sourcePreviewLabel.isHidden = true
         waveformView.isHidden = false
         refiningIndicatorView.isHidden = true
         refiningIndicatorView.setAnimating(false)
@@ -481,16 +529,19 @@ private final class FloatingPanelContentViewController: NSViewController {
     private func recalculatePreferredWidth() {
         switch phase {
         case .recording:
-            preferredPanelWidth = bannerPreferredWidth(indicatorSpacing: recordingIndicatorSpacing)
-            heightConstraint?.constant = 56
+            preferredPanelWidth = bannerPreferredWidth()
+            preferredPanelHeight = FloatingPanelSupport.bannerPreferredHeight(sourcePreview: sourcePreview)
+            heightConstraint?.constant = preferredPanelHeight
         case .refining:
-            preferredPanelWidth = bannerPreferredWidth(indicatorSpacing: refiningIndicatorSpacing)
-            heightConstraint?.constant = 56
+            preferredPanelWidth = bannerPreferredWidth()
+            preferredPanelHeight = FloatingPanelSupport.bannerPreferredHeight(sourcePreview: sourcePreview)
+            heightConstraint?.constant = preferredPanelHeight
         case .modeSwitch:
             preferredPanelWidth = 452
-            heightConstraint?.constant = 136
+            preferredPanelHeight = 136
+            heightConstraint?.constant = preferredPanelHeight
         }
-        widthDidChange?(preferredPanelWidth)
+        panelSizeDidChange?(preferredPanelWidth, preferredPanelHeight)
     }
 
     private func applyLayout(for phase: Phase) {
@@ -555,12 +606,13 @@ private final class FloatingPanelContentViewController: NSViewController {
         measuredTranscriptWidth(for: text) > maximumVisibleTranscriptWidth(for: phase)
     }
 
-    private func bannerPreferredWidth(indicatorSpacing: CGFloat) -> CGFloat {
+    private func bannerPreferredWidth() -> CGFloat {
         let transcript = transcriptLabel.stringValue
         guard !transcript.isEmpty else {
             return FloatingPanelSupport.bannerPreferredWidth(
                 for: phase,
                 transcript: FloatingPanelSupport.displayedTranscript(for: phase, transcript: transcript),
+                sourcePreview: sourcePreview,
                 font: transcriptLabel.font ?? .systemFont(ofSize: 15, weight: .medium)
             )
         }
@@ -568,6 +620,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         return FloatingPanelSupport.bannerPreferredWidth(
             for: phase,
             transcript: transcript,
+            sourcePreview: sourcePreview,
             font: transcriptLabel.font ?? .systemFont(ofSize: 15, weight: .medium)
         )
     }
@@ -590,6 +643,7 @@ private final class FloatingPanelContentViewController: NSViewController {
         blurView.layer?.borderWidth = 1
         blurView.layer?.borderColor = palette.borderColor.cgColor
         transcriptLabel.textColor = palette.textColor
+        sourcePreviewLabel.textColor = palette.textColor.withAlphaComponent(0.62)
         waveformView.applyAppearance(barColor: palette.waveformColor)
         refiningIndicatorView.applyAppearance(dotColor: palette.waveformColor)
         modeCapsules.forEach { $0.applyPalette(palette) }

@@ -168,9 +168,6 @@ final class RecentInsertionRewriteCoordinator {
         guard let snapshot, snapshot.inspection == .editable else {
             return false
         }
-        guard let selectedTextRange = snapshot.selectedTextRange, selectedTextRange.length > 0 else {
-            return false
-        }
 
         let normalizedSelectedText = normalizedSnapshotSelection(snapshot.selectedText)
         guard !normalizedSelectedText.isEmpty else {

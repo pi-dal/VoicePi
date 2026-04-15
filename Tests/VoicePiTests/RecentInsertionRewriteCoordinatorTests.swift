@@ -83,6 +83,55 @@ struct RecentInsertionRewriteCoordinatorTests {
     }
 
     @Test
+    func autoOpenMatchesSelectionTextWhenSelectedRangeIsUnavailable() {
+        let coordinator = RecentInsertionRewriteCoordinator(
+            configuration: .init(
+                watchWindow: 8,
+                selectionStabilizationDelay: 0.35
+            )
+        )
+        let baseTime = Date(timeIntervalSince1970: 1_700_200_015)
+        let session = RecentInsertionRewriteSession(
+            rawTranscript: "Original transcript",
+            insertedText: "Refined output",
+            appliedPromptPresetID: PromptPreset.builtInDefaultID,
+            targetIdentifier: "target-2b",
+            sourceApplicationBundleID: "com.apple.TextEdit",
+            injectedAt: baseTime
+        )
+        coordinator.startTracking(session)
+        let snapshot = EditableTextTargetSnapshot(
+            inspection: .editable,
+            targetIdentifier: "target-2b",
+            textValue: "Refined output",
+            selectedText: "Refined output",
+            selectedTextRange: nil,
+            canSetSelectedTextRange: true
+        )
+
+        #expect(
+            coordinator.processSnapshotForAutoOpen(
+                snapshot,
+                now: baseTime.addingTimeInterval(0.1),
+                reviewPanelVisible: false
+            ) == nil
+        )
+        #expect(
+            coordinator.processSnapshotForAutoOpen(
+                snapshot,
+                now: baseTime.addingTimeInterval(0.6),
+                reviewPanelVisible: false
+            ) == session
+        )
+        #expect(
+            coordinator.matchingSession(
+                for: snapshot,
+                now: baseTime.addingTimeInterval(1.0)
+            ) == session
+        )
+    }
+
+    @Test
     func trackingExpiresAfterWatchWindow() {
         let coordinator = RecentInsertionRewriteCoordinator(
             configuration: .init(

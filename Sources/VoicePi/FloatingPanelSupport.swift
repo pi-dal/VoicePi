@@ -3,6 +3,7 @@ import AppKit
 enum FloatingPanelSupport {
     static let compactBannerWidth: CGFloat = 260
     static let maximumBannerWidth: CGFloat = 660
+    static let compactBannerHeight: CGFloat = 56
     static let bannerHorizontalInset: CGFloat = 18
     static let bannerIndicatorWidth: CGFloat = 44
     static let recordingIndicatorSpacing: CGFloat = 14
@@ -27,11 +28,15 @@ enum FloatingPanelSupport {
     static func bannerPreferredWidth(
         for phase: FloatingPanelController.Phase,
         transcript: String,
+        sourcePreview: String? = nil,
         font: NSFont = .systemFont(ofSize: 15, weight: .medium)
     ) -> CGFloat {
         let elasticTextWidth = max(
             160,
-            min(maximumVisibleTranscriptWidth(for: phase), measuredTranscriptWidth(for: transcript, font: font) + 8)
+            min(
+                maximumVisibleTranscriptWidth(for: phase),
+                measuredTranscriptWidth(for: transcript, font: font) + 8
+            )
         )
         let indicatorSpacing = phase == .refining ? refiningIndicatorSpacing : recordingIndicatorSpacing
         let computedWidth =
@@ -51,5 +56,15 @@ enum FloatingPanelSupport {
         let text = transcript as NSString
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
         return ceil(text.size(withAttributes: attributes).width)
+    }
+
+    static func displayedSourcePreview(_ sourcePreview: String?) -> String? {
+        _ = sourcePreview
+        return nil
+    }
+
+    static func bannerPreferredHeight(sourcePreview: String?) -> CGFloat {
+        _ = sourcePreview
+        return compactBannerHeight
     }
 }

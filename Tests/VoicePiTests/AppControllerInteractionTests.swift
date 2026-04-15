@@ -211,6 +211,20 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func externalProcessorShortcutBypassesSelectionRewriteWhenSelectionIsConfirmed() {
+        #expect(
+            AppController.pressAction(
+                isRecording: false,
+                isStartingRecording: false,
+                isProcessingRelease: false,
+                hasConfirmedSelectionForRewrite: true,
+                workflowOverride: .externalProcessorShortcut
+            ) == .startRecording
+        )
+    }
+
+    @Test
+    @MainActor
     func pressStillStopsRecordingBeforeSelectionRewriteWhenRecordingIsActive() {
         #expect(
             AppController.pressAction(
@@ -593,6 +607,33 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func resultReviewSelectionMatchAllowsTextValidationWhenSelectedRangeIsUnavailable() {
+        let selectionAnchor = AppController.ResultReviewSelectionAnchor(
+            targetIdentifier: "target-1",
+            selectedText: "Original selected text",
+            selectedRange: NSRange(location: 5, length: 8),
+            sourceApplicationBundleID: "com.apple.TextEdit"
+        )
+        let snapshot = EditableTextTargetSnapshot(
+            inspection: .editable,
+            targetIdentifier: "target-1",
+            textValue: "prefix Original selected text suffix",
+            selectedText: "Original selected text",
+            selectedTextRange: nil,
+            selectedTextBoundsInScreen: nil,
+            canSetSelectedTextRange: true
+        )
+
+        #expect(
+            AppController.resultReviewSelectionMatchesAnchor(
+                snapshot,
+                selectionAnchor: selectionAnchor
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func recentInsertionRegenerateUsesSelectionTextAsSource() {
         let selectionText = "Selected paragraph in editor"
         let session = AppController.RefinementReviewSession(
@@ -813,6 +854,35 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func capturedSourceSnapshotOnlyExistsForProcessorShortcutWorkflow() throws {
+        let targetSnapshot = EditableTextTargetSnapshot(
+            inspection: .editable,
+            targetIdentifier: "target-1",
+            textValue: "Full document text",
+            selectedText: "Reference paragraph",
+            selectedTextRange: NSRange(location: 0, length: 19)
+        )
+
+        #expect(
+            AppController.capturedSourceSnapshot(
+                workflowOverride: nil,
+                targetSnapshot: targetSnapshot,
+                sourceApplicationBundleID: "com.apple.TextEdit"
+            ) == nil
+        )
+
+        let captured = try #require(
+            AppController.capturedSourceSnapshot(
+                workflowOverride: .externalProcessorShortcut,
+                targetSnapshot: targetSnapshot,
+                sourceApplicationBundleID: "com.apple.TextEdit"
+            )
+        )
+        #expect(captured.text == "Reference paragraph")
+    }
+
+    @Test
+    @MainActor
     func processorShortcutIsIgnoredWhileProcessingRelease() {
         #expect(
             AppController.processorShortcutPressAction(
@@ -837,6 +907,79 @@ struct AppControllerInteractionTests {
                 postProcessingMode: .refinement,
                 refinementProvider: .externalProcessor
             )
+        )
+    }
+
+    @Test
+    @MainActor
+    func externalProcessorShortcutDisablesAutomaticPromptResolutionWithoutExplicitOverride() {
+        #expect(
+            !AppController.shouldResolveAutomaticRefinementPrompt(
+                workflowOverride: .externalProcessorShortcut,
+                promptPresetOverrideID: nil
+            )
+        )
+        #expect(
+            AppController.shouldResolveAutomaticRefinementPrompt(
+                workflowOverride: .externalProcessorShortcut,
+                promptPresetOverrideID: "custom-prompt"
+            )
+        )
+        #expect(
+            AppController.shouldResolveAutomaticRefinementPrompt(
+                workflowOverride: nil,
+                promptPresetOverrideID: nil
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func externalProcessorShortcutSuccessUsesDedicatedResultPanelAction() {
+        #expect(
+            AppController.postProcessingSuccessAction(
+                workflowOverride: .externalProcessorShortcut,
+                didExternalProcessorSucceed: true
+            ) == .presentExternalProcessorResultPanel
+        )
+        #expect(
+            AppController.postProcessingSuccessAction(
+                workflowOverride: .externalProcessorShortcut,
+                didExternalProcessorSucceed: false
+            ) == .deliverTranscriptNormally
+        )
+        #expect(
+            AppController.postProcessingSuccessAction(
+                workflowOverride: nil,
+                didExternalProcessorSucceed: true
+            ) == .deliverTranscriptNormally
+        )
+    }
+
+    @Test
+    @MainActor
+    func floatingRefiningOverlayDelayWaitsForMinimumVisibleDuration() {
+        let now = Date()
+        let recentPresentation = now.addingTimeInterval(-0.08)
+        let expiredPresentation = now.addingTimeInterval(-0.6)
+
+        #expect(
+            AppController.pendingFloatingRefiningHideDelayNanoseconds(
+                presentationStartedAt: recentPresentation,
+                now: now
+            ) > 0
+        )
+        #expect(
+            AppController.pendingFloatingRefiningHideDelayNanoseconds(
+                presentationStartedAt: expiredPresentation,
+                now: now
+            ) == 0
+        )
+        #expect(
+            AppController.pendingFloatingRefiningHideDelayNanoseconds(
+                presentationStartedAt: nil,
+                now: now
+            ) == 0
         )
     }
 

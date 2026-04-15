@@ -33,4 +33,16 @@ struct FloatingPanelControllerTests {
         #expect(FloatingPanelSupport.displayedTranscript(for: .refining, transcript: "\n") == "Refining...")
         #expect(FloatingPanelSupport.displayedTranscript(for: .modeSwitch, transcript: "Translate") == "Translate")
     }
+
+    @Test
+    func sourcePreviewIsSuppressedInFloatingBanner() {
+        #expect(FloatingPanelSupport.displayedSourcePreview("  selected source  ") == nil)
+        #expect(FloatingPanelSupport.displayedSourcePreview(" \n\t ") == nil)
+    }
+
+    @Test
+    func bannerHeightIgnoresSourcePreview() {
+        #expect(FloatingPanelSupport.bannerPreferredHeight(sourcePreview: nil) == 56)
+        #expect(FloatingPanelSupport.bannerPreferredHeight(sourcePreview: "reference text") == 56)
+    }
 }

@@ -218,6 +218,14 @@ final class AppController: NSObject {
         }
     }
 
+    struct ExternalProcessorResultSession {
+        var payload: ExternalProcessorResultPanelPayload
+        let sourceText: String
+        let workflowOverride: RecordingWorkflowOverride?
+        let sourceApplicationBundleID: String?
+        let recordingDurationMilliseconds: Int
+    }
+
     struct ResultReviewPromptSelectionState: Equatable {
         let selectedPromptPresetID: String
         let selectedPromptTitle: String
@@ -228,6 +236,11 @@ final class AppController: NSObject {
     enum PostProcessingFailureAction: Equatable {
         case continueTranscriptDelivery
         case surfaceProcessorFailure
+    }
+
+    enum PostProcessingSuccessAction: Equatable {
+        case deliverTranscriptNormally
+        case presentExternalProcessorResultPanel
     }
 
     enum RealtimeStopResolution: Equatable {
@@ -273,6 +286,7 @@ final class AppController: NSObject {
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
+    private let externalProcessorResultPanelController = ExternalProcessorResultPanelController()
     private let resultReviewPanelController = ResultReviewPanelController()
     private let selectionRegenerateHintController = SelectionRegenerateHintController()
     private let dictionarySuggestionToastController = DictionarySuggestionToastController()
@@ -309,8 +323,12 @@ final class AppController: NSObject {
     private var installationSource: AppInstallationSource = .unknown
     private var updateExperiencePhase: AppUpdateExperiencePhase = .idle(source: .unknown)
     private var refinementReviewSession: RefinementReviewSession?
+    private var externalProcessorResultSession: ExternalProcessorResultSession?
     private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
+    private var activeCapturedSourceSnapshot: CapturedSourceSnapshot?
     private var activeRecordingStartedAt: Date?
+    private var activeFloatingRefiningPresentationStartedAt: Date?
+    private var externalProcessorResultRetryTask: Task<Void, Never>?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -355,6 +373,7 @@ final class AppController: NSObject {
     static let startupHotkeyBootstrapMaxAttempts = 6
     static let modeCycleRepeatDelayNanoseconds: UInt64 = 350_000_000
     static let modeCycleRepeatIntervalNanoseconds: UInt64 = 170_000_000
+    static let minimumFloatingRefiningVisibilityNanoseconds: UInt64 = 320_000_000
     static let directUpdateDownloadPollMaxAttempts = 20
     static let directUpdateDownloadPollIntervalNanoseconds: UInt64 = 100_000_000
 
@@ -364,7 +383,8 @@ final class AppController: NSObject {
         isRecording: Bool,
         isStartingRecording: Bool,
         isProcessingRelease: Bool,
-        hasConfirmedSelectionForRewrite: Bool = false
+        hasConfirmedSelectionForRewrite: Bool = false,
+        workflowOverride: RecordingWorkflowOverride? = nil
     ) -> PressAction {
         if isProcessingRelease {
             return .cancelProcessing
@@ -376,6 +396,10 @@ final class AppController: NSObject {
 
         if isStartingRecording {
             return .ignore
+        }
+
+        if workflowOverride == .externalProcessorShortcut {
+            return .startRecording
         }
 
         if hasConfirmedSelectionForRewrite {
@@ -504,6 +528,44 @@ final class AppController: NSObject {
         }
     }
 
+    static func postProcessingSuccessAction(
+        workflowOverride: RecordingWorkflowOverride?,
+        didExternalProcessorSucceed: Bool
+    ) -> PostProcessingSuccessAction {
+        guard workflowOverride == .externalProcessorShortcut, didExternalProcessorSucceed else {
+            return .deliverTranscriptNormally
+        }
+
+        return .presentExternalProcessorResultPanel
+    }
+
+    static func capturedSourceSnapshot(
+        workflowOverride: RecordingWorkflowOverride?,
+        targetSnapshot: EditableTextTargetSnapshot,
+        sourceApplicationBundleID: String?
+    ) -> CapturedSourceSnapshot? {
+        guard workflowOverride == .externalProcessorShortcut else {
+            return nil
+        }
+        return ExternalProcessorSourceSnapshotSupport.capture(
+            from: targetSnapshot,
+            sourceApplicationBundleID: sourceApplicationBundleID
+        )
+    }
+
+    static func shouldResolveAutomaticRefinementPrompt(
+        workflowOverride: RecordingWorkflowOverride?,
+        promptPresetOverrideID: String?
+    ) -> Bool {
+        let normalizedPromptID = promptPresetOverrideID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalizedPromptID, !normalizedPromptID.isEmpty {
+            return true
+        }
+
+        return workflowOverride != .externalProcessorShortcut
+    }
+
     static func transcriptDeliveryRoute(
         for text: String,
         targetInspection: EditableTextTargetInspection
@@ -525,6 +587,28 @@ final class AppController: NSObject {
 
     static func refiningPresentationModeForNormalWorkflow() -> RefiningPresentationMode {
         .floatingOverlayAndStatusBar
+    }
+
+    @MainActor
+    static func pendingFloatingRefiningHideDelayNanoseconds(
+        presentationStartedAt: Date?,
+        now: Date = Date(),
+        minimumVisibilityNanoseconds: UInt64 = 320_000_000
+    ) -> UInt64 {
+        guard let presentationStartedAt else {
+            return 0
+        }
+
+        let elapsedNanoseconds = max(
+            0,
+            Int64((now.timeIntervalSince(presentationStartedAt) * 1_000_000_000).rounded())
+        )
+        let minimumVisibilityNanoseconds = Int64(minimumVisibilityNanoseconds)
+        guard elapsedNanoseconds < minimumVisibilityNanoseconds else {
+            return 0
+        }
+
+        return UInt64(minimumVisibilityNanoseconds - elapsedNanoseconds)
     }
 
     static func recentInsertionAutoReviewPresentationDecision(
@@ -802,11 +886,6 @@ final class AppController: NSObject {
             }
         }
 
-        guard let currentSelectedRange = snapshot.selectedTextRange,
-              currentSelectedRange == selectionAnchor.selectedRange else {
-            return false
-        }
-
         let normalizedAnchorText = ExternalProcessorOutputSanitizer.sanitize(selectionAnchor.selectedText)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedAnchorText.isEmpty else {
@@ -817,7 +896,10 @@ final class AppController: NSObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedSelectedText.isEmpty else {
             // Some editors expose selection range but not selected text after focus switches.
-            return true
+            guard let currentSelectedRange = snapshot.selectedTextRange else {
+                return false
+            }
+            return currentSelectedRange == selectionAnchor.selectedRange
         }
 
         return normalizedSelectedText == normalizedAnchorText
@@ -1242,11 +1324,28 @@ final class AppController: NSObject {
     func start() {
         floatingPanelController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.applyInterfaceTheme(model.interfaceTheme)
+        externalProcessorResultPanelController.applyInterfaceTheme(model.interfaceTheme)
         resultReviewPanelController.applyInterfaceTheme(model.interfaceTheme)
         selectionRegenerateHintController.applyInterfaceTheme(model.interfaceTheme)
         dictionarySuggestionToastController.applyInterfaceTheme(model.interfaceTheme)
         inputFallbackPanelController.onCopySuccess = { [weak self] in
             self?.statusBarController?.setTransientStatus("Copied")
+        }
+        externalProcessorResultPanelController.onInsertRequested = { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.insertExternalProcessorResultText(text)
+            }
+        }
+        externalProcessorResultPanelController.onCopyRequested = { [weak self] _ in
+            self?.statusBarController?.setTransientStatus("Copied")
+        }
+        externalProcessorResultPanelController.onRetryRequested = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.retryExternalProcessorResultText()
+            }
+        }
+        externalProcessorResultPanelController.onDismissRequested = { [weak self] in
+            self?.dismissExternalProcessorResultPanel()
         }
         resultReviewPanelController.onInsertRequested = { [weak self] text in
             Task { @MainActor [weak self] in
@@ -1290,6 +1389,7 @@ final class AppController: NSObject {
             .sink { [weak self] theme in
                 self?.floatingPanelController.applyInterfaceTheme(theme)
                 self?.inputFallbackPanelController.applyInterfaceTheme(theme)
+                self?.externalProcessorResultPanelController.applyInterfaceTheme(theme)
                 self?.resultReviewPanelController.applyInterfaceTheme(theme)
                 self?.selectionRegenerateHintController.applyInterfaceTheme(theme)
                 self?.dictionarySuggestionToastController.applyInterfaceTheme(theme)
@@ -1566,7 +1666,8 @@ final class AppController: NSObject {
             isRecording: speechRecorder.isRecording,
             isStartingRecording: isStartingRecording,
             isProcessingRelease: isProcessingRelease,
-            hasConfirmedSelectionForRewrite: hasConfirmedSelectionForRewrite()
+            hasConfirmedSelectionForRewrite: hasConfirmedSelectionForRewrite(),
+            workflowOverride: workflowOverride
         ) {
         case .ignore:
             return
@@ -1585,9 +1686,16 @@ final class AppController: NSObject {
 
         isStartingRecording = true
         activeRecordingWorkflowOverride = workflowOverride
+        activeCapturedSourceSnapshot = Self.capturedSourceSnapshot(
+            workflowOverride: workflowOverride,
+            targetSnapshot: editableTextTargetInspector.currentSnapshot(),
+            sourceApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        )
         activeRecordingStartedAt = nil
+        activeFloatingRefiningPresentationStartedAt = nil
         latestTranscript = ""
         cancelPostInjectionLearning()
+        clearExternalProcessorResultState()
         clearResultReviewState()
         statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
@@ -1597,14 +1705,17 @@ final class AppController: NSObject {
 
             let permissionsReady = await self.prepareForRecording()
             guard permissionsReady else {
-                self.activeRecordingWorkflowOverride = nil
+                self.clearActiveRecordingWorkflowState()
                 self.isStartingRecording = false
                 return
             }
 
             do {
                 self.speechRecorder.updateLocale(identifier: self.model.selectedLanguage.localeIdentifier)
-                self.floatingPanelController.showRecording(transcript: "")
+                self.floatingPanelController.showRecording(
+                    transcript: "",
+                    sourcePreviewText: self.activeCapturedSourceSnapshot?.previewText
+                )
                 self.model.updateOverlayRecording(transcript: "", level: 0)
                 self.statusBarController?.setRecording(true)
 
@@ -1618,11 +1729,11 @@ final class AppController: NSObject {
                 self.floatingPanelController.hide()
                 self.model.hideOverlay()
                 if case let asrError as RemoteASRStreamingError = error, asrError == .cancelled {
-                    self.activeRecordingWorkflowOverride = nil
+                    self.clearActiveRecordingWorkflowState()
                     self.isStartingRecording = false
                     return
                 }
-                self.activeRecordingWorkflowOverride = nil
+                self.clearActiveRecordingWorkflowState()
                 self.presentTransientError(error.localizedDescription)
             }
 
@@ -1640,6 +1751,7 @@ final class AppController: NSObject {
                     await self.realtimeASRSessionCoordinator.cancelConnecting()
                     self.speechRecorder.cancelImmediately()
                     self.isStartingRecording = false
+                    self.clearActiveRecordingWorkflowState()
                     self.statusBarController?.setRecording(false)
                     self.floatingPanelController.hide()
                     self.model.hideOverlay()
@@ -1680,7 +1792,7 @@ final class AppController: NSObject {
                 self.model.hideOverlay()
                 self.statusBarController?.setTransientStatus(nil)
                 self.isProcessingRelease = false
-                self.activeRecordingWorkflowOverride = nil
+                self.clearActiveRecordingWorkflowState()
                 return
             }
 
@@ -1692,7 +1804,8 @@ final class AppController: NSObject {
             let finalText = await self.refineIfNeeded(
                 captured,
                 workflow: workflow,
-                workflowOverride: self.activeRecordingWorkflowOverride
+                workflowOverride: self.activeRecordingWorkflowOverride,
+                sourceSnapshot: self.activeCapturedSourceSnapshot
             )
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
@@ -1701,8 +1814,22 @@ final class AppController: NSObject {
                 workflowOverride: self.activeRecordingWorkflowOverride,
                 didExternalProcessorSucceed: didSucceed
             )
+            let successAction = Self.postProcessingSuccessAction(
+                workflowOverride: self.activeRecordingWorkflowOverride,
+                didExternalProcessorSucceed: didSucceed
+            )
 
-            if failureAction == .surfaceProcessorFailure {
+            if successAction == .presentExternalProcessorResultPanel {
+                await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
+                self.presentExternalProcessorResultPanel(
+                    text: finalText,
+                    sourceText: captured,
+                    workflowOverride: self.activeRecordingWorkflowOverride,
+                    sourceApplicationBundleID: self.activeCapturedSourceSnapshot?.sourceApplicationBundleID,
+                    recordingDurationMilliseconds: recordingDurationMilliseconds
+                )
+            } else if failureAction == .surfaceProcessorFailure {
+                await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                 let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
                 let trimmedFailureMessage = processorFailureMessage?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1718,10 +1845,12 @@ final class AppController: NSObject {
                     targetInspection: targetSnapshot.inspection
                 ) {
                 case .emptyResult:
+                    await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                     self.recentInsertionRewriteCoordinator.cancelTracking()
                     self.statusBarController?.setTransientStatus(nil)
                     self.floatingPanelController.hide()
                 case .injectableTarget:
+                    await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                     do {
                         let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
                         self.statusBarController?.setTransientStatus("Injected")
@@ -1746,6 +1875,7 @@ final class AppController: NSObject {
                     }
                     self.floatingPanelController.hide()
                 case .fallbackPanel:
+                    await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                     self.recentInsertionRewriteCoordinator.cancelTracking()
                     if let payload = InputFallbackPanelPayload(text: finalText) {
                         self.model.recordHistoryEntry(
@@ -1759,7 +1889,7 @@ final class AppController: NSObject {
 
             self.model.hideOverlay()
             self.isProcessingRelease = false
-            self.activeRecordingWorkflowOverride = nil
+            self.clearActiveRecordingWorkflowState()
         }
     }
 
@@ -1771,7 +1901,7 @@ final class AppController: NSObject {
         cancelPostInjectionLearning()
         clearResultReviewState()
         isProcessingRelease = false
-        activeRecordingWorkflowOverride = nil
+        clearActiveRecordingWorkflowState()
         latestTranscript = ""
         statusBarController?.setRecording(false)
         statusBarController?.setTransientStatus(nil)
@@ -1779,11 +1909,50 @@ final class AppController: NSObject {
         model.hideOverlay()
     }
 
+    private func clearActiveRecordingWorkflowState() {
+        activeRecordingWorkflowOverride = nil
+        activeCapturedSourceSnapshot = nil
+        activeFloatingRefiningPresentationStartedAt = nil
+    }
+
     private func presentInputFallbackPanel(_ payload: InputFallbackPanelPayload) {
         floatingPanelController.hide(immediately: true) { [weak self] in
             guard let self else { return }
             self.inputFallbackPanelController.show(payload: payload)
         }
+    }
+
+    private func presentExternalProcessorResultPanel(
+        text: String,
+        sourceText: String,
+        workflowOverride: RecordingWorkflowOverride?,
+        sourceApplicationBundleID: String?,
+        recordingDurationMilliseconds: Int
+    ) {
+        guard let payload = ExternalProcessorResultPanelPayload(
+            resultText: text,
+            originalText: sourceText
+        ) else {
+            presentTransientError("External processor returned unreadable output.")
+            return
+        }
+
+        externalProcessorResultRetryTask?.cancel()
+        externalProcessorResultRetryTask = nil
+        externalProcessorResultSession = ExternalProcessorResultSession(
+            payload: payload,
+            sourceText: sourceText,
+            workflowOverride: workflowOverride,
+            sourceApplicationBundleID: sourceApplicationBundleID,
+            recordingDurationMilliseconds: max(0, recordingDurationMilliseconds)
+        )
+        selectionRegenerateHintController.hide()
+        resultReviewPanelController.hide()
+        floatingPanelController.hide(immediately: true)
+        model.hideOverlay()
+        statusBarController?.setTransientStatus(nil)
+        inputFallbackPanelController.hide()
+        externalProcessorResultPanelController.show(payload: payload)
     }
 
     private func presentResultReviewPanel(
@@ -1837,11 +2006,23 @@ final class AppController: NSObject {
         resultReviewRetryTask = nil
         refinementReviewSession = session
         selectionRegenerateHintController.hide()
+        clearExternalProcessorResultState()
         floatingPanelController.hide(immediately: true)
         model.hideOverlay()
         statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
         resultReviewPanelController.show(payload: payload)
+    }
+
+    private func clearExternalProcessorResultState() {
+        externalProcessorResultRetryTask?.cancel()
+        externalProcessorResultRetryTask = nil
+        externalProcessorResultSession = nil
+        externalProcessorResultPanelController.hide()
+    }
+
+    private func dismissExternalProcessorResultPanel() {
+        clearExternalProcessorResultState()
     }
 
     private func updateResultReviewPromptSelection(_ presetID: String) {
@@ -2066,6 +2247,123 @@ final class AppController: NSObject {
                 if let reviewPayload {
                     self.resultReviewPanelController.show(payload: reviewPayload)
                 }
+                self.presentTransientError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func retryExternalProcessorResultText() {
+        guard let session = externalProcessorResultSession else { return }
+
+        externalProcessorResultRetryTask?.cancel()
+        externalProcessorResultPanelController.hide()
+
+        externalProcessorResultRetryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.externalProcessorResultRetryTask = nil
+            }
+
+            let workflow = Self.effectiveProcessingWorkflow(
+                postProcessingMode: self.model.postProcessingMode,
+                refinementProvider: self.model.refinementProvider,
+                override: session.workflowOverride
+            )
+            let refinedText = await self.refineIfNeeded(
+                session.sourceText,
+                workflow: workflow,
+                workflowOverride: session.workflowOverride
+            )
+            guard !Task.isCancelled else { return }
+
+            let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
+            let successAction = Self.postProcessingSuccessAction(
+                workflowOverride: session.workflowOverride,
+                didExternalProcessorSucceed: didSucceed
+            )
+
+            if successAction == .presentExternalProcessorResultPanel {
+                self.presentExternalProcessorResultPanel(
+                    text: refinedText,
+                    sourceText: session.sourceText,
+                    workflowOverride: session.workflowOverride,
+                    sourceApplicationBundleID: session.sourceApplicationBundleID,
+                    recordingDurationMilliseconds: session.recordingDurationMilliseconds
+                )
+                return
+            }
+
+            let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
+            let trimmedFailureMessage = processorFailureMessage?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let failureMessage = trimmedFailureMessage.isEmpty
+                ? "Processor retry failed. Previous result is kept."
+                : trimmedFailureMessage
+            self.externalProcessorResultPanelController.show(payload: session.payload)
+            self.presentTransientError(failureMessage)
+        }
+    }
+
+    private func insertExternalProcessorResultText(_ text: String) {
+        guard let session = externalProcessorResultSession else { return }
+
+        let trimmedText = ExternalProcessorOutputSanitizer.sanitize(text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            clearExternalProcessorResultState()
+            statusBarController?.setTransientStatus(nil)
+            return
+        }
+
+        let currentPayload = session.payload
+        externalProcessorResultPanelController.hide()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.restoreResultReviewSourceApplicationIfNeeded(
+                    bundleIdentifier: session.sourceApplicationBundleID
+                )
+                let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
+                switch Self.transcriptDeliveryRoute(
+                    for: trimmedText,
+                    targetInspection: targetSnapshot.inspection
+                ) {
+                case .emptyResult:
+                    self.clearExternalProcessorResultState()
+                    self.statusBarController?.setTransientStatus(nil)
+                case .injectableTarget:
+                    let injectionRecord = try await self.textInjector.injectAndRecord(text: trimmedText)
+                    self.clearExternalProcessorResultState()
+                    self.statusBarController?.setTransientStatus("Injected")
+                    self.model.recordHistoryEntry(
+                        text: trimmedText,
+                        recordingDurationMilliseconds: session.recordingDurationMilliseconds
+                    )
+                    self.beginPostInjectionLearning(
+                        targetSnapshot: targetSnapshot,
+                        sourceApplicationOverride: session.sourceApplicationBundleID,
+                        injectionRecord: injectionRecord
+                    )
+                    self.startRecentInsertionRewriteTracking(
+                        rawTranscript: session.sourceText,
+                        insertedText: injectionRecord.text,
+                        appliedPromptPresetID: nil,
+                        targetSnapshot: targetSnapshot,
+                        sourceApplicationBundleID: session.sourceApplicationBundleID
+                    )
+                case .fallbackPanel:
+                    self.clearExternalProcessorResultState()
+                    if let payload = InputFallbackPanelPayload(text: trimmedText) {
+                        self.model.recordHistoryEntry(
+                            text: trimmedText,
+                            recordingDurationMilliseconds: session.recordingDurationMilliseconds
+                        )
+                        self.presentInputFallbackPanel(payload)
+                    }
+                }
+            } catch {
+                self.externalProcessorResultPanelController.show(payload: currentPayload)
                 self.presentTransientError(error.localizedDescription)
             }
         }
@@ -2505,11 +2803,17 @@ final class AppController: NSObject {
                 guard let self else { return }
                 switch presentation {
                 case .transcribing(let overlayTranscript, let statusText):
-                    self.floatingPanelController.showRefining(transcript: "Transcribing…")
+                    self.floatingPanelController.showRefining(
+                        transcript: "Transcribing…",
+                        sourcePreviewText: self.activeCapturedSourceSnapshot?.previewText
+                    )
                     self.model.updateOverlayRefining(transcript: overlayTranscript)
                     self.statusBarController?.setTransientStatus(statusText)
                 case .refining(let overlayTranscript, let statusText):
-                    self.floatingPanelController.showRefining(transcript: localFallback)
+                    self.floatingPanelController.showRefining(
+                        transcript: localFallback,
+                        sourcePreviewText: self.activeCapturedSourceSnapshot?.previewText
+                    )
                     self.model.updateOverlayRefining(transcript: overlayTranscript)
                     self.statusBarController?.setTransientStatus(statusText)
                 }
@@ -2574,6 +2878,7 @@ final class AppController: NSObject {
         activeRecordingStartedAt = nil
 
         isStartingRecording = false
+        clearActiveRecordingWorkflowState()
         statusBarController?.setRecording(false)
         floatingPanelController.hide()
         model.hideOverlay()
@@ -2592,7 +2897,8 @@ final class AppController: NSObject {
 
     private func resolvedRefinementPrompt(
         for workflow: ProcessingWorkflowSelection,
-        promptPresetOverrideID: String? = nil
+        promptPresetOverrideID: String? = nil,
+        workflowOverride: RecordingWorkflowOverride? = nil
     ) -> ResolvedPromptPreset? {
         guard workflow.postProcessingMode == .refinement else {
             return nil
@@ -2605,6 +2911,13 @@ final class AppController: NSObject {
             }
         }
 
+        guard Self.shouldResolveAutomaticRefinementPrompt(
+            workflowOverride: workflowOverride,
+            promptPresetOverrideID: promptPresetOverrideID
+        ) else {
+            return nil
+        }
+
         let destination = promptDestinationInspector.currentDestinationContext()
         return model.resolvedPromptPreset(for: .voicePi, destination: destination)
     }
@@ -2614,6 +2927,7 @@ final class AppController: NSObject {
         workflow: ProcessingWorkflowSelection? = nil,
         workflowOverride: RecordingWorkflowOverride? = nil,
         promptPresetOverrideID: String? = nil,
+        sourceSnapshot: CapturedSourceSnapshot? = nil,
         refiningPresentationMode: RefiningPresentationMode = .floatingOverlayAndStatusBar
     ) async -> String {
         let effectiveWorkflow = workflow ?? Self.effectiveProcessingWorkflow(
@@ -2623,7 +2937,8 @@ final class AppController: NSObject {
         )
         let resolvedPrompt = resolvedRefinementPrompt(
             for: effectiveWorkflow,
-            promptPresetOverrideID: promptPresetOverrideID
+            promptPresetOverrideID: promptPresetOverrideID,
+            workflowOverride: workflowOverride ?? activeRecordingWorkflowOverride
         )
         if effectiveWorkflow.refinementProvider == .externalProcessor {
             await externalProcessorRefiner.resetLastInvocation()
@@ -2643,6 +2958,7 @@ final class AppController: NSObject {
             configuration: model.llmConfiguration,
             refinementPromptTitle: resolvedPrompt?.title,
             resolvedRefinementPrompt: resolvedPrompt?.middleSection,
+            sourceSnapshot: sourceSnapshot,
             dictionaryEntries: model.enabledDictionaryEntries,
             refiner: llmRefiner,
             translator: appleTranslateService,
@@ -2653,7 +2969,11 @@ final class AppController: NSObject {
                     break
                 case .refining(let overlayTranscript, let statusText):
                     if refiningPresentationMode == .floatingOverlayAndStatusBar {
-                        self.floatingPanelController.showRefining(transcript: overlayTranscript)
+                        self.activeFloatingRefiningPresentationStartedAt = Date()
+                        self.floatingPanelController.showRefining(
+                            transcript: overlayTranscript,
+                            sourcePreviewText: sourceSnapshot?.previewText
+                        )
                         self.model.updateOverlayRefining(transcript: overlayTranscript)
                     }
                     self.statusBarController?.setTransientStatus(statusText)
@@ -2663,6 +2983,21 @@ final class AppController: NSObject {
                 self?.presentTransientError(message)
             }
         )
+    }
+
+    private func ensureFloatingRefiningOverlayRemainsVisibleIfNeeded() async {
+        guard activeRecordingWorkflowOverride == .externalProcessorShortcut else {
+            return
+        }
+
+        let delay = Self.pendingFloatingRefiningHideDelayNanoseconds(
+            presentationStartedAt: activeFloatingRefiningPresentationStartedAt
+        )
+        guard delay > 0 else {
+            return
+        }
+
+        try? await Task.sleep(nanoseconds: delay)
     }
 
     private func prepareForRecording() async -> Bool {
