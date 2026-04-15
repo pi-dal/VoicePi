@@ -13,6 +13,8 @@ BINARY_PATH="$TMP_DIR/voicepi-benchmark"
 
 swiftc \
   -parse-as-library \
+  -O \
+  -whole-module-optimization \
   Sources/VoicePi/TextInjectionTiming.swift \
   Sources/VoicePi/SpeechRecorderStopPolicy.swift \
   Sources/VoicePi/RealtimeOverlayUpdateGate.swift \

@@ -1,5 +1,14 @@
 import Foundation
 
+extension Duration {
+    var wholeMilliseconds: Int {
+        let components = components
+        let secondsMilliseconds = components.seconds * 1_000
+        let attosecondsMilliseconds = components.attoseconds / 1_000_000_000_000_000
+        return Int(secondsMilliseconds + attosecondsMilliseconds)
+    }
+}
+
 struct TextInjectionTiming: Equatable {
     let inputSourceSwitchSettleDelay: Duration
     let clipboardSettleDelay: Duration
@@ -31,22 +40,15 @@ struct TextInjectionExecutionPlan: Equatable {
     }
 
     var blockingLatencyMilliseconds: Int {
-        var total = durationMilliseconds(timing.clipboardSettleDelay)
-            + durationMilliseconds(timing.keyPressInterval)
-            + durationMilliseconds(timing.postPasteSettleDelay)
+        var total = timing.clipboardSettleDelay.wholeMilliseconds
+            + timing.keyPressInterval.wholeMilliseconds
+            + timing.postPasteSettleDelay.wholeMilliseconds
 
         if needsInputSourceSwitch {
-            total += durationMilliseconds(timing.inputSourceSwitchSettleDelay)
-            total += durationMilliseconds(timing.restoreInputSourceSettleDelay)
+            total += timing.inputSourceSwitchSettleDelay.wholeMilliseconds
+            total += timing.restoreInputSourceSettleDelay.wholeMilliseconds
         }
 
         return total
-    }
-
-    private func durationMilliseconds(_ duration: Duration) -> Int {
-        let components = duration.components
-        let secondsMilliseconds = components.seconds * 1_000
-        let attosecondsMilliseconds = components.attoseconds / 1_000_000_000_000_000
-        return Int(secondsMilliseconds + attosecondsMilliseconds)
     }
 }

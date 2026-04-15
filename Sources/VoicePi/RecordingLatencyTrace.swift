@@ -124,14 +124,40 @@ protocol RecordingLatencyReporting {
     func report(_ report: RecordingLatencyTrace.Report)
 }
 
-struct UnifiedLogRecordingLatencyReporter: RecordingLatencyReporting {
+enum RecordingLatencyLogPrivacy: Equatable {
+    case `public`
+    case `private`
+}
+
+protocol RecordingLatencyLogWriting {
+    func log(summary: String, privacy: RecordingLatencyLogPrivacy)
+}
+
+struct OSLogRecordingLatencyWriter: RecordingLatencyLogWriting {
     private let logger: Logger
 
     init(logger: Logger = Logger(subsystem: "VoicePi", category: "Performance")) {
         self.logger = logger
     }
 
+    func log(summary: String, privacy: RecordingLatencyLogPrivacy) {
+        switch privacy {
+        case .public:
+            logger.log("\(summary, privacy: .public)")
+        case .private:
+            logger.log("\(summary, privacy: .private)")
+        }
+    }
+}
+
+struct UnifiedLogRecordingLatencyReporter: RecordingLatencyReporting {
+    private let logWriter: any RecordingLatencyLogWriting
+
+    init(logWriter: any RecordingLatencyLogWriting = OSLogRecordingLatencyWriter()) {
+        self.logWriter = logWriter
+    }
+
     func report(_ report: RecordingLatencyTrace.Report) {
-        logger.log("\(report.summary, privacy: .public)")
+        logWriter.log(summary: report.summary, privacy: .private)
     }
 }

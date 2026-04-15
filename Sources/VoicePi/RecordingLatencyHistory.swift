@@ -179,7 +179,11 @@ struct RecordingLatencyRecentSummary: Equatable {
     }
 }
 
-final class RecordingLatencyHistoryStore {
+protocol RecordingLatencyHistoryAppending {
+    func append(_ sample: RecordingLatencySample) throws
+}
+
+final class RecordingLatencyHistoryStore: RecordingLatencyHistoryAppending {
     private let historyFileURL: URL
     private let maximumSampleCount: Int
     private let fileManager: FileManager
@@ -208,6 +212,12 @@ final class RecordingLatencyHistoryStore {
         )
     }
 
+    private func corruptBackupURL() -> URL {
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        return historyFileURL.deletingLastPathComponent()
+            .appendingPathComponent("\(historyFileURL.lastPathComponent).corrupt-\(timestamp)", isDirectory: false)
+    }
+
     func load() throws -> RecordingLatencyHistoryDocument {
         if !fileManager.fileExists(atPath: historyFileURL.path) {
             let document = RecordingLatencyHistoryDocument()
@@ -219,7 +229,9 @@ final class RecordingLatencyHistoryStore {
             let data = try Data(contentsOf: historyFileURL)
             return try decoder.decode(RecordingLatencyHistoryDocument.self, from: data)
         } catch {
-            try? fileManager.removeItem(at: historyFileURL)
+            let backupURL = corruptBackupURL()
+            try? fileManager.removeItem(at: backupURL)
+            try? fileManager.moveItem(at: historyFileURL, to: backupURL)
             let document = RecordingLatencyHistoryDocument()
             try save(document)
             return document
@@ -250,15 +262,23 @@ final class RecordingLatencyHistoryStore {
 }
 
 struct RecordingLatencyHistoryReporter: RecordingLatencyReporting {
-    private let store: RecordingLatencyHistoryStore?
+    private let store: (any RecordingLatencyHistoryAppending)?
+    private let queue: DispatchQueue
 
-    init(store: RecordingLatencyHistoryStore? = try? RecordingLatencyHistoryStore()) {
+    init(
+        store: (any RecordingLatencyHistoryAppending)? = try? RecordingLatencyHistoryStore(),
+        queue: DispatchQueue = DispatchQueue(label: "VoicePi.RecordingLatencyHistoryReporter")
+    ) {
         self.store = store
+        self.queue = queue
     }
 
     func report(_ report: RecordingLatencyTrace.Report) {
         guard let store else { return }
-        try? store.append(RecordingLatencySample(report: report))
+        let sample = RecordingLatencySample(report: report)
+        queue.async {
+            try? store.append(sample)
+        }
     }
 }
 

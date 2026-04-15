@@ -3,6 +3,22 @@ import Testing
 
 struct RecordingLatencyTraceTests {
     @Test
+    func unifiedLogReporterUsesPrivatePrivacyForSummary() {
+        let sink = RecordingLatencyLogSinkStub()
+        let reporter = UnifiedLogRecordingLatencyReporter(logWriter: sink)
+        let report = RecordingLatencyTrace(originTimestamp: 0).report(
+            outcome: .failed("contains user text"),
+            finishedAt: 1
+        )
+
+        reporter.report(report)
+
+        #expect(sink.entries == [
+            .init(summary: report.summary, privacy: .private)
+        ])
+    }
+
+    @Test
     func firstPartialUsesEarliestObservedTimestamp() {
         var trace = RecordingLatencyTrace(originTimestamp: 10)
 
@@ -52,5 +68,18 @@ struct RecordingLatencyTraceTests {
             report.summary ==
                 "recording_latency outcome=failed total_ms=1110 recording_started_ms=55 stop_requested_ms=880 transcript_resolved_ms=940 reason=\"Injection timeout\""
         )
+    }
+}
+
+private final class RecordingLatencyLogSinkStub: RecordingLatencyLogWriting, @unchecked Sendable {
+    private(set) var entries: [Entry] = []
+
+    struct Entry: Equatable {
+        let summary: String
+        let privacy: RecordingLatencyLogPrivacy
+    }
+
+    func log(summary: String, privacy: RecordingLatencyLogPrivacy) {
+        entries.append(.init(summary: summary, privacy: privacy))
     }
 }

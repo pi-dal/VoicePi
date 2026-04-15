@@ -207,9 +207,6 @@ struct PerformanceBenchmarkReport: Equatable {
     }
 
     private static func durationMilliseconds(_ duration: Duration) -> Int {
-        let components = duration.components
-        let secondsMilliseconds = components.seconds * 1_000
-        let attosecondsMilliseconds = components.attoseconds / 1_000_000_000_000_000
-        return Int(secondsMilliseconds + attosecondsMilliseconds)
+        duration.wholeMilliseconds
     }
 }
