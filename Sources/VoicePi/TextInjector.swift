@@ -43,8 +43,11 @@ final class TextInjector {
     static let shared = TextInjector()
 
     private let pasteboard = NSPasteboard.general
+    private let timing: TextInjectionTiming
 
-    private init() {}
+    init(timing: TextInjectionTiming = .default) {
+        self.timing = timing
+    }
 
     nonisolated static func performOnMainThread<T: Sendable>(
         _ operation: @MainActor @Sendable () throws -> T
@@ -78,24 +81,28 @@ final class TextInjector {
         let originalPasteboard = capturePasteboardItems()
         let originalInputSource = currentInputSourceSnapshot()
 
-        var switchedToASCII = false
+        let plan = TextInjectionExecutionPlan.make(
+            needsInputSourceSwitch: originalInputSource?.isCJK == true,
+            timing: timing
+        )
+        let switchedToASCII = plan.needsInputSourceSwitch
 
         do {
-            if let originalInputSource, originalInputSource.isCJK {
-                switchedToASCII = try switchToASCIIInputSource()
-                try await Task.sleep(for: .milliseconds(90))
+            if switchedToASCII {
+                _ = try switchToASCIIInputSource()
+                try await Task.sleep(for: plan.timing.inputSourceSwitchSettleDelay)
             }
 
             try setClipboard(text: text)
-            try await Task.sleep(for: .milliseconds(40))
+            try await Task.sleep(for: plan.timing.clipboardSettleDelay)
 
-            try simulateCommandV()
-            try await Task.sleep(for: .milliseconds(220))
+            try await simulateCommandV(keyPressInterval: plan.timing.keyPressInterval)
+            try await Task.sleep(for: plan.timing.postPasteSettleDelay)
 
             restorePasteboardItems(originalPasteboard)
 
             if switchedToASCII {
-                try await Task.sleep(for: .milliseconds(120))
+                try await Task.sleep(for: plan.timing.restoreInputSourceSettleDelay)
                 try restoreInputSource(originalInputSource)
             }
         } catch {
@@ -283,7 +290,7 @@ final class TextInjector {
 
     // MARK: - Keyboard Events
 
-    private func simulateCommandV() throws {
+    private func simulateCommandV(keyPressInterval: Duration) async throws {
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             throw TextInjectorError.eventSourceUnavailable
         }
@@ -301,7 +308,7 @@ final class TextInjector {
         keyUp.flags = .maskCommand
 
         keyDown.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.025)
+        try await Task.sleep(for: keyPressInterval)
         keyUp.post(tap: .cghidEventTap)
     }
 }

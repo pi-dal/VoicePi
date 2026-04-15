@@ -1,5 +1,43 @@
 import AppKit
 
+struct FloatingPanelSizingState: Equatable {
+    private(set) var lockedRecordingWidth: CGFloat?
+
+    mutating func preferredSize(
+        for phase: FloatingPanelController.Phase,
+        transcript: String,
+        sourcePreview: String?
+    ) -> CGSize {
+        switch phase {
+        case .recording:
+            let computedWidth = FloatingPanelSupport.bannerPreferredWidth(
+                for: phase,
+                transcript: transcript,
+                sourcePreview: sourcePreview
+            )
+            let width = lockedRecordingWidth ?? computedWidth
+            lockedRecordingWidth = width
+            return CGSize(
+                width: width,
+                height: FloatingPanelSupport.bannerPreferredHeight(sourcePreview: sourcePreview)
+            )
+        case .refining:
+            lockedRecordingWidth = nil
+            return CGSize(
+                width: FloatingPanelSupport.bannerPreferredWidth(
+                    for: phase,
+                    transcript: transcript,
+                    sourcePreview: sourcePreview
+                ),
+                height: FloatingPanelSupport.bannerPreferredHeight(sourcePreview: sourcePreview)
+            )
+        case .modeSwitch:
+            lockedRecordingWidth = nil
+            return CGSize(width: 452, height: 136)
+        }
+    }
+}
+
 enum FloatingPanelSupport {
     static let compactBannerWidth: CGFloat = 260
     static let maximumBannerWidth: CGFloat = 660
@@ -13,16 +51,10 @@ enum FloatingPanelSupport {
         for phase: FloatingPanelController.Phase,
         transcript: String
     ) -> String {
-        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        switch phase {
-        case .recording:
-            return trimmed.isEmpty ? "正在聆听…" : transcript
-        case .refining:
-            return trimmed.isEmpty ? "Refining..." : transcript
-        case .modeSwitch:
-            return transcript
-        }
+        FloatingPanelTranscriptPresentationState.displayedTranscript(
+            for: .init(phase),
+            transcript: transcript
+        )
     }
 
     static func bannerPreferredWidth(
@@ -66,5 +98,18 @@ enum FloatingPanelSupport {
     static func bannerPreferredHeight(sourcePreview: String?) -> CGFloat {
         _ = sourcePreview
         return compactBannerHeight
+    }
+}
+
+extension FloatingPanelTranscriptPresentationState.Phase {
+    init(_ phase: FloatingPanelController.Phase) {
+        switch phase {
+        case .recording:
+            self = .recording
+        case .refining:
+            self = .refining
+        case .modeSwitch:
+            self = .modeSwitch
+        }
     }
 }

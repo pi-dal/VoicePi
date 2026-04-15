@@ -1876,6 +1876,15 @@ final class AppModel: ObservableObject {
         recordingState = .recording
     }
 
+    func updateOverlayRecordingLevel(_ level: CGFloat) {
+        overlayState = OverlayState(
+            phase: .recording,
+            transcript: overlayState.transcript,
+            level: max(0, min(level, 1))
+        )
+        recordingState = .recording
+    }
+
     func updateOverlayRefining(transcript: String = "Refining...") {
         overlayState = OverlayState(
             phase: .refining,
