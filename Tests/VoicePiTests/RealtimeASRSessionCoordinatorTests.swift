@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import VoicePi
 
-@MainActor
 @Suite(.serialized)
 struct RealtimeASRSessionCoordinatorTests {
     @Test
@@ -27,7 +26,7 @@ struct RealtimeASRSessionCoordinatorTests {
         client.resumeConnectSuccess()
         try? await Task.sleep(nanoseconds: 20_000_000)
         client.emit(.partial(text: "hello"))
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        await waitUntilPartialCount(in: sink, expectedCount: 1)
 
         #expect(sink.partialTexts == ["hello"])
         #expect(client.sentFrames == [Data([1, 2, 3]), Data([4, 5, 6])])
@@ -93,7 +92,8 @@ struct RealtimeASRSessionCoordinatorTests {
         client.resumeConnectFailure(RemoteASRStreamingError.connectFailed("timeout"))
         try? await Task.sleep(nanoseconds: 20_000_000)
 
-        #expect(coordinator.degradedToBatchFallback)
+        let status = await coordinator.statusSnapshot()
+        #expect(status.degradedToBatchFallback)
         #expect(sink.errors.isEmpty)
     }
 
@@ -137,14 +137,16 @@ struct RealtimeASRSessionCoordinatorTests {
         await coordinator.handleCapturedFrame(Data([1, 2, 3]))
         try? await Task.sleep(nanoseconds: 20_000_000)
 
-        #expect(coordinator.degradedToBatchFallback)
+        let status = await coordinator.statusSnapshot()
+        #expect(status.degradedToBatchFallback)
         #expect(sink.errors.isEmpty)
         #expect(client.closeCalls == 1)
     }
 
     private func waitUntilStreamingReady(_ coordinator: RealtimeASRSessionCoordinator) async {
         for _ in 0..<50 {
-            if coordinator.isRealtimeStreamingReady {
+            let status = await coordinator.statusSnapshot()
+            if status.isRealtimeStreamingReady {
                 return
             }
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -154,6 +156,18 @@ struct RealtimeASRSessionCoordinatorTests {
     private func waitUntilConnectSuspended(_ client: StreamingClientStub) async {
         for _ in 0..<50 {
             if client.isConnectSuspended {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    private func waitUntilPartialCount(
+        in sink: CallbackSink,
+        expectedCount: Int
+    ) async {
+        for _ in 0..<50 {
+            if sink.partialTexts.count >= expectedCount {
                 return
             }
             try? await Task.sleep(nanoseconds: 10_000_000)

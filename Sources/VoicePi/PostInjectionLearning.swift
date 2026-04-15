@@ -5,6 +5,24 @@ struct PostInjectionLearningConfiguration: Equatable {
     var stabilizationInterval: TimeInterval = 1.2
 }
 
+struct PostInjectionLearningRunRegistry: Equatable {
+    private(set) var activeRunID: UUID?
+
+    mutating func start(_ runID: UUID) {
+        activeRunID = runID
+    }
+
+    mutating func clear() {
+        activeRunID = nil
+    }
+
+    mutating func finish(_ runID: UUID) -> Bool {
+        guard activeRunID == runID else { return false }
+        activeRunID = nil
+        return true
+    }
+}
+
 struct PostInjectionLearningSession: Equatable {
     let id: UUID
     let insertedText: String
@@ -27,7 +45,7 @@ struct PostInjectionLearningSession: Equatable {
     }
 }
 
-final class PostInjectionLearningCoordinator {
+actor PostInjectionLearningCoordinator {
     private struct ActiveState {
         let session: PostInjectionLearningSession
         var referenceText: String
@@ -63,7 +81,13 @@ final class PostInjectionLearningCoordinator {
         )
     }
 
-    func cancelTracking() {
+    func cancelTracking(sessionID: UUID? = nil) {
+        guard let sessionID else {
+            activeState = nil
+            return
+        }
+
+        guard activeState?.session.id == sessionID else { return }
         activeState = nil
     }
 

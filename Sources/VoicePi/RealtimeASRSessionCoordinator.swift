@@ -1,7 +1,6 @@
 import Foundation
 
-@MainActor
-final class RealtimeASRSessionCoordinator {
+actor RealtimeASRSessionCoordinator {
     enum State: Equatable {
         case idle
         case recordingAndConnecting
@@ -18,6 +17,13 @@ final class RealtimeASRSessionCoordinator {
         let onPartial: @MainActor (String) -> Void
         let onFinal: @MainActor (String) -> Void
         let onTerminalError: @MainActor (String) -> Void
+    }
+
+    struct StatusSnapshot: Equatable {
+        let state: State
+        let isRealtimeStreamingReady: Bool
+        let degradedToBatchFallback: Bool
+        let hasCapturedAudio: Bool
     }
 
     nonisolated static let connectTimeoutSeconds: Double = 2.0
@@ -67,6 +73,15 @@ final class RealtimeASRSessionCoordinator {
         self.finalTimeoutSecondsValue = finalTimeoutSeconds
     }
 
+    func statusSnapshot() -> StatusSnapshot {
+        StatusSnapshot(
+            state: state,
+            isRealtimeStreamingReady: isRealtimeStreamingReady,
+            degradedToBatchFallback: degradedToBatchFallback,
+            hasCapturedAudio: hasCapturedAudio
+        )
+    }
+
     func start(
         configuration: RemoteASRConfiguration,
         backend: ASRBackend,
@@ -89,7 +104,7 @@ final class RealtimeASRSessionCoordinator {
             state = .recordingAndConnecting
         } catch {
             state = .failed
-            reportTerminalError(error.localizedDescription)
+            await reportTerminalError(error.localizedDescription)
             await cleanupAfterSession(clearCallbacks: true)
             state = .idle
             throw error
@@ -154,7 +169,7 @@ final class RealtimeASRSessionCoordinator {
                 state = .cancelled
             } else {
                 state = .failed
-                reportTerminalError(error.localizedDescription)
+                await reportTerminalError(error.localizedDescription)
             }
             await cleanupAfterSession(clearCallbacks: true)
             state = .idle
@@ -175,6 +190,15 @@ final class RealtimeASRSessionCoordinator {
         }
         await cleanupAfterSession(clearCallbacks: true)
         state = .idle
+    }
+
+    func handleCaptureBackpressureLimitExceeded() async {
+        switch state {
+        case .recordingAndConnecting, .drainingBufferedAudio, .recordingAndStreaming, .stoppingAndAwaitingRealtimeFinal:
+            await degradeToBatchFallback()
+        case .idle, .recordingWithBatchFallback, .completed, .failed, .cancelled:
+            break
+        }
     }
 
     private func runConnect(
@@ -235,10 +259,10 @@ final class RealtimeASRSessionCoordinator {
         switch event {
         case .partial(let text):
             guard isRealtimeStreamingReady else { return }
-            callbacks.onPartial(text)
+            await callbacks.onPartial(text)
         case .final(let text):
             latestFinalText = text
-            callbacks.onFinal(text)
+            await callbacks.onFinal(text)
         case .timeout, .closedByServer, .protocolError:
             switch state {
             case .recordingAndConnecting, .drainingBufferedAudio, .recordingAndStreaming:
@@ -267,10 +291,12 @@ final class RealtimeASRSessionCoordinator {
         }
     }
 
-    private func reportTerminalError(_ message: String) {
+    private func reportTerminalError(_ message: String) async {
         guard !hasReportedTerminalError else { return }
         hasReportedTerminalError = true
-        callbacks?.onTerminalError(message)
+        if let callbacks {
+            await callbacks.onTerminalError(message)
+        }
     }
 
     private func cleanupAfterSession(clearCallbacks: Bool) async {
@@ -299,7 +325,7 @@ final class RealtimeASRSessionCoordinator {
 
     private func failSession(message: String) async {
         state = .failed
-        reportTerminalError(message)
+        await reportTerminalError(message)
         await cleanupAfterSession(clearCallbacks: true)
         state = .idle
     }

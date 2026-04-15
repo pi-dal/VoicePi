@@ -47,6 +47,7 @@ final class SpeechRecorder: NSObject {
     weak var delegate: SpeechRecorderDelegate?
 
     private let audioEngine = AVAudioEngine()
+    private let stopPolicy: SpeechRecorderStopPolicy
 
     private var speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -70,8 +71,12 @@ final class SpeechRecorder: NSObject {
     private var captureFrameConverter: AVAudioConverter?
     private var captureOutputPCMFormat: AVAudioFormat?
 
-    init(localeIdentifier: String = "zh-CN") {
+    init(
+        localeIdentifier: String = "zh-CN",
+        stopPolicy: SpeechRecorderStopPolicy = .default
+    ) {
         self.localeIdentifier = localeIdentifier
+        self.stopPolicy = stopPolicy
         self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
         super.init()
         self.speechRecognizer?.defaultTaskHint = .dictation
@@ -254,8 +259,9 @@ final class SpeechRecorder: NSObject {
             stopContinuation = continuation
 
             stopFallbackTask?.cancel()
+            let fallbackDelay = stopPolicy.fallbackDelay(forCurrentTranscript: currentTranscript)
             stopFallbackTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 450_000_000)
+                try? await Task.sleep(for: fallbackDelay)
                 await MainActor.run {
                     guard let self else { return }
                     let fallback = self.latestTranscript.isEmpty ? currentTranscript : self.latestTranscript

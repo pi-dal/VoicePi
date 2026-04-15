@@ -45,4 +45,38 @@ struct FloatingPanelControllerTests {
         #expect(FloatingPanelSupport.bannerPreferredHeight(sourcePreview: nil) == 56)
         #expect(FloatingPanelSupport.bannerPreferredHeight(sourcePreview: "reference text") == 56)
     }
+
+    @Test
+    func transcriptPresentationStateSkipsLayoutWorkForRepeatedDisplayedText() {
+        var state = FloatingPanelTranscriptPresentationState()
+
+        let first = state.prepareUpdate(for: .recording, transcript: "hello")
+        let second = state.prepareUpdate(for: .recording, transcript: "hello")
+
+        #expect(first.requiresLayoutRecalculation)
+        #expect(!second.requiresLayoutRecalculation)
+        #expect(second.displayedText == "hello")
+    }
+
+    @Test
+    func transcriptPresentationStateTreatsRecordingPlaceholderAsStableText() {
+        var state = FloatingPanelTranscriptPresentationState()
+
+        let first = state.prepareUpdate(for: .recording, transcript: "   ")
+        let second = state.prepareUpdate(for: .recording, transcript: "\n")
+
+        #expect(first.displayedText == "正在聆听…")
+        #expect(!second.requiresLayoutRecalculation)
+    }
+
+    @Test
+    func transcriptPresentationStateInvalidatesLayoutWhenPhaseChanges() {
+        var state = FloatingPanelTranscriptPresentationState()
+
+        _ = state.prepareUpdate(for: .recording, transcript: "hello")
+        let refining = state.prepareDisplayedText("hello", for: .refining)
+
+        #expect(refining.requiresLayoutRecalculation)
+        #expect(refining.displayedText == "hello")
+    }
 }

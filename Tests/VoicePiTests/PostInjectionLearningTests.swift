@@ -4,17 +4,17 @@ import Testing
 
 struct PostInjectionLearningTests {
     @Test
-    func startsTrackingOnlyAfterExplicitSessionStart() {
+    func startsTrackingOnlyAfterExplicitSessionStart() async {
         let coordinator = PostInjectionLearningCoordinator()
         let baseTime = Date(timeIntervalSince1970: 1_700_003_000)
 
-        let beforeStart = coordinator.processSnapshot(
+        let beforeStart = await coordinator.processSnapshot(
             snapshot(target: "target-1", text: "Use PostgreSQL"),
             now: baseTime
         )
         #expect(beforeStart == nil)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "Use postgre",
                 targetIdentifier: "target-1",
@@ -23,17 +23,17 @@ struct PostInjectionLearningTests {
             )
         )
 
-        #expect(coordinator.isTracking)
+        #expect(await coordinator.isTracking)
     }
 
     @Test
-    func ignoresEditsAfterWatchWindowExpires() {
+    func ignoresEditsAfterWatchWindowExpires() async {
         let coordinator = PostInjectionLearningCoordinator(
             configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
         )
         let baseTime = Date(timeIntervalSince1970: 1_700_003_010)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "Use postgre",
                 targetIdentifier: "target-2",
@@ -42,21 +42,21 @@ struct PostInjectionLearningTests {
             )
         )
 
-        let suggestion = coordinator.processSnapshot(
+        let suggestion = await coordinator.processSnapshot(
             snapshot(target: "target-2", text: "Use PostgreSQL"),
             now: baseTime.addingTimeInterval(15.5)
         )
 
         #expect(suggestion == nil)
-        #expect(coordinator.isTracking == false)
+        #expect(await coordinator.isTracking == false)
     }
 
     @Test
-    func capturesMultipleStableSuggestionsWithinOneSession() throws {
+    func capturesMultipleStableSuggestionsWithinOneSession() async throws {
         let coordinator = PostInjectionLearningCoordinator()
         let baseTime = Date(timeIntervalSince1970: 1_700_003_020)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "Use postgre with cloud flare in production",
                 targetIdentifier: "target-3",
@@ -66,30 +66,30 @@ struct PostInjectionLearningTests {
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-3", text: "Use PostgreSQL with cloud flare in production"),
                 now: baseTime.addingTimeInterval(0.2)
             ) == nil
         )
 
         let firstSuggestion = try #require(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-3", text: "Use PostgreSQL with cloud flare in production"),
                 now: baseTime.addingTimeInterval(1.5)
             )
         )
 
         #expect(firstSuggestion.proposedCanonical == "PostgreSQL")
-        #expect(coordinator.isTracking == true)
+        #expect(await coordinator.isTracking == true)
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-3", text: "Use PostgreSQL with Cloudflare in production"),
                 now: baseTime.addingTimeInterval(1.8)
             ) == nil
         )
 
         let secondSuggestion = try #require(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-3", text: "Use PostgreSQL with Cloudflare in production"),
                 now: baseTime.addingTimeInterval(3.1)
             )
@@ -99,13 +99,13 @@ struct PostInjectionLearningTests {
     }
 
     @Test
-    func waitsForStableTextBeforeEmittingSuggestion() {
+    func waitsForStableTextBeforeEmittingSuggestion() async {
         let coordinator = PostInjectionLearningCoordinator(
             configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
         )
         let baseTime = Date(timeIntervalSince1970: 1_700_003_030)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "postgre",
                 targetIdentifier: "target-4",
@@ -115,19 +115,19 @@ struct PostInjectionLearningTests {
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-4", text: "PostgreSQL"),
                 now: baseTime.addingTimeInterval(0.3)
             ) == nil
         )
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-4", text: "PostgreSQL"),
                 now: baseTime.addingTimeInterval(1.0)
             ) == nil
         )
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-4", text: "PostgreSQL"),
                 now: baseTime.addingTimeInterval(1.6)
             ) != nil
@@ -135,13 +135,13 @@ struct PostInjectionLearningTests {
     }
 
     @Test
-    func adoptsFullFieldTextAsBaselineWhenExistingPrefixSurroundsInsertedText() {
+    func adoptsFullFieldTextAsBaselineWhenExistingPrefixSurroundsInsertedText() async {
         let coordinator = PostInjectionLearningCoordinator(
             configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
         )
         let baseTime = Date(timeIntervalSince1970: 1_700_003_035)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "你好",
                 targetIdentifier: "target-prefix",
@@ -151,28 +151,28 @@ struct PostInjectionLearningTests {
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-prefix", text: "M你好"),
                 now: baseTime.addingTimeInterval(0.3)
             ) == nil
         )
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-prefix", text: "M你好"),
                 now: baseTime.addingTimeInterval(1.7)
             ) == nil
         )
-        #expect(coordinator.isTracking)
+        #expect(await coordinator.isTracking)
     }
 
     @Test
-    func stillLearnsReplacementAfterAdoptingPrefixedBaseline() throws {
+    func stillLearnsReplacementAfterAdoptingPrefixedBaseline() async throws {
         let coordinator = PostInjectionLearningCoordinator(
             configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
         )
         let baseTime = Date(timeIntervalSince1970: 1_700_003_036)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "postgre",
                 targetIdentifier: "target-prefixed-learning",
@@ -182,21 +182,21 @@ struct PostInjectionLearningTests {
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-prefixed-learning", text: "Mpostgre"),
                 now: baseTime.addingTimeInterval(0.2)
             ) == nil
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-prefixed-learning", text: "MPostgreSQL"),
                 now: baseTime.addingTimeInterval(0.6)
             ) == nil
         )
 
         let suggestion = try #require(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-prefixed-learning", text: "MPostgreSQL"),
                 now: baseTime.addingTimeInterval(2.0)
             )
@@ -207,11 +207,11 @@ struct PostInjectionLearningTests {
     }
 
     @Test
-    func ignoresTargetChangesAndUnreadableSnapshots() {
+    func ignoresTargetChangesAndUnreadableSnapshots() async {
         let coordinator = PostInjectionLearningCoordinator()
         let baseTime = Date(timeIntervalSince1970: 1_700_003_040)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "Use postgre",
                 targetIdentifier: "target-5",
@@ -221,19 +221,19 @@ struct PostInjectionLearningTests {
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-other", text: "Use PostgreSQL"),
                 now: baseTime.addingTimeInterval(0.4)
             ) == nil
         )
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 .init(inspection: .editable, targetIdentifier: "target-5", textValue: nil),
                 now: baseTime.addingTimeInterval(0.8)
             ) == nil
         )
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 .init(inspection: .unavailable, targetIdentifier: "target-5", textValue: "Use PostgreSQL"),
                 now: baseTime.addingTimeInterval(1.2)
             ) == nil
@@ -241,11 +241,11 @@ struct PostInjectionLearningTests {
     }
 
     @Test
-    func stopsTrackingWhenUserClearsInjectedTextCompletely() {
+    func stopsTrackingWhenUserClearsInjectedTextCompletely() async {
         let coordinator = PostInjectionLearningCoordinator()
         let baseTime = Date(timeIntervalSince1970: 1_700_003_050)
 
-        coordinator.startTracking(
+        await coordinator.startTracking(
             .init(
                 insertedText: "Use postgre",
                 targetIdentifier: "target-6",
@@ -255,19 +255,65 @@ struct PostInjectionLearningTests {
         )
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 .init(inspection: .editable, targetIdentifier: "target-6", textValue: ""),
                 now: baseTime.addingTimeInterval(0.4)
             ) == nil
         )
-        #expect(coordinator.isTracking == false)
+        #expect(await coordinator.isTracking == false)
 
         #expect(
-            coordinator.processSnapshot(
+            await coordinator.processSnapshot(
                 snapshot(target: "target-6", text: "Default candidate item"),
                 now: baseTime.addingTimeInterval(1.8)
             ) == nil
         )
+    }
+
+    @Test
+    func cancelTrackingOnlyClearsMatchingSession() async {
+        let coordinator = PostInjectionLearningCoordinator()
+        let baseTime = Date(timeIntervalSince1970: 1_700_003_060)
+        let staleSession = PostInjectionLearningSession(
+            id: UUID(),
+            insertedText: "postgre",
+            targetIdentifier: "target-stale",
+            sourceApplication: "com.example.editor",
+            startedAt: baseTime
+        )
+        let currentSession = PostInjectionLearningSession(
+            id: UUID(),
+            insertedText: "cloud flare",
+            targetIdentifier: "target-current",
+            sourceApplication: "com.example.editor",
+            startedAt: baseTime
+        )
+
+        await coordinator.startTracking(staleSession)
+        await coordinator.startTracking(currentSession)
+        await coordinator.cancelTracking(sessionID: staleSession.id)
+
+        #expect(await coordinator.isTracking)
+
+        await coordinator.cancelTracking(sessionID: currentSession.id)
+        #expect(await coordinator.isTracking == false)
+    }
+
+    @Test
+    func finishingStaleRunDoesNotClearCurrentRunOwnership() {
+        var registry = PostInjectionLearningRunRegistry()
+        let staleRunID = UUID()
+        let currentRunID = UUID()
+
+        registry.start(staleRunID)
+        registry.start(currentRunID)
+
+        let didFinishStaleRun = registry.finish(staleRunID)
+        #expect(didFinishStaleRun == false)
+        #expect(registry.activeRunID == currentRunID)
+        let didFinishCurrentRun = registry.finish(currentRunID)
+        #expect(didFinishCurrentRun)
+        #expect(registry.activeRunID == nil)
     }
 
     private func snapshot(target: String, text: String) -> EditableTextTargetSnapshot {

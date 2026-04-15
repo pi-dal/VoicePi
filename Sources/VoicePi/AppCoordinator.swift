@@ -303,6 +303,12 @@ final class AppController: NSObject {
     private let promptDestinationInspector = PromptDestinationInspector()
     private let editableTextTargetInspector: EditableTextTargetInspecting = EditableTextTargetInspector()
     private let recentInsertionRewriteCoordinator = RecentInsertionRewriteCoordinator()
+    private let recordingLatencyReporter: any RecordingLatencyReporting = RecordingLatencyCompositeReporter(
+        reporters: [
+            UnifiedLogRecordingLatencyReporter(),
+            RecordingLatencyHistoryReporter()
+        ]
+    )
 
     private var statusBarController: StatusBarController?
     private var cancellables: Set<AnyCancellable> = []
@@ -314,6 +320,7 @@ final class AppController: NSObject {
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
     private var inputMonitoringAuthorizationFollowUpTask: Task<Void, Never>?
     private var postInjectionLearningTask: Task<Void, Never>?
+    private var postInjectionLearningRunRegistry = PostInjectionLearningRunRegistry()
     private var resultReviewRetryTask: Task<Void, Never>?
     private var modeCycleRepeatTask: Task<Void, Never>?
     private var startupHotkeyBootstrapTask: Task<Void, Never>?
@@ -327,8 +334,11 @@ final class AppController: NSObject {
     private var activeRecordingWorkflowOverride: RecordingWorkflowOverride?
     private var activeCapturedSourceSnapshot: CapturedSourceSnapshot?
     private var activeRecordingStartedAt: Date?
+    private var activeRecordingLatencyTrace: RecordingLatencyTrace?
     private var activeFloatingRefiningPresentationStartedAt: Date?
     private var externalProcessorResultRetryTask: Task<Void, Never>?
+    private var realtimeOverlayUpdateGate = RealtimeOverlayUpdateGate()
+    private var realtimeAudioFramePump: RealtimeAudioFramePump?
 
     static let shortcutMonitoringFailureMessage =
         "Global shortcut monitoring is unavailable. Input Monitoring is required to listen for the shortcut, and Accessibility is required to suppress and inject events."
@@ -1461,10 +1471,11 @@ final class AppController: NSObject {
         postInjectionLearningTask?.cancel()
         resultReviewRetryTask?.cancel()
         postInjectionLearningTask = nil
+        postInjectionLearningRunRegistry.clear()
         resultReviewRetryTask = nil
         refinementReviewSession = nil
-        postInjectionLearningCoordinator.cancelTracking()
         dictionarySuggestionToastController.hide()
+        selectionRegenerateHintController.hide()
         resultReviewPanelController.hide()
         modeCycleRepeatTask?.cancel()
         startupHotkeyBootstrapTask?.cancel()
@@ -1693,6 +1704,8 @@ final class AppController: NSObject {
         )
         activeRecordingStartedAt = nil
         activeFloatingRefiningPresentationStartedAt = nil
+        activeRecordingLatencyTrace = RecordingLatencyTrace()
+        realtimeOverlayUpdateGate.reset()
         latestTranscript = ""
         cancelPostInjectionLearning()
         clearExternalProcessorResultState()
@@ -1705,6 +1718,7 @@ final class AppController: NSObject {
 
             let permissionsReady = await self.prepareForRecording()
             guard permissionsReady else {
+                self.finishActiveRecordingLatency(.cancelled)
                 self.clearActiveRecordingWorkflowState()
                 self.isStartingRecording = false
                 return
@@ -1729,10 +1743,12 @@ final class AppController: NSObject {
                 self.floatingPanelController.hide()
                 self.model.hideOverlay()
                 if case let asrError as RemoteASRStreamingError = error, asrError == .cancelled {
+                    self.finishActiveRecordingLatency(.cancelled)
                     self.clearActiveRecordingWorkflowState()
                     self.isStartingRecording = false
                     return
                 }
+                self.finishActiveRecordingLatency(.failed(error.localizedDescription))
                 self.clearActiveRecordingWorkflowState()
                 self.presentTransientError(error.localizedDescription)
             }
@@ -1750,6 +1766,7 @@ final class AppController: NSObject {
                     guard let self else { return }
                     await self.realtimeASRSessionCoordinator.cancelConnecting()
                     self.speechRecorder.cancelImmediately()
+                    self.finishActiveRecordingLatency(.cancelled)
                     self.isStartingRecording = false
                     self.clearActiveRecordingWorkflowState()
                     self.statusBarController?.setRecording(false)
@@ -1778,16 +1795,22 @@ final class AppController: NSObject {
                 self.processingTask = nil
             }
 
+            self.markActiveRecordingLatency(.stopRequested)
             let localTranscript = await self.speechRecorder.stopRecording()
             let recordingDurationMilliseconds = self.consumeCurrentRecordingDurationMilliseconds()
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
             let asrTranscript = await self.resolveTranscriptAfterRecording(localFallback: localTranscript)
+            let trimmedASRTranscript = asrTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedASRTranscript.isEmpty {
+                self.markActiveRecordingLatency(.transcriptResolved)
+            }
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
-            let captured = asrTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let captured = trimmedASRTranscript
 
             guard !captured.isEmpty else {
+                self.finishActiveRecordingLatency(.cancelled)
                 self.floatingPanelController.hide()
                 self.model.hideOverlay()
                 self.statusBarController?.setTransientStatus(nil)
@@ -1807,6 +1830,7 @@ final class AppController: NSObject {
                 workflowOverride: self.activeRecordingWorkflowOverride,
                 sourceSnapshot: self.activeCapturedSourceSnapshot
             )
+            self.markActiveRecordingLatency(.refinementCompleted)
             guard !Task.isCancelled, self.isProcessingRelease else { return }
 
             let didSucceed = await self.externalProcessorRefiner.didSucceedOnLastInvocation
@@ -1828,6 +1852,7 @@ final class AppController: NSObject {
                     sourceApplicationBundleID: self.activeCapturedSourceSnapshot?.sourceApplicationBundleID,
                     recordingDurationMilliseconds: recordingDurationMilliseconds
                 )
+                self.finishActiveRecordingLatency(.success)
             } else if failureAction == .surfaceProcessorFailure {
                 await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                 let processorFailureMessage = await self.externalProcessorRefiner.lastFailureMessageOnLastInvocation
@@ -1837,6 +1862,7 @@ final class AppController: NSObject {
                     ? "Processor shortcut requires a working external processor. Check Processors settings."
                     : trimmedFailureMessage
                 self.presentTransientError(failureMessage)
+                self.finishActiveRecordingLatency(.failed(failureMessage))
                 self.floatingPanelController.hide()
             } else {
                 let targetSnapshot = self.editableTextTargetInspector.currentSnapshot()
@@ -1848,11 +1874,13 @@ final class AppController: NSObject {
                     await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                     self.recentInsertionRewriteCoordinator.cancelTracking()
                     self.statusBarController?.setTransientStatus(nil)
+                    self.finishActiveRecordingLatency(.cancelled)
                     self.floatingPanelController.hide()
                 case .injectableTarget:
                     await self.ensureFloatingRefiningOverlayRemainsVisibleIfNeeded()
                     do {
                         let injectionRecord = try await self.textInjector.injectAndRecord(text: finalText)
+                        self.markActiveRecordingLatency(.injectionCompleted)
                         self.statusBarController?.setTransientStatus("Injected")
                         self.model.recordHistoryEntry(
                             text: finalText,
@@ -1870,7 +1898,9 @@ final class AppController: NSObject {
                             targetSnapshot: targetSnapshot,
                             sourceApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                         )
+                        self.finishActiveRecordingLatency(.success)
                     } catch {
+                        self.finishActiveRecordingLatency(.failed(error.localizedDescription))
                         self.presentTransientError(error.localizedDescription)
                     }
                     self.floatingPanelController.hide()
@@ -1883,6 +1913,9 @@ final class AppController: NSObject {
                             recordingDurationMilliseconds: recordingDurationMilliseconds
                         )
                         self.presentInputFallbackPanel(payload)
+                        self.finishActiveRecordingLatency(.success)
+                    } else {
+                        self.finishActiveRecordingLatency(.cancelled)
                     }
                 }
             }
@@ -1901,6 +1934,7 @@ final class AppController: NSObject {
         cancelPostInjectionLearning()
         clearResultReviewState()
         isProcessingRelease = false
+        finishActiveRecordingLatency(.cancelled)
         clearActiveRecordingWorkflowState()
         latestTranscript = ""
         statusBarController?.setRecording(false)
@@ -1912,7 +1946,10 @@ final class AppController: NSObject {
     private func clearActiveRecordingWorkflowState() {
         activeRecordingWorkflowOverride = nil
         activeCapturedSourceSnapshot = nil
+        activeRecordingLatencyTrace = nil
         activeFloatingRefiningPresentationStartedAt = nil
+        realtimeOverlayUpdateGate.reset()
+        realtimeAudioFramePump = nil
     }
 
     private func presentInputFallbackPanel(_ payload: InputFallbackPanelPayload) {
@@ -2464,8 +2501,9 @@ final class AppController: NSObject {
     private func cancelPostInjectionLearning() {
         postInjectionLearningTask?.cancel()
         postInjectionLearningTask = nil
-        postInjectionLearningCoordinator.cancelTracking()
+        postInjectionLearningRunRegistry.clear()
         dictionarySuggestionToastController.hide()
+        selectionRegenerateHintController.hide()
     }
 
     private func beginPostInjectionLearning(
@@ -2473,8 +2511,7 @@ final class AppController: NSObject {
         sourceApplicationOverride: String? = nil,
         injectionRecord: TextInjectionRecord
     ) {
-        postInjectionLearningTask?.cancel()
-        postInjectionLearningTask = nil
+        cancelPostInjectionLearning()
 
         let sourceApplication = sourceApplicationOverride ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let session = PostInjectionLearningSession(
@@ -2483,26 +2520,27 @@ final class AppController: NSObject {
             sourceApplication: sourceApplication,
             startedAt: injectionRecord.injectedAt
         )
-        postInjectionLearningCoordinator.startTracking(session)
+        let inspector = editableTextTargetInspector
+        let learningCoordinator = postInjectionLearningCoordinator
+        let loopPolicy = PostInjectionLearningLoopPolicy.default
+        postInjectionLearningRunRegistry.start(session.id)
 
-        postInjectionLearningTask = Task { @MainActor [weak self] in
+        postInjectionLearningTask = Task { @MainActor [weak self, inspector, learningCoordinator, loopPolicy] in
             guard let self else { return }
-            defer {
-                self.postInjectionLearningTask = nil
-                self.selectionRegenerateHintController.hide()
-            }
-
-            while !Task.isCancelled, self.postInjectionLearningCoordinator.isTracking {
-                let snapshot = self.editableTextTargetInspector.currentSnapshot()
+            guard !Task.isCancelled else { return }
+            await learningCoordinator.startTracking(session)
+            while !Task.isCancelled, await learningCoordinator.isTracking {
+                let snapshot = inspector.currentSnapshot()
                 self.refreshSelectionRegenerateHint(from: snapshot)
-                if let suggestion = self.postInjectionLearningCoordinator.processSnapshot(
+
+                if let suggestion = await learningCoordinator.processSnapshot(
                     snapshot,
                     now: Date()
                 ) {
                     let queued = self.model.enqueueDictionarySuggestion(suggestion)
                     self.statusBarController?.refreshAll()
                     guard queued else {
-                        try? await Task.sleep(for: .milliseconds(250))
+                        try? await Task.sleep(for: loopPolicy.suggestionCooldownInterval)
                         continue
                     }
 
@@ -2514,12 +2552,17 @@ final class AppController: NSObject {
                         )
                     )
                     self.statusBarController?.setTransientStatus("Dictionary suggestion captured")
-                    try? await Task.sleep(for: .milliseconds(250))
+                    try? await Task.sleep(for: loopPolicy.suggestionCooldownInterval)
                     continue
                 }
 
-                try? await Task.sleep(for: .milliseconds(250))
+                try? await Task.sleep(for: loopPolicy.idlePollingInterval)
             }
+
+            await learningCoordinator.cancelTracking(sessionID: session.id)
+            guard self.postInjectionLearningRunRegistry.finish(session.id) else { return }
+            self.postInjectionLearningTask = nil
+            self.selectionRegenerateHintController.hide()
         }
     }
 
@@ -2757,11 +2800,12 @@ final class AppController: NSObject {
 
     private func resolveTranscriptAfterRecording(localFallback: String) async -> String {
         if model.asrBackend.usesRealtimeStreaming {
+            let realtimeStatus = await realtimeASRSessionCoordinator.statusSnapshot()
             let resolution = Self.realtimeStopResolution(
                 backend: model.asrBackend,
-                isRealtimeStreamingReady: realtimeASRSessionCoordinator.isRealtimeStreamingReady,
-                degradedToBatchFallback: realtimeASRSessionCoordinator.degradedToBatchFallback,
-                hasRecordedAudio: realtimeASRSessionCoordinator.hasCapturedAudio,
+                isRealtimeStreamingReady: realtimeStatus.isRealtimeStreamingReady,
+                degradedToBatchFallback: realtimeStatus.degradedToBatchFallback,
+                hasRecordedAudio: realtimeStatus.hasCapturedAudio,
                 localFallback: localFallback
             )
 
@@ -2825,6 +2869,17 @@ final class AppController: NSObject {
     }
 
     private func startRealtimeRecordingSession() async throws {
+        let realtimeCoordinator = realtimeASRSessionCoordinator
+        let framePump = RealtimeAudioFramePump(
+            maximumPendingBytes: RealtimeASRSessionCoordinator.preconnectBufferByteLimit,
+            handler: { frame in
+                await realtimeCoordinator.handleCapturedFrame(frame)
+            },
+            overflowHandler: {
+                await realtimeCoordinator.handleCaptureBackpressureLimitExceeded()
+            }
+        )
+        realtimeAudioFramePump = framePump
         let callbacks = RealtimeASRSessionCoordinator.Callbacks(
             onPartial: { [weak self] text in
                 self?.updateRealtimeOverlayTranscript(text)
@@ -2846,15 +2901,12 @@ final class AppController: NSObject {
             )
             try await speechRecorder.startRecording(
                 mode: .captureOnly,
-                onCapturedAudioFrame: { [weak self] frame in
-                    guard let self else { return }
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        await self.realtimeASRSessionCoordinator.handleCapturedFrame(frame)
-                    }
+                onCapturedAudioFrame: { frame in
+                    framePump.submit(frame)
                 }
             )
         } catch {
+            realtimeAudioFramePump = nil
             speechRecorder.cancelImmediately()
             await realtimeASRSessionCoordinator.close()
             throw error
@@ -2862,10 +2914,41 @@ final class AppController: NSObject {
     }
 
     private func updateRealtimeOverlayTranscript(_ text: String) {
-        latestTranscript = text
-        let level = model.overlayState.level
-        model.updateOverlayRecording(transcript: text, level: level)
-        floatingPanelController.updateLive(transcript: text, level: level)
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            markActiveRecordingLatency(.firstPartialReceived)
+        }
+        publishRecordingOverlayUpdate(
+            transcript: text,
+            level: model.overlayState.level
+        )
+    }
+
+    private func publishRecordingOverlayUpdate(
+        transcript: String,
+        level: CGFloat,
+        now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        switch realtimeOverlayUpdateGate.consume(
+            transcript: transcript,
+            level: level,
+            now: now
+        ) {
+        case .none:
+            break
+        case .levelOnly(let publishedLevel):
+            model.updateOverlayRecordingLevel(publishedLevel)
+            floatingPanelController.updateAudioLevel(publishedLevel)
+        case .transcriptAndLevel(let publishedTranscript, let publishedLevel):
+            latestTranscript = publishedTranscript
+            model.updateOverlayRecording(
+                transcript: publishedTranscript,
+                level: publishedLevel
+            )
+            floatingPanelController.updateLive(
+                transcript: publishedTranscript,
+                level: publishedLevel
+            )
+        }
     }
 
     private func handleRealtimeTerminalError(_ message: String) {
@@ -2878,6 +2961,7 @@ final class AppController: NSObject {
         activeRecordingStartedAt = nil
 
         isStartingRecording = false
+        finishActiveRecordingLatency(.failed(message))
         clearActiveRecordingWorkflowState()
         statusBarController?.setRecording(false)
         floatingPanelController.hide()
@@ -2893,6 +2977,21 @@ final class AppController: NSObject {
 
         let elapsed = max(0, Date().timeIntervalSince(activeRecordingStartedAt))
         return Int((elapsed * 1000).rounded())
+    }
+
+    private func markActiveRecordingLatency(_ milestone: RecordingLatencyTrace.Milestone) {
+        activeRecordingLatencyTrace?.markNow(milestone)
+    }
+
+    private func finishActiveRecordingLatency(_ outcome: RecordingLatencyTrace.Outcome) {
+        guard let activeRecordingLatencyTrace else { return }
+
+        let report = activeRecordingLatencyTrace.report(
+            outcome: outcome,
+            finishedAt: RecordingLatencyTrace.currentTimestamp()
+        )
+        recordingLatencyReporter.report(report)
+        self.activeRecordingLatencyTrace = nil
     }
 
     private func resolvedRefinementPrompt(
@@ -3743,19 +3842,24 @@ extension AppController: ShortcutMonitorDelegate {
 extension AppController: SpeechRecorderDelegate {
     func speechRecorderDidStart(_ recorder: SpeechRecorder) {
         activeRecordingStartedAt = Date()
+        markActiveRecordingLatency(.recordingStarted)
     }
 
     func speechRecorder(_ recorder: SpeechRecorder, didUpdateTranscript transcript: String, isFinal: Bool) {
-        latestTranscript = transcript
-        let level = model.overlayState.level
-        model.updateOverlayRecording(transcript: transcript, level: level)
-        floatingPanelController.updateLive(transcript: transcript, level: level)
+        if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            markActiveRecordingLatency(.firstPartialReceived)
+        }
+        publishRecordingOverlayUpdate(
+            transcript: transcript,
+            level: model.overlayState.level
+        )
     }
 
     func speechRecorder(_ recorder: SpeechRecorder, didUpdateMetering normalizedLevel: CGFloat) {
-        let transcript = latestTranscript
-        model.updateOverlayRecording(transcript: transcript, level: normalizedLevel)
-        floatingPanelController.updateLive(transcript: transcript, level: normalizedLevel)
+        publishRecordingOverlayUpdate(
+            transcript: latestTranscript,
+            level: normalizedLevel
+        )
     }
 
     func speechRecorder(_ recorder: SpeechRecorder, didFail error: Error) {
@@ -3764,6 +3868,7 @@ extension AppController: SpeechRecorderDelegate {
             activeRecordingStartedAt = nil
         }
         if !isProcessingRelease {
+            finishActiveRecordingLatency(.failed(error.localizedDescription))
             statusBarController?.setRecording(false)
             presentTransientError(error.localizedDescription)
         }

@@ -85,6 +85,10 @@ final class FloatingPanelController: NSWindowController {
         contentController.updateAudioLevel(level)
     }
 
+    func updateAudioLevel(_ level: CGFloat) {
+        contentController.updateAudioLevel(level)
+    }
+
     func showRefining(
         transcript: String,
         sourcePreviewText: String? = nil
@@ -290,6 +294,8 @@ private final class FloatingPanelContentViewController: NSViewController {
     private(set) var preferredPanelHeight: CGFloat = FloatingPanelSupport.compactBannerHeight
     private var phase: Phase = .recording
     private var sourcePreview: String?
+    private var sizingState = FloatingPanelSizingState()
+    private var transcriptPresentationState = FloatingPanelTranscriptPresentationState()
     private let compactBannerWidth: CGFloat = FloatingPanelSupport.compactBannerWidth
     private let maximumBannerWidth: CGFloat = FloatingPanelSupport.maximumBannerWidth
     private let bannerHorizontalInset: CGFloat = FloatingPanelSupport.bannerHorizontalInset
@@ -437,9 +443,17 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     func updateTranscript(_ transcript: String) {
-        let nextText = FloatingPanelSupport.displayedTranscript(for: phase, transcript: transcript)
-        setTranscriptText(nextText, animated: shouldAnimateTranscriptUpdate(to: nextText))
-        recalculatePreferredWidth()
+        let update = transcriptPresentationState.prepareUpdate(
+            for: .init(phase),
+            transcript: transcript
+        )
+        setTranscriptText(
+            update.displayedText,
+            animated: shouldAnimateTranscriptUpdate(to: update.displayedText)
+        )
+        if update.requiresLayoutRecalculation {
+            recalculatePreferredWidth()
+        }
     }
 
     func updateModeSwitchTitle(_ title: String, refinementPromptTitle: String? = nil) {
@@ -460,6 +474,8 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     func resetForNextSession() {
+        sizingState = FloatingPanelSizingState()
+        transcriptPresentationState.reset()
         phase = .recording
         sourcePreview = nil
         transcriptLabel.stringValue = ""
@@ -478,24 +494,32 @@ private final class FloatingPanelContentViewController: NSViewController {
 
         switch phase {
         case .recording:
-            setTranscriptText(
+            let update = transcriptPresentationState.prepareDisplayedText(
                 currentText.isEmpty || Self.isRefiningPlaceholder(currentText)
                     ? FloatingPanelSupport.displayedTranscript(for: .recording, transcript: "")
                     : currentText,
-                animated: false
+                for: .recording
             )
+            setTranscriptText(update.displayedText, animated: false)
+            if update.requiresLayoutRecalculation {
+                recalculatePreferredWidth()
+            }
         case .refining:
-            setTranscriptText(
+            let update = transcriptPresentationState.prepareDisplayedText(
                 currentText.isEmpty
                     ? FloatingPanelSupport.displayedTranscript(for: .refining, transcript: "")
                     : currentText,
-                animated: false
+                for: .refining
             )
+            setTranscriptText(update.displayedText, animated: false)
+            if update.requiresLayoutRecalculation {
+                recalculatePreferredWidth()
+            }
         case .modeSwitch:
+            _ = transcriptPresentationState.prepareDisplayedText(currentText, for: .modeSwitch)
             updateModeSelection(currentText.isEmpty ? "Disabled" : currentText, refinementPromptTitle: nil)
+            recalculatePreferredWidth()
         }
-
-        recalculatePreferredWidth()
     }
 
     private func updateModeSelection(_ title: String, refinementPromptTitle: String?) {
@@ -522,24 +546,22 @@ private final class FloatingPanelContentViewController: NSViewController {
     }
 
     private static func isRefiningPlaceholder(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed == "Refining..." || trimmed.hasPrefix("Refining with ")
+        FloatingPanelTranscriptPresentationState.isRefiningPlaceholder(text)
     }
 
     private func recalculatePreferredWidth() {
-        switch phase {
-        case .recording:
-            preferredPanelWidth = bannerPreferredWidth()
-            preferredPanelHeight = FloatingPanelSupport.bannerPreferredHeight(sourcePreview: sourcePreview)
-            heightConstraint?.constant = preferredPanelHeight
-        case .refining:
-            preferredPanelWidth = bannerPreferredWidth()
-            preferredPanelHeight = FloatingPanelSupport.bannerPreferredHeight(sourcePreview: sourcePreview)
-            heightConstraint?.constant = preferredPanelHeight
-        case .modeSwitch:
-            preferredPanelWidth = 452
-            preferredPanelHeight = 136
-            heightConstraint?.constant = preferredPanelHeight
+        let preferredSize = sizingState.preferredSize(
+            for: phase,
+            transcript: effectiveTranscriptForSizing(),
+            sourcePreview: sourcePreview
+        )
+        let previousWidth = preferredPanelWidth
+        let previousHeight = preferredPanelHeight
+        preferredPanelWidth = preferredSize.width
+        preferredPanelHeight = preferredSize.height
+        heightConstraint?.constant = preferredPanelHeight
+        guard previousWidth != preferredPanelWidth || previousHeight != preferredPanelHeight else {
+            return
         }
         panelSizeDidChange?(preferredPanelWidth, preferredPanelHeight)
     }
@@ -623,6 +645,14 @@ private final class FloatingPanelContentViewController: NSViewController {
             sourcePreview: sourcePreview,
             font: transcriptLabel.font ?? .systemFont(ofSize: 15, weight: .medium)
         )
+    }
+
+    private func effectiveTranscriptForSizing() -> String {
+        let transcript = transcriptLabel.stringValue
+        if transcript.isEmpty {
+            return FloatingPanelSupport.displayedTranscript(for: phase, transcript: transcript)
+        }
+        return transcript
     }
 
     private func maximumVisibleTranscriptWidth(for phase: Phase) -> CGFloat {
