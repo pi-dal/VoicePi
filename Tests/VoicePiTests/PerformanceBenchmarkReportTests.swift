@@ -119,6 +119,24 @@ struct PerformanceBenchmarkReportTests {
                     title: "Recording latency trace report",
                     iterations: 200_000,
                     nanosecondsPerIteration: 88.4
+                ),
+                .init(
+                    id: "dictionary_suggestion_extractor_primary_path_ns_per_op",
+                    title: "Dictionary suggestion extractor (primary path)",
+                    iterations: 10_000,
+                    nanosecondsPerIteration: 431.2
+                ),
+                .init(
+                    id: "dictionary_suggestion_extractor_fallback_path_ns_per_op",
+                    title: "Dictionary suggestion extractor (fallback path)",
+                    iterations: 250,
+                    nanosecondsPerIteration: 19_800_000.0
+                ),
+                .init(
+                    id: "dictionary_text_normalizer_ns_per_op",
+                    title: "Dictionary text normalizer",
+                    iterations: 5_000,
+                    nanosecondsPerIteration: 217.7
                 )
             ]
         )
@@ -145,6 +163,9 @@ struct PerformanceBenchmarkReportTests {
                 - recent_stop_to_delivery_p50_ms value=690ms
                 Microbenchmarks:
                 - recording_latency_trace_report_ns_per_op ns_per_op=88.4 iterations=200000
+                - dictionary_suggestion_extractor_primary_path_ns_per_op ns_per_op=431.2 iterations=10000
+                - dictionary_suggestion_extractor_fallback_path_ns_per_op ns_per_op=19800000.0 iterations=250
+                - dictionary_text_normalizer_ns_per_op ns_per_op=217.7 iterations=5000
                 """
         )
     }

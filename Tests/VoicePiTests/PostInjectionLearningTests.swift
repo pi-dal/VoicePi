@@ -316,6 +316,53 @@ struct PostInjectionLearningTests {
         #expect(registry.activeRunID == nil)
     }
 
+    @Test
+    func learnsFromFinalStabilizedTextAfterMultipleEditsWithoutIntermediatePauses() async throws {
+        let coordinator = PostInjectionLearningCoordinator(
+            configuration: .init(watchWindow: 15, stabilizationInterval: 1.2)
+        )
+        let baseTime = Date(timeIntervalSince1970: 1_700_003_070)
+
+        await coordinator.startTracking(
+            .init(
+                insertedText: "Use postgre with cloud flare in production",
+                targetIdentifier: "target-finalize",
+                sourceApplication: "com.example.editor",
+                startedAt: baseTime
+            )
+        )
+
+        let finalSnapshot = snapshot(
+            target: "target-finalize",
+            text: "Use PostgreSQL with Cloudflare in production"
+        )
+
+        // This simulates a user quickly fixing multiple issues, then leaving the field unchanged.
+        // The learning loop should still be able to extract at least one suggestion from the final stabilized text.
+        #expect(
+            await coordinator.processSnapshot(
+                finalSnapshot,
+                now: baseTime.addingTimeInterval(0.2)
+            ) == nil
+        )
+        #expect(
+            await coordinator.processSnapshot(
+                finalSnapshot,
+                now: baseTime.addingTimeInterval(0.8)
+            ) == nil
+        )
+
+        let suggestion = try #require(
+            await coordinator.processSnapshot(
+                finalSnapshot,
+                now: baseTime.addingTimeInterval(1.5)
+            )
+        )
+
+        #expect(Set(["PostgreSQL", "Cloudflare"]).contains(suggestion.proposedCanonical))
+        #expect(await coordinator.isTracking == true)
+    }
+
     private func snapshot(target: String, text: String) -> EditableTextTargetSnapshot {
         .init(
             inspection: .editable,

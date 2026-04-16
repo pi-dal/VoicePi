@@ -34,10 +34,35 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
             return nil
         }
 
-        guard let replacement = singleReplacement(in: injected, edited: edited) else {
+        let primaryCandidate = singleReplacement(in: injected, edited: edited)
+        if let primaryCandidate,
+           let suggestion = makeSuggestion(
+            from: primaryCandidate,
+            sourceApplication: sourceApplication,
+            capturedAt: capturedAt
+           ) {
+            return suggestion
+        }
+
+        guard let fallbackCandidate = bestReplacementCandidate(
+            in: injected,
+            edited: edited
+        ) else {
             return nil
         }
 
+        return makeSuggestion(
+            from: fallbackCandidate,
+            sourceApplication: sourceApplication,
+            capturedAt: capturedAt
+        )
+    }
+
+    private func makeSuggestion(
+        from replacement: (original: String, corrected: String),
+        sourceApplication: String?,
+        capturedAt: Date
+    ) -> DictionarySuggestion? {
         let original = normalizeCandidateTerm(replacement.original)
         let corrected = focusedCorrectedTerm(
             original: original,
@@ -55,6 +80,12 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
             return nil
         }
 
+        let originalComparable = comparableTermForm(original)
+        let correctedComparable = comparableTermForm(corrected)
+        guard !originalComparable.isEmpty, !correctedComparable.isEmpty else {
+            return nil
+        }
+
         let normalizedOriginal = DictionaryNormalization.normalized(original)
         let normalizedCorrected = DictionaryNormalization.normalized(corrected)
         guard !normalizedOriginal.isEmpty, !normalizedCorrected.isEmpty else {
@@ -62,10 +93,6 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         }
 
         guard normalizedOriginal != normalizedCorrected else {
-            return nil
-        }
-
-        guard containsAlphaNumeric(original), containsAlphaNumeric(corrected) else {
             return nil
         }
 
@@ -83,7 +110,10 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
             return nil
         }
 
-        guard looksLikeTermVariant(original: original, corrected: corrected) else {
+        guard looksLikeTermVariant(
+            originalComparable: originalComparable,
+            correctedComparable: correctedComparable
+        ) else {
             return nil
         }
 
@@ -156,6 +186,81 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         return (original: originalFragment, corrected: correctedFragment)
     }
 
+    private func bestReplacementCandidate(
+        in originalText: String,
+        edited editedText: String
+    ) -> (original: String, corrected: String)? {
+        let originalTokens = splitIntoTokens(originalText)
+        let editedTokens = splitIntoTokens(editedText)
+        let normalizedOriginalTokens = originalTokens.map(DictionaryNormalization.normalized)
+        let normalizedEditedTokens = editedTokens.map(DictionaryNormalization.normalized)
+
+        guard !originalTokens.isEmpty, !editedTokens.isEmpty else {
+            return nil
+        }
+
+        let originalWindows = tokenWindows(
+            in: originalTokens,
+            normalizedTokens: normalizedOriginalTokens,
+            constrainedTo: changedTokenRegion(
+                normalizedTokens: normalizedOriginalTokens,
+                comparedTo: normalizedEditedTokens
+            )
+        )
+        let editedWindows = tokenWindows(
+            in: editedTokens,
+            normalizedTokens: normalizedEditedTokens,
+            constrainedTo: changedTokenRegion(
+                normalizedTokens: normalizedEditedTokens,
+                comparedTo: normalizedOriginalTokens
+            )
+        )
+
+        guard !originalWindows.isEmpty, !editedWindows.isEmpty else {
+            return nil
+        }
+
+        var bestCandidate: (original: String, corrected: String)?
+        var bestScore = Int.min
+
+        for originalWindow in originalWindows {
+            for correctedWindow in editedWindows {
+                if originalWindow.tokenCount != correctedWindow.tokenCount,
+                   originalWindow.comparable != correctedWindow.comparable {
+                    continue
+                }
+
+                let sharesLeadingComparableCharacter =
+                    originalWindow.leadingComparableCharacter == correctedWindow.leadingComparableCharacter
+                let hasContainmentRelation =
+                    correctedWindow.comparable.contains(originalWindow.comparable)
+                    || originalWindow.comparable.contains(correctedWindow.comparable)
+                guard sharesLeadingComparableCharacter || hasContainmentRelation else {
+                    continue
+                }
+
+                guard shouldConsiderFallbackCandidate(
+                    original: originalWindow,
+                    corrected: correctedWindow
+                ) else {
+                    continue
+                }
+
+                let score = candidateScore(
+                    originalComparable: originalWindow.comparable,
+                    candidateComparable: correctedWindow.comparable,
+                    candidateTokenCount: correctedWindow.tokenCount
+                )
+                if score > bestScore {
+                    bestScore = score
+                    bestCandidate = (originalWindow.text, correctedWindow.text)
+                }
+            }
+        }
+
+        return bestCandidate
+    }
+
     private func looksLikeLargeRewrite(original: String, corrected: String) -> Bool {
         let originalTokens = splitIntoTokens(original)
         let correctedTokens = splitIntoTokens(corrected)
@@ -193,26 +298,32 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
             return normalizedRawCorrected
         }
 
-        let candidates = correctedSuffixCandidates(in: rawCorrected)
+        let candidates = correctedSuffixCandidates(
+            in: rawCorrected,
+            matching: comparableOriginal.first
+        )
+        let normalizedRawCorrectedComparable = comparableTermForm(normalizedRawCorrected)
 
         var bestCandidate = normalizedRawCorrected
         var bestScore = candidateScore(
             originalComparable: comparableOriginal,
-            candidate: normalizedRawCorrected
+            candidateComparable: normalizedRawCorrectedComparable,
+            candidateTokenCount: splitIntoTokens(normalizedRawCorrected).count
         )
 
         for candidate in candidates {
-            let normalizedCandidate = normalizeCandidateTerm(candidate)
-            guard !normalizedCandidate.isEmpty else { continue }
-            guard containsAlphaNumeric(normalizedCandidate) else { continue }
-            guard looksLikeTermVariant(original: original, corrected: normalizedCandidate) else { continue }
+            guard looksLikeTermVariant(
+                originalComparable: comparableOriginal,
+                correctedComparable: candidate.comparable
+            ) else { continue }
 
             let score = candidateScore(
                 originalComparable: comparableOriginal,
-                candidate: normalizedCandidate
+                candidateComparable: candidate.comparable,
+                candidateTokenCount: candidate.tokenCount
             )
-            if score > bestScore || (score == bestScore && normalizedCandidate.count < bestCandidate.count) {
-                bestCandidate = normalizedCandidate
+            if score > bestScore || (score == bestScore && candidate.normalizedText.count < bestCandidate.count) {
+                bestCandidate = candidate.normalizedText
                 bestScore = score
             }
         }
@@ -220,13 +331,36 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         return bestCandidate
     }
 
-    private func correctedSuffixCandidates(in value: String) -> Set<String> {
-        var candidates: Set<String> = []
+    private func correctedSuffixCandidates(
+        in value: String,
+        matching firstComparableCharacter: Character?
+    ) -> [SuffixCandidate] {
+        var candidates: [SuffixCandidate] = []
+        var seenComparableForms: Set<String> = []
         let characters = Array(value)
 
         for startIndex in characters.indices {
-            let candidate = String(characters[startIndex...])
-            candidates.insert(candidate)
+            guard characters[startIndex].isAlphaNumeric else { continue }
+            let rawCandidate = String(characters[startIndex...])
+            let normalizedCandidate = normalizeCandidateTerm(rawCandidate)
+            guard !normalizedCandidate.isEmpty else { continue }
+
+            let comparable = comparableTermForm(normalizedCandidate)
+            guard !comparable.isEmpty else { continue }
+            if let firstComparableCharacter,
+               comparable.first != firstComparableCharacter,
+               !comparable.contains(String(firstComparableCharacter)) {
+                continue
+            }
+            guard seenComparableForms.insert(comparable).inserted else { continue }
+
+            candidates.append(
+                SuffixCandidate(
+                    normalizedText: normalizedCandidate,
+                    comparable: comparable,
+                    tokenCount: splitIntoTokens(normalizedCandidate).count
+                )
+            )
         }
 
         return candidates
@@ -234,25 +368,139 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
 
     private func candidateScore(
         originalComparable: String,
-        candidate: String
+        candidateComparable: String,
+        candidateTokenCount: Int
     ) -> Int {
-        let comparableCandidate = comparableTermForm(candidate)
-        guard !comparableCandidate.isEmpty else {
+        guard !candidateComparable.isEmpty else {
             return .min
         }
 
-        let commonLength = longestCommonSubstringLength(
-            between: originalComparable,
-            and: comparableCandidate
-        )
-        let containmentBonus =
-            comparableCandidate.contains(originalComparable) || originalComparable.contains(comparableCandidate)
-            ? 1_000
-            : 0
-        let tokenPenalty = splitIntoTokens(candidate).count * 10
-        let lengthPenalty = abs(comparableCandidate.count - originalComparable.count)
+        let containmentRelation =
+            candidateComparable.contains(originalComparable) || originalComparable.contains(candidateComparable)
+        let commonLength: Int
+        if candidateComparable == originalComparable {
+            commonLength = originalComparable.count
+        } else if containmentRelation {
+            commonLength = min(candidateComparable.count, originalComparable.count)
+        } else {
+            commonLength = longestCommonSubstringLength(
+                between: originalComparable,
+                and: candidateComparable
+            )
+        }
+        let containmentBonus = containmentRelation ? 1_000 : 0
+        let tokenPenalty = candidateTokenCount * 10
+        let lengthPenalty = abs(candidateComparable.count - originalComparable.count)
 
         return containmentBonus + (commonLength * 100) - tokenPenalty - lengthPenalty
+    }
+
+    private func tokenWindows(
+        in tokens: [String],
+        normalizedTokens: [String],
+        constrainedTo region: Range<Int>
+    ) -> [FallbackTokenWindow] {
+        guard !tokens.isEmpty else { return [] }
+
+        let maxWindowSize = min(4, tokens.count)
+        var windows: [FallbackTokenWindow] = []
+        var seenComparableForms: Set<String> = []
+        for windowSize in 1...maxWindowSize {
+            guard tokens.count >= windowSize else { continue }
+            for start in 0...(tokens.count - windowSize) {
+                let range = start..<(start + windowSize)
+                guard range.overlaps(region) else { continue }
+                let text = tokens[range].joined(separator: " ")
+                let normalizedText = normalizeCandidateTerm(text)
+                let comparable = comparableTermForm(normalizedText)
+                guard !normalizedText.isEmpty, !comparable.isEmpty else { continue }
+                guard seenComparableForms.insert(comparable).inserted else { continue }
+                windows.append(
+                    FallbackTokenWindow(
+                        text: text,
+                        normalizedText: normalizedText,
+                        normalizedForm: DictionaryNormalization.normalized(normalizedText),
+                        normalizedTokens: Array(normalizedTokens[range]),
+                        normalizedTokenSet: Set(normalizedTokens[range]),
+                        comparable: comparable,
+                        leadingComparableCharacter: comparable.first,
+                        tokenCount: windowSize
+                    )
+                )
+            }
+        }
+        return windows
+    }
+
+    private func shouldConsiderFallbackCandidate(
+        original: FallbackTokenWindow,
+        corrected: FallbackTokenWindow
+    ) -> Bool {
+        guard original.normalizedForm != corrected.normalizedForm else {
+            return false
+        }
+
+        guard looksLikeTermVariant(
+            originalComparable: original.comparable,
+            correctedComparable: corrected.comparable
+        ) else {
+            return false
+        }
+
+        if original.tokenCount != corrected.tokenCount {
+            guard original.comparable == corrected.comparable else {
+                return false
+            }
+        }
+
+        guard !looksLikeLargeRewrite(original: original, corrected: corrected) else {
+            return false
+        }
+
+        return true
+    }
+
+    private func looksLikeLargeRewrite(
+        original: FallbackTokenWindow,
+        corrected: FallbackTokenWindow
+    ) -> Bool {
+        if original.tokenCount > 4 || corrected.tokenCount > 4 {
+            return true
+        }
+
+        if original.tokenCount > 1,
+           corrected.tokenCount > 1,
+           !original.normalizedTokenSet.isDisjoint(with: corrected.normalizedTokenSet) {
+            return true
+        }
+
+        return false
+    }
+
+    private func changedTokenRegion(
+        normalizedTokens: [String],
+        comparedTo otherNormalizedTokens: [String]
+    ) -> Range<Int> {
+        guard !normalizedTokens.isEmpty else { return 0..<0 }
+
+        let minimumLength = min(normalizedTokens.count, otherNormalizedTokens.count)
+        var prefixLength = 0
+        while prefixLength < minimumLength,
+              normalizedTokens[prefixLength] == otherNormalizedTokens[prefixLength] {
+            prefixLength += 1
+        }
+
+        var suffixLength = 0
+        while suffixLength < (normalizedTokens.count - prefixLength),
+              suffixLength < (otherNormalizedTokens.count - prefixLength),
+              normalizedTokens[normalizedTokens.count - 1 - suffixLength]
+                == otherNormalizedTokens[otherNormalizedTokens.count - 1 - suffixLength] {
+            suffixLength += 1
+        }
+
+        let lowerBound = max(0, prefixLength - 1)
+        let upperBound = min(normalizedTokens.count, max(lowerBound + 1, normalizedTokens.count - suffixLength + 1))
+        return lowerBound..<upperBound
     }
 
     private func introducesMixedScriptNoise(
@@ -266,9 +514,22 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
     }
 
     private func letterScriptProfile(for value: String) -> LetterScriptProfile {
-        let scalars = value.unicodeScalars.filter { CharacterSet.letters.contains($0) }
-        let hasASCIIAlpha = scalars.contains { $0.isASCII }
-        let hasNonASCIIAlpha = scalars.contains { !$0.isASCII }
+        var hasASCIIAlpha = false
+        var hasNonASCIIAlpha = false
+
+        for scalar in value.unicodeScalars {
+            guard CharacterSet.letters.contains(scalar) else { continue }
+            if scalar.isASCII {
+                hasASCIIAlpha = true
+            } else {
+                hasNonASCIIAlpha = true
+            }
+
+            if hasASCIIAlpha && hasNonASCIIAlpha {
+                break
+            }
+        }
+
         return LetterScriptProfile(
             hasASCIIAlpha: hasASCIIAlpha,
             hasNonASCIIAlpha: hasNonASCIIAlpha
@@ -276,8 +537,16 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
     }
 
     private func looksLikeTermVariant(original: String, corrected: String) -> Bool {
-        let originalComparable = comparableTermForm(original)
-        let correctedComparable = comparableTermForm(corrected)
+        looksLikeTermVariant(
+            originalComparable: comparableTermForm(original),
+            correctedComparable: comparableTermForm(corrected)
+        )
+    }
+
+    private func looksLikeTermVariant(
+        originalComparable: String,
+        correctedComparable: String
+    ) -> Bool {
         guard !originalComparable.isEmpty, !correctedComparable.isEmpty else {
             return false
         }
@@ -291,7 +560,7 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         }
 
         let shorterLength = min(originalComparable.count, correctedComparable.count)
-        let requiredSharedLength = max(2, shorterLength / 2)
+        let requiredSharedLength = max(3, (shorterLength * 2) / 3)
         return longestCommonSubstringLength(between: originalComparable, and: correctedComparable) >= requiredSharedLength
     }
 
@@ -303,11 +572,15 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
     }
 
     private func comparableTermForm(_ value: String) -> String {
-        DictionaryNormalization.normalized(value)
-            .unicodeScalars
-            .filter { CharacterSet.alphanumerics.contains($0) }
-            .map(String.init)
-            .joined()
+        let normalizedValue = DictionaryNormalization.normalized(value)
+        var comparable = String()
+        comparable.reserveCapacity(normalizedValue.count)
+
+        for scalar in normalizedValue.unicodeScalars where CharacterSet.alphanumerics.contains(scalar) {
+            comparable.unicodeScalars.append(scalar)
+        }
+
+        return comparable
     }
 
     private func longestCommonSubstringLength(between lhs: String, and rhs: String) -> Int {
@@ -341,30 +614,57 @@ struct DictionarySuggestionExtractor: DictionarySuggestionExtracting {
         let scalars = trimmed.unicodeScalars
         let start = scalars.firstIndex(where: { CharacterSet.alphanumerics.contains($0) }) ?? scalars.startIndex
         let end = scalars.lastIndex(where: { CharacterSet.alphanumerics.contains($0) }) ?? scalars.index(before: scalars.endIndex)
-        let sliced = String(scalars[start...end])
+        var normalized = String()
+        normalized.reserveCapacity(trimmed.count)
+        var previousWasWhitespace = false
 
-        return sliced
-            .split { $0.isWhitespace }
-            .map(String.init)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for scalar in scalars[start...end] {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                if !normalized.isEmpty && !previousWasWhitespace {
+                    normalized.append(" ")
+                    previousWasWhitespace = true
+                }
+                continue
+            }
+
+            normalized.unicodeScalars.append(scalar)
+            previousWasWhitespace = false
+        }
+
+        if normalized.last == " " {
+            normalized.removeLast()
+        }
+
+        return normalized
     }
 
     private func normalizeWithoutPunctuation(_ value: String) -> String {
-        let scalarView = value.unicodeScalars.filter { scalar in
-            if CharacterSet.punctuationCharacters.contains(scalar) {
-                return false
+        var normalized = String()
+        normalized.reserveCapacity(value.count)
+        var previousWasWhitespace = false
+
+        for scalar in value.unicodeScalars {
+            if CharacterSet.punctuationCharacters.contains(scalar) || CharacterSet.symbols.contains(scalar) {
+                continue
             }
-            if CharacterSet.symbols.contains(scalar) {
-                return false
+
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                if !normalized.isEmpty && !previousWasWhitespace {
+                    normalized.append(" ")
+                    previousWasWhitespace = true
+                }
+                continue
             }
-            return true
+
+            normalized.unicodeScalars.append(scalar)
+            previousWasWhitespace = false
         }
 
-        return String(String.UnicodeScalarView(scalarView))
-            .split { $0.isWhitespace }
-            .map(String.init)
-            .joined(separator: " ")
+        if normalized.last == " " {
+            normalized.removeLast()
+        }
+
+        return normalized
     }
 
     private func containsAlphaNumeric(_ value: String) -> Bool {
@@ -379,6 +679,23 @@ private struct LetterScriptProfile {
     var isMixedAlphaScript: Bool {
         hasASCIIAlpha && hasNonASCIIAlpha
     }
+}
+
+private struct FallbackTokenWindow {
+    let text: String
+    let normalizedText: String
+    let normalizedForm: String
+    let normalizedTokens: [String]
+    let normalizedTokenSet: Set<String>
+    let comparable: String
+    let leadingComparableCharacter: Character?
+    let tokenCount: Int
+}
+
+private struct SuffixCandidate {
+    let normalizedText: String
+    let comparable: String
+    let tokenCount: Int
 }
 
 private extension Character {

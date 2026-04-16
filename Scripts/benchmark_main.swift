@@ -28,6 +28,10 @@ struct VoicePiBenchmarkMain {
             ).blockingLatencyMilliseconds
         }
 
+        let primaryExtractorBenchmark = makeDictionarySuggestionExtractorPrimaryPathBenchmark()
+        let fallbackExtractorBenchmark = makeDictionarySuggestionExtractorFallbackPathBenchmark()
+        let normalizerBenchmark = makeDictionaryTextNormalizerBenchmark()
+
         let recentSessionSummary = try? RecordingLatencyHistoryStore().loadRecentSummary()
 
         let report = PerformanceBenchmarkReport.current(
@@ -36,7 +40,13 @@ struct VoicePiBenchmarkMain {
             realtimeOverlayUpdateGate: .init(),
             learningLoopPolicy: .default,
             recentSessionSummary: recentSessionSummary ?? nil,
-            microbenchmarks: [reportBenchmark, planBenchmark]
+            microbenchmarks: [
+                reportBenchmark,
+                planBenchmark,
+                primaryExtractorBenchmark,
+                fallbackExtractorBenchmark,
+                normalizerBenchmark
+            ]
         )
 
         print(report.renderedText())
@@ -49,8 +59,9 @@ struct VoicePiBenchmarkMain {
         body: () -> Void
     ) -> PerformanceBenchmarkReport.Microbenchmark {
         let clock = ContinuousClock()
+        let warmupIterations = min(1_000, max(100, iterations / 5))
 
-        for _ in 0..<10_000 {
+        for _ in 0..<warmupIterations {
             body()
         }
 
@@ -70,5 +81,62 @@ struct VoicePiBenchmarkMain {
             iterations: iterations,
             nanosecondsPerIteration: totalNanoseconds / Double(iterations)
         )
+    }
+
+    private static func makeDictionarySuggestionExtractorPrimaryPathBenchmark() -> PerformanceBenchmarkReport.Microbenchmark {
+        let extractor = DictionarySuggestionExtractor()
+        let injectedText = "ship the cloud flare migration this afternoon"
+        let editedText = "ship the Cloudflare migration this afternoon"
+        let capturedAt = Date(timeIntervalSince1970: 1_710_000_000)
+
+        return measure(
+            id: "dictionary_suggestion_extractor_primary_path_ns_per_op",
+            title: "Dictionary suggestion extractor (primary path)",
+            iterations: 10_000
+        ) {
+            _ = extractor.extractSuggestion(
+                injectedText: injectedText,
+                editedText: editedText,
+                sourceApplication: "Benchmark",
+                capturedAt: capturedAt
+            )
+        }
+    }
+
+    private static func makeDictionarySuggestionExtractorFallbackPathBenchmark() -> PerformanceBenchmarkReport.Microbenchmark {
+        let extractor = DictionarySuggestionExtractor()
+        let injectedText = "ship the cloud flare migration with postgre metrics and fig ma handoff"
+        let editedText = "ship the Cloudflare migration with PostgreSQL metrics and Figma handoff"
+        let capturedAt = Date(timeIntervalSince1970: 1_710_000_000)
+
+        return measure(
+            id: "dictionary_suggestion_extractor_fallback_path_ns_per_op",
+            title: "Dictionary suggestion extractor (fallback path)",
+            iterations: 250
+        ) {
+            _ = extractor.extractSuggestion(
+                injectedText: injectedText,
+                editedText: editedText,
+                sourceApplication: "Benchmark",
+                capturedAt: capturedAt
+            )
+        }
+    }
+
+    private static func makeDictionaryTextNormalizerBenchmark() -> PerformanceBenchmarkReport.Microbenchmark {
+        let entries = [
+            DictionaryEntry(canonical: "Cloudflare", aliases: ["cloud flare", "Cloud flare"]),
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre", "postgres"]),
+            DictionaryEntry(canonical: "Figma", aliases: ["fig ma"])
+        ]
+        let text = "ship the cloud flare migration with postgre metrics, then share the fig ma handoff"
+
+        return measure(
+            id: "dictionary_text_normalizer_ns_per_op",
+            title: "Dictionary text normalizer",
+            iterations: 5_000
+        ) {
+            _ = DictionaryTextNormalizer.normalize(text, entries: entries)
+        }
     }
 }

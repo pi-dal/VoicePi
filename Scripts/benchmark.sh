@@ -21,6 +21,9 @@ swiftc \
   Sources/VoicePi/PostInjectionLearningLoopPolicy.swift \
   Sources/VoicePi/RecordingLatencyTrace.swift \
   Sources/VoicePi/RecordingLatencyHistory.swift \
+  Sources/VoicePi/DictionaryModels.swift \
+  Sources/VoicePi/DictionarySuggestionExtractor.swift \
+  Sources/VoicePi/DictionaryTextNormalizer.swift \
   Sources/VoicePi/FloatingPanelTranscriptPresentationState.swift \
   Sources/VoicePi/PerformanceBenchmarkReport.swift \
   Scripts/benchmark_main.swift \

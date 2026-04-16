@@ -111,8 +111,13 @@ enum AppWorkflowSupport {
         case .disabled:
             return text
         case .refinement:
+            let normalizedInput = DictionaryTextNormalizer.normalize(
+                text,
+                entries: dictionaryEntries
+            )
+
             guard configuration.isConfigured else {
-                return text
+                return normalizedInput
             }
 
             let refinementStatusText = refinementStatusText(promptTitle: refinementPromptTitle)
@@ -136,19 +141,19 @@ enum AppWorkflowSupport {
             do {
                 let effectiveTargetLanguage = targetLanguage == sourceLanguage ? nil : targetLanguage
                 let refined = try await refiner.refine(
-                    text: text,
+                    text: normalizedInput,
                     configuration: refinerConfiguration,
                     mode: .refinement,
                     targetLanguage: effectiveTargetLanguage,
                     dictionaryEntries: dictionaryEntries
                 )
                 let trimmed = refined.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? text : trimmed
+                return trimmed.isEmpty ? normalizedInput : trimmed
             } catch {
                 await MainActor.run {
                     onError("LLM refinement failed: \(error.localizedDescription)")
                 }
-                return text
+                return normalizedInput
             }
         case .translation:
             guard targetLanguage != sourceLanguage else {

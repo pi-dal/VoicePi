@@ -142,6 +142,101 @@ struct AppWorkflowSupportTests {
     }
 
     @Test
+    func refinementNormalizesDictionaryAliasesBeforeLLMCall() async {
+        let refiner = RefinerStub(result: .success("Deploy PostgreSQL and Cloudflare today."))
+        let translator = TranslatorStub(result: .success("translated"))
+        let dictionaryEntries = [
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre"], isEnabled: true),
+            DictionaryEntry(canonical: "Cloudflare", aliases: ["cloud flare"], isEnabled: true)
+        ]
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "Deploy postgre and cloud flare today.",
+            mode: .refinement,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(
+                baseURL: "https://api.example.com",
+                apiKey: "sk",
+                model: "gpt"
+            ),
+            resolvedRefinementPrompt: nil,
+            dictionaryEntries: dictionaryEntries,
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(text == "Deploy PostgreSQL and Cloudflare today.")
+        #expect(refiner.calls == 1)
+        #expect(refiner.lastText == "Deploy PostgreSQL and Cloudflare today.")
+    }
+
+    @Test
+    func refinementNormalizationPreservesUnmatchedWordsAndCasingIntent() async {
+        let refiner = RefinerStub(result: .success("PostgreSQL backlog stays; postgresqlish remains untouched."))
+        let translator = TranslatorStub(result: .success("translated"))
+        let dictionaryEntries = [
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre"], isEnabled: true)
+        ]
+
+        let text = await AppWorkflowSupport.postProcessIfNeeded(
+            "postgre backlog stays; postgresqlish remains untouched.",
+            mode: .refinement,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(
+                baseURL: "https://api.example.com",
+                apiKey: "sk",
+                model: "gpt"
+            ),
+            resolvedRefinementPrompt: nil,
+            dictionaryEntries: dictionaryEntries,
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(text == "PostgreSQL backlog stays; postgresqlish remains untouched.")
+        #expect(refiner.lastText == "PostgreSQL backlog stays; postgresqlish remains untouched.")
+    }
+
+    @Test
+    func refinementNormalizationHandlesPunctuationBoundariesWithoutTouchingSubstrings() async {
+        let refiner = RefinerStub(result: .success("ok"))
+        let translator = TranslatorStub(result: .success("unused"))
+        let dictionaryEntries = [
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre"], isEnabled: true),
+            DictionaryEntry(canonical: "Cloudflare", aliases: ["cloud flare"], isEnabled: true)
+        ]
+
+        _ = await AppWorkflowSupport.postProcessIfNeeded(
+            "Deploy (postgre), keep postgresqlish; then use 'cloud flare'.",
+            mode: .refinement,
+            translationProvider: .appleTranslate,
+            sourceLanguage: .english,
+            targetLanguage: .english,
+            configuration: .init(
+                baseURL: "https://api.example.com",
+                apiKey: "sk",
+                model: "gpt"
+            ),
+            resolvedRefinementPrompt: nil,
+            dictionaryEntries: dictionaryEntries,
+            refiner: refiner,
+            translator: translator,
+            onPresentation: { _ in },
+            onError: { _ in }
+        )
+
+        #expect(refiner.lastText == "Deploy (PostgreSQL), keep postgresqlish; then use 'Cloudflare'.")
+    }
+
+    @Test
     func postProcessingPresentationCallbacksRunOnMainThread() async {
         let refiner = RefinerStub(result: .success("translated"))
         let translator = TranslatorStub(result: .success("unused"))
@@ -639,6 +734,7 @@ private final class RemoteASRStub: RemoteASRServing, @unchecked Sendable {
 private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
     var result: Result<String, Error>
     private(set) var calls = 0
+    private(set) var lastText: String?
     private(set) var lastMode: LLMRefinerPromptMode?
     private(set) var lastTargetLanguage: SupportedLanguage?
     private(set) var lastRefinementPrompt: String?
@@ -656,6 +752,7 @@ private final class RefinerStub: TranscriptRefining, @unchecked Sendable {
         dictionaryEntries: [DictionaryEntry]
     ) async throws -> String {
         calls += 1
+        lastText = text
         lastMode = mode
         lastTargetLanguage = targetLanguage
         lastRefinementPrompt = configuration.refinementPrompt

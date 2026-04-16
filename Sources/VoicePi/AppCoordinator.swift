@@ -2559,11 +2559,48 @@ final class AppController: NSObject {
                 try? await Task.sleep(for: loopPolicy.idlePollingInterval)
             }
 
-            await learningCoordinator.cancelTracking(sessionID: session.id)
+            let finalSuggestions = await learningCoordinator.finishTracking(
+                inspector.currentSnapshot(),
+                now: Date()
+            )
+            self.captureDictionarySuggestions(finalSuggestions, sessionID: session.id)
             guard self.postInjectionLearningRunRegistry.finish(session.id) else { return }
             self.postInjectionLearningTask = nil
             self.selectionRegenerateHintController.hide()
         }
+    }
+
+    private func captureDictionarySuggestions(
+        _ suggestions: [DictionarySuggestion],
+        sessionID: UUID
+    ) {
+        guard !suggestions.isEmpty else { return }
+
+        var queuedSuggestions: [DictionarySuggestion] = []
+        for suggestion in suggestions {
+            if model.enqueueDictionarySuggestion(suggestion) {
+                queuedSuggestions.append(suggestion)
+            }
+        }
+
+        statusBarController?.refreshAll()
+        guard let latestSuggestion = queuedSuggestions.last else { return }
+
+        let summaryText: String
+        if queuedSuggestions.count == 1 {
+            summaryText = "Saved to suggestions: \(latestSuggestion.proposedCanonical)"
+        } else {
+            summaryText = "Saved \(queuedSuggestions.count) dictionary suggestions"
+        }
+
+        dictionarySuggestionToastController.show(
+            payload: DictionarySuggestionToastPayload(
+                sessionID: sessionID,
+                suggestion: latestSuggestion,
+                summaryText: summaryText
+            )
+        )
+        statusBarController?.setTransientStatus("Dictionary suggestion captured")
     }
 
     private func startRecentInsertionRewriteTracking(
