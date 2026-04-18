@@ -5,6 +5,46 @@ import Testing
 
 struct AppModelPersistenceTests {
     @Test
+    func llmConfigurationCodableRoundTripPreservesEnableThinkingWhenPresent() throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: [
+                "baseURL": "https://llm.example.com",
+                "apiKey": "llm-key",
+                "model": "gpt-4o-mini",
+                "refinementPrompt": "",
+                "enable_thinking": false
+            ]
+        )
+
+        let decoded = try JSONDecoder().decode(LLMConfiguration.self, from: data)
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+
+        #expect(object["enable_thinking"] as? Bool == false)
+    }
+
+    @Test
+    @MainActor
+    func saveLLMConfigurationPersistsEnableThinkingAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.saveLLMConfigurationPersistsEnableThinkingAcrossReloads.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+
+        model.saveLLMConfiguration(
+            baseURL: "https://llm.example.com",
+            apiKey: "llm-key",
+            model: "gpt-4o-mini",
+            refinementPrompt: "",
+            enableThinking: .some(false)
+        )
+
+        let reloaded = AppModel(defaults: defaults)
+
+        #expect(reloaded.llmConfiguration.enableThinking == false)
+    }
+
+    @Test
     @MainActor
     func legacyDefaultsFallBackToLLMRefinementProvider() {
         let defaults = UserDefaults(suiteName: "VoicePiTests.legacyDefaultsFallBackToLLMRefinementProvider.\(UUID().uuidString)")!

@@ -136,6 +136,7 @@ final class LLMRefiner {
         let payload = ChatCompletionsRequest(
             model: configuration.trimmedModel,
             temperature: 0,
+            enableThinking: configuration.enableThinking,
             responseFormat: outputContract.responseFormat,
             messages: [
                 .init(
@@ -527,12 +528,14 @@ private struct ChatCompletionsRequest: Encodable {
 
     let model: String
     let temperature: Double
+    let enableThinking: Bool?
     let responseFormat: ResponseFormat?
     let messages: [Message]
 
     enum CodingKeys: String, CodingKey {
         case model
         case temperature
+        case enableThinking = "enable_thinking"
         case responseFormat = "response_format"
         case messages
     }

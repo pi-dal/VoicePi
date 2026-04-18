@@ -1184,6 +1184,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let captureCurrentWebsiteButtonTitle = "Capture Current Website"
     static let strictModeToggleLabel = "Strict Mode"
     static let refinementProviderLabel = "Refinement Provider"
+    static let thinkingLabel = "Thinking"
     static let externalProcessorManagerSheetTitle = "Processors"
     static let externalProcessorManagerAddProcessorButtonTitle = "+"
     static let externalProcessorManagerAddArgumentButtonTitle = "+"
@@ -1191,9 +1192,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let externalProcessorManagerManageButtonTitle = "Processors"
     static let navigationIconTopPadding: CGFloat = 4
     static let strictModeHelpText = "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
+    static let thinkingUnsetTitle = "Not Set"
+    static let thinkingHelpText =
+        "Optional. For mixed-thinking models, VoicePi only sends `enable_thinking` after you explicitly choose On or Off."
     static let promptEditorBodyHintText = "Add the instructions VoicePi should apply here. Leave it empty to keep the default refinement rules and only use this prompt for bindings."
     static let promptEditorBodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     static let promptEditorBodyTextInset = NSSize(width: 14, height: 12)
+
+    static func thinkingTitles() -> [String] {
+        [thinkingUnsetTitle, "On", "Off"]
+    }
+
+    static func thinkingSelectionIndex(
+        for enableThinking: Bool?
+    ) -> Int {
+        guard let enableThinking else {
+            return 0
+        }
+
+        return enableThinking ? 1 : 2
+    }
+
+    static func enableThinkingForSelectionIndex(_ index: Int) -> Bool? {
+        switch index {
+        case 1:
+            return true
+        case 2:
+            return false
+        default:
+            return nil
+        }
+    }
 
     struct PromptAppBindingConflictAlertContent: Equatable {
         let messageText: String
@@ -1338,6 +1367,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let baseURLField = NSTextField(string: "")
     private let apiKeyField = NSSecureTextField(string: "")
     private let modelField = NSTextField(string: "")
+    private let thinkingPopup = ThemedPopUpButton()
     private let refinementProviderPopup = ThemedPopUpButton()
     private let activePromptPopup = ThemedPopUpButton()
     private let promptStrictModeSwitch = NSSwitch()
@@ -1953,6 +1983,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refinementProviderControl.translatesAutoresizingMaskIntoConstraints = false
         refinementProviderHelpLabel.widthAnchor.constraint(equalTo: refinementProviderControl.widthAnchor).isActive = true
 
+        let thinkingHelpLabel = NSTextField(
+            wrappingLabelWithString: Self.thinkingHelpText
+        )
+        thinkingHelpLabel.font = .systemFont(ofSize: 12)
+        thinkingHelpLabel.textColor = .secondaryLabelColor
+        thinkingHelpLabel.maximumNumberOfLines = 0
+        thinkingHelpLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let thinkingControl = NSStackView(views: [thinkingPopup, thinkingHelpLabel])
+        thinkingControl.orientation = .vertical
+        thinkingControl.alignment = .leading
+        thinkingControl.spacing = 6
+        thinkingControl.translatesAutoresizingMaskIntoConstraints = false
+        thinkingHelpLabel.widthAnchor.constraint(equalTo: thinkingControl.widthAnchor).isActive = true
+
         let promptActionsRow = makeButtonGroup([
             editPromptButton,
             newPromptButton,
@@ -1969,6 +2014,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePreferenceRow(title: "API Base URL", control: baseURLField),
             makePreferenceRow(title: "API Key", control: apiKeyField),
             makePreferenceRow(title: "Model", control: modelField),
+            makePreferenceRow(title: Self.thinkingLabel, control: thinkingControl),
             makePreferenceRow(title: "Active Prompt", control: activePromptPopup),
             makePreferenceRow(title: Self.strictModeToggleLabel, control: strictModeControl),
             makePreferenceRow(title: "Prompt Summary", control: resolvedPromptControl),
@@ -2000,6 +2046,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             baseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             apiKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            thinkingPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
             activePromptPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
         ])
     }
@@ -2332,6 +2379,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         baseURLField.stringValue = model.llmConfiguration.baseURL
         apiKeyField.stringValue = model.llmConfiguration.apiKey
         modelField.stringValue = model.llmConfiguration.model
+        thinkingPopup.selectItem(
+            at: Self.thinkingSelectionIndex(for: model.llmConfiguration.enableThinking)
+        )
         selectPopupItem(in: postProcessingModePopup, matching: model.postProcessingMode.rawValue)
         selectPopupItem(in: refinementProviderPopup, matching: model.refinementProvider.rawValue)
         selectPopupItem(
@@ -2452,6 +2502,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         refinementProviderPopup.isEnabled = mode == .refinement
         translationProviderPopup.isEnabled = mode == .translation && appleTranslateSupported
+        thinkingPopup.isEnabled = usesLLM
         testButton.isEnabled = usesLLM
         let shouldEnablePromptControls = mode == .refinement && refinementProvider == .llm
         setPromptWorkspaceControlsEnabled(shouldEnablePromptControls)
@@ -2900,7 +2951,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             baseURL: baseURLField.stringValue,
             apiKey: apiKeyField.stringValue,
             model: modelField.stringValue,
-            refinementPrompt: ""
+            refinementPrompt: "",
+            enableThinking: currentEnableThinking()
         )
     }
 
@@ -2923,6 +2975,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func currentTargetLanguage() -> SupportedLanguage {
         let index = max(0, targetLanguagePopup.indexOfSelectedItem)
         return SupportedLanguage.allCases[index]
+    }
+
+    private func currentEnableThinking() -> Bool? {
+        Self.enableThinkingForSelectionIndex(
+            max(0, thinkingPopup.indexOfSelectedItem)
+        )
     }
 
     private func currentSelectedASRBackend() -> ASRBackend {
@@ -3849,7 +3907,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
             model: configuration.model,
-            refinementPrompt: ""
+            refinementPrompt: "",
+            enableThinking: .some(configuration.enableThinking)
         )
         setLLMFeedback(.neutral("Saved."))
         delegate?.settingsWindowController(self, didSave: configuration)
@@ -4085,6 +4144,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrBackendPopup.syncTheme()
         postProcessingModePopup.syncTheme()
         refinementProviderPopup.syncTheme()
+        thinkingPopup.syncTheme()
         translationProviderPopup.syncTheme()
         targetLanguagePopup.syncTheme()
         activePromptPopup.syncTheme()
@@ -4104,6 +4164,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refinementProviderPopup.addItems(withTitles: RefinementProvider.allCases.map(\.title))
         refinementProviderPopup.target = self
         refinementProviderPopup.action = #selector(refinementProviderChanged(_:))
+
+        thinkingPopup.removeAllItems()
+        thinkingPopup.addItems(withTitles: Self.thinkingTitles())
 
         translationProviderPopup.removeAllItems()
         translationProviderPopup.addItems(withTitles: availableTranslationProviders().map(\.title))

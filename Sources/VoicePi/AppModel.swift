@@ -1361,17 +1361,20 @@ struct LLMConfiguration: Codable, Equatable {
     var apiKey: String
     var model: String
     var refinementPrompt: String
+    var enableThinking: Bool?
 
     init(
         baseURL: String = "",
         apiKey: String = "",
         model: String = "",
-        refinementPrompt: String = ""
+        refinementPrompt: String = "",
+        enableThinking: Bool? = nil
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
         self.refinementPrompt = refinementPrompt
+        self.enableThinking = enableThinking
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1379,6 +1382,7 @@ struct LLMConfiguration: Codable, Equatable {
         case apiKey
         case model
         case refinementPrompt
+        case enableThinking = "enable_thinking"
     }
 
     init(from decoder: Decoder) throws {
@@ -1387,6 +1391,7 @@ struct LLMConfiguration: Codable, Equatable {
         apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
         model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
         refinementPrompt = try container.decodeIfPresent(String.self, forKey: .refinementPrompt) ?? ""
+        enableThinking = try container.decodeIfPresent(Bool.self, forKey: .enableThinking)
     }
 
     var trimmedBaseURL: String {
@@ -1919,13 +1924,15 @@ final class AppModel: ObservableObject {
         baseURL: String,
         apiKey: String,
         model: String,
-        refinementPrompt: String? = nil
+        refinementPrompt: String? = nil,
+        enableThinking: Bool?? = nil
     ) {
         llmConfiguration = LLMConfiguration(
             baseURL: baseURL,
             apiKey: apiKey,
             model: model,
-            refinementPrompt: refinementPrompt ?? llmConfiguration.refinementPrompt
+            refinementPrompt: refinementPrompt ?? llmConfiguration.refinementPrompt,
+            enableThinking: enableThinking ?? llmConfiguration.enableThinking
         )
     }
 

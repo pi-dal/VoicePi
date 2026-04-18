@@ -15,7 +15,7 @@ struct FloatingPanelSizingState: Equatable {
                 transcript: transcript,
                 sourcePreview: sourcePreview
             )
-            let width = lockedRecordingWidth ?? computedWidth
+            let width = max(lockedRecordingWidth ?? 0, computedWidth)
             lockedRecordingWidth = width
             return CGSize(
                 width: width,

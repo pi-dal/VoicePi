@@ -3961,7 +3961,8 @@ extension AppController: StatusBarControllerDelegate {
         model.saveLLMConfiguration(
             baseURL: configuration.baseURL,
             apiKey: configuration.apiKey,
-            model: configuration.model
+            model: configuration.model,
+            enableThinking: .some(configuration.enableThinking)
         )
         controller.refreshAll()
     }

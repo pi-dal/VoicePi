@@ -3,7 +3,7 @@ import Testing
 
 struct FloatingPanelSizingStateTests {
     @Test
-    func recordingWidthLocksAtSessionStart() {
+    func recordingWidthExpandsToFitLongerTranscriptWithinSession() {
         var state = FloatingPanelSizingState()
 
         let initial = state.preferredSize(
@@ -17,7 +17,38 @@ struct FloatingPanelSizingStateTests {
             sourcePreview: nil
         )
 
-        #expect(expandedAttempt.width == initial.width)
+        #expect(expandedAttempt.width > initial.width)
+    }
+
+    @Test
+    func recordingWidthDoesNotShrinkAfterGrowingWithinSession() {
+        var state = FloatingPanelSizingState()
+
+        let expanded = state.preferredSize(
+            for: .recording,
+            transcript: "A much longer realtime partial transcript that should establish the session width",
+            sourcePreview: nil
+        )
+        let shorterFollowUp = state.preferredSize(
+            for: .recording,
+            transcript: "short",
+            sourcePreview: nil
+        )
+
+        #expect(shorterFollowUp.width == expanded.width)
+    }
+
+    @Test
+    func recordingWidthStopsGrowingAtMaximumBannerWidth() {
+        var state = FloatingPanelSizingState()
+
+        let capped = state.preferredSize(
+            for: .recording,
+            transcript: String(repeating: "A much longer realtime partial transcript ", count: 40),
+            sourcePreview: nil
+        )
+
+        #expect(capped.width == FloatingPanelSupport.maximumBannerWidth)
     }
 
     @Test

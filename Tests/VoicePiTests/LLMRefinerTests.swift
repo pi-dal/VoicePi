@@ -96,6 +96,131 @@ struct LLMRefinerTests {
     }
 
     @Test
+    func refineOmitsEnableThinkingWhenConfigurationDoesNotSetIt() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configuration = LLMRefinerConfiguration(
+            baseURL: "https://api.example.com",
+            apiKey: "sk-test",
+            model: "gpt-test",
+            refinementPrompt: ""
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"refined output"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        let result = try await refiner.refine(text: "raw input", configuration: configuration)
+
+        #expect(result == "refined output")
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+
+        #expect(payload["enable_thinking"] == nil)
+    }
+
+    @Test
+    func refineIncludesEnableThinkingFalseWhenConfigurationExplicitlyDisablesIt() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configurationData = try JSONSerialization.data(
+            withJSONObject: [
+                "baseURL": "https://api.example.com",
+                "apiKey": "sk-test",
+                "model": "gpt-test",
+                "refinementPrompt": "",
+                "enable_thinking": false
+            ]
+        )
+        let configuration = try JSONDecoder().decode(
+            LLMRefinerConfiguration.self,
+            from: configurationData
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"refined output"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        let result = try await refiner.refine(text: "raw input", configuration: configuration)
+
+        #expect(result == "refined output")
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+
+        #expect(payload["enable_thinking"] as? Bool == false)
+    }
+
+    @Test
+    func refineIncludesEnableThinkingTrueWhenConfigurationExplicitlyEnablesIt() async throws {
+        let (session, capturedRequests) = makeSession()
+        let refiner = LLMRefiner(session: session)
+        let configurationData = try JSONSerialization.data(
+            withJSONObject: [
+                "baseURL": "https://api.example.com",
+                "apiKey": "sk-test",
+                "model": "gpt-test",
+                "refinementPrompt": "",
+                "enable_thinking": true
+            ]
+        )
+        let configuration = try JSONDecoder().decode(
+            LLMRefinerConfiguration.self,
+            from: configurationData
+        )
+
+        LLMTestURLProtocol.shared.setHandler { request in
+            capturedRequests.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = #"{"choices":[{"message":{"role":"assistant","content":"refined output"}}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+        defer { LLMTestURLProtocol.shared.reset() }
+
+        let result = try await refiner.refine(text: "raw input", configuration: configuration)
+
+        #expect(result == "refined output")
+
+        let request = try #require(capturedRequests.snapshot.first)
+        let body = try #require(requestBody(from: request))
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+
+        #expect(payload["enable_thinking"] as? Bool == true)
+    }
+
+    @Test
     func refineAddsTargetLanguageInstructionWhenRequested() async throws {
         let (session, capturedRequests) = makeSession()
         let refiner = LLMRefiner(session: session)
