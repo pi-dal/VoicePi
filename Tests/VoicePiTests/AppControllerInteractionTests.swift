@@ -854,7 +854,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func capturedSourceSnapshotOnlyExistsForProcessorShortcutWorkflow() throws {
+    func capturedSourceSnapshotExistsForAnyExternalProcessorWorkflow() throws {
         let targetSnapshot = EditableTextTargetSnapshot(
             inspection: .editable,
             targetIdentifier: "target-1",
@@ -862,9 +862,18 @@ struct AppControllerInteractionTests {
             selectedText: "Reference paragraph",
             selectedTextRange: NSRange(location: 0, length: 19)
         )
+        let externalProcessorWorkflow = AppController.ProcessingWorkflowSelection(
+            postProcessingMode: .refinement,
+            refinementProvider: .externalProcessor
+        )
+        let llmWorkflow = AppController.ProcessingWorkflowSelection(
+            postProcessingMode: .refinement,
+            refinementProvider: .llm
+        )
 
         #expect(
             AppController.capturedSourceSnapshot(
+                workflow: llmWorkflow,
                 workflowOverride: nil,
                 targetSnapshot: targetSnapshot,
                 sourceApplicationBundleID: "com.apple.TextEdit"
@@ -873,12 +882,23 @@ struct AppControllerInteractionTests {
 
         let captured = try #require(
             AppController.capturedSourceSnapshot(
-                workflowOverride: .externalProcessorShortcut,
+                workflow: externalProcessorWorkflow,
+                workflowOverride: nil,
                 targetSnapshot: targetSnapshot,
                 sourceApplicationBundleID: "com.apple.TextEdit"
             )
         )
         #expect(captured.text == "Reference paragraph")
+
+        let shortcutCaptured = try #require(
+            AppController.capturedSourceSnapshot(
+                workflow: llmWorkflow,
+                workflowOverride: .externalProcessorShortcut,
+                targetSnapshot: targetSnapshot,
+                sourceApplicationBundleID: "com.apple.TextEdit"
+            )
+        )
+        #expect(shortcutCaptured.text == "Reference paragraph")
     }
 
     @Test

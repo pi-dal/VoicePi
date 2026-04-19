@@ -550,11 +550,16 @@ final class AppController: NSObject {
     }
 
     static func capturedSourceSnapshot(
+        workflow: ProcessingWorkflowSelection,
         workflowOverride: RecordingWorkflowOverride?,
         targetSnapshot: EditableTextTargetSnapshot,
         sourceApplicationBundleID: String?
     ) -> CapturedSourceSnapshot? {
-        guard workflowOverride == .externalProcessorShortcut else {
+        guard workflowOverride == .externalProcessorShortcut
+            || (
+                workflow.postProcessingMode == .refinement
+                && workflow.refinementProvider == .externalProcessor
+            ) else {
             return nil
         }
         return ExternalProcessorSourceSnapshotSupport.capture(
@@ -1697,7 +1702,13 @@ final class AppController: NSObject {
 
         isStartingRecording = true
         activeRecordingWorkflowOverride = workflowOverride
+        let captureWorkflow = Self.effectiveProcessingWorkflow(
+            postProcessingMode: model.postProcessingMode,
+            refinementProvider: model.refinementProvider,
+            override: workflowOverride
+        )
         activeCapturedSourceSnapshot = Self.capturedSourceSnapshot(
+            workflow: captureWorkflow,
             workflowOverride: workflowOverride,
             targetSnapshot: editableTextTargetInspector.currentSnapshot(),
             sourceApplicationBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
