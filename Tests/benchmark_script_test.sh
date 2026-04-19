@@ -53,6 +53,7 @@ cat > "$OUTPUT_PATH" <<'INNER'
 set -eu
 printf '%s\n' "VoicePi performance benchmarks"
 printf '%s\n' "Budgets:"
+printf '%s\n' "- text_injection_clipboard_restore_deficit_ms current=0ms legacy=120ms improvement=100.0%"
 printf '%s\n' "Microbenchmarks:"
 INNER
 chmod +x "$OUTPUT_PATH"
@@ -80,3 +81,4 @@ grep -q -- 'Scripts/benchmark_main.swift' "$TMP_DIR/.swiftc-args"
 grep -q -- '^-O$' "$TMP_DIR/.swiftc-args"
 grep -q -- '^-whole-module-optimization$' "$TMP_DIR/.swiftc-args"
 grep -q -- '^VoicePi performance benchmarks$' "$TMP_DIR/.benchmark-output"
+grep -q -- '^- text_injection_clipboard_restore_deficit_ms current=0ms legacy=120ms improvement=100.0%$' "$TMP_DIR/.benchmark-output"

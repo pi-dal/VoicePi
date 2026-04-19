@@ -29,6 +29,13 @@ struct PerformanceBenchmarkReportTests {
                     unit: "ms"
                 ),
                 .init(
+                    id: "text_injection_clipboard_restore_deficit_ms",
+                    title: "Clipboard restore reliability deficit after paste",
+                    legacyValue: 120,
+                    currentValue: 0,
+                    unit: "ms"
+                ),
+                .init(
                     id: "post_injection_idle_polls_per_minute",
                     title: "Post-injection idle accessibility polls",
                     legacyValue: 240,
@@ -148,6 +155,7 @@ struct PerformanceBenchmarkReportTests {
                 Budgets:
                 - text_injection_ascii_blocking_ms current=78ms legacy=260ms improvement=70.0%
                 - text_injection_cjk_blocking_ms current=128ms legacy=470ms improvement=72.8%
+                - text_injection_clipboard_restore_deficit_ms current=0ms legacy=120ms improvement=100.0%
                 - post_injection_idle_polls_per_minute current=100polls/min legacy=240polls/min improvement=58.3%
                 - floating_panel_repeated_partial_layouts current=1layouts legacy=10layouts improvement=90.0%
                 - speech_stop_partial_fallback_ms current=120ms legacy=450ms improvement=73.3%

@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Foundation
+import OSLog
 
 struct InputSourceSnapshot {
     let source: TISInputSource
@@ -44,9 +45,14 @@ final class TextInjector {
 
     private let pasteboard = NSPasteboard.general
     private let timing: TextInjectionTiming
+    private let logger: Logger
 
-    init(timing: TextInjectionTiming = .default) {
+    init(
+        timing: TextInjectionTiming = .default,
+        logger: Logger = Logger(subsystem: "VoicePi", category: "TextInjection")
+    ) {
         self.timing = timing
+        self.logger = logger
     }
 
     nonisolated static func performOnMainThread<T: Sendable>(
@@ -94,23 +100,30 @@ final class TextInjector {
             }
 
             try setClipboard(text: text)
+            let injectedClipboardChangeCount = pasteboard.changeCount
             try await Task.sleep(for: plan.timing.clipboardSettleDelay)
 
             try await simulateCommandV(keyPressInterval: plan.timing.keyPressInterval)
             try await Task.sleep(for: plan.timing.postPasteSettleDelay)
 
-            restorePasteboardItems(originalPasteboard)
-
             if switchedToASCII {
                 try await Task.sleep(for: plan.timing.restoreInputSourceSettleDelay)
                 try restoreInputSource(originalInputSource)
             }
+
+            schedulePasteboardRestore(
+                originalPasteboard,
+                expectedInjectedChangeCount: injectedClipboardChangeCount,
+                after: remainingClipboardRestoreDelay()
+            )
         } catch {
             restorePasteboardItems(originalPasteboard)
 
             if switchedToASCII {
                 _ = try? restoreInputSource(originalInputSource)
             }
+
+            logger.error("paste_injection_failed reason=\(error.localizedDescription, privacy: .private)")
 
             throw error
         }
@@ -146,6 +159,49 @@ final class TextInjector {
         _ = pasteboard.writeObjects(items)
     }
 
+    private func schedulePasteboardRestore(
+        _ items: [NSPasteboardItem]?,
+        expectedInjectedChangeCount: Int,
+        after delay: Duration
+    ) {
+        let delayMilliseconds = delay.wholeMilliseconds
+        logger.debug(
+            "pasteboard_restore_scheduled delay_ms=\(delayMilliseconds) expected_change_count=\(expectedInjectedChangeCount)"
+        )
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if delayMilliseconds > 0 {
+                try? await Task.sleep(for: delay)
+            }
+            self.restorePasteboardItemsIfSafe(
+                items,
+                expectedInjectedChangeCount: expectedInjectedChangeCount
+            )
+        }
+    }
+
+    private func restorePasteboardItemsIfSafe(
+        _ items: [NSPasteboardItem]?,
+        expectedInjectedChangeCount: Int
+    ) {
+        let currentChangeCount = pasteboard.changeCount
+        guard PasteboardRestoreDecision.shouldRestore(
+            expectedInjectedChangeCount: expectedInjectedChangeCount,
+            currentChangeCount: currentChangeCount
+        ) else {
+            logger.debug(
+                "pasteboard_restore_skipped expected_change_count=\(expectedInjectedChangeCount) current_change_count=\(currentChangeCount)"
+            )
+            return
+        }
+
+        restorePasteboardItems(items)
+        logger.debug(
+            "pasteboard_restore_completed expected_change_count=\(expectedInjectedChangeCount)"
+        )
+    }
+
     private func setClipboard(text: String) throws {
         pasteboard.clearContents()
 
@@ -155,6 +211,15 @@ final class TextInjector {
     }
 
     // MARK: - Input Source
+
+    private func remainingClipboardRestoreDelay() -> Duration {
+        let remainingMilliseconds = max(
+            0,
+            timing.clipboardRestoreDelay.wholeMilliseconds
+                - timing.postPasteSettleDelay.wholeMilliseconds
+        )
+        return .milliseconds(remainingMilliseconds)
+    }
 
     private func currentInputSourceSnapshot() -> InputSourceSnapshot? {
         guard let unmanagedSource = TISCopyCurrentKeyboardInputSource() else {

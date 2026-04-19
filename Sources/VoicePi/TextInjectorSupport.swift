@@ -36,3 +36,12 @@ enum TextInjectorSupport {
         return false
     }
 }
+
+enum PasteboardRestoreDecision {
+    static func shouldRestore(
+        expectedInjectedChangeCount: Int,
+        currentChangeCount: Int
+    ) -> Bool {
+        currentChangeCount == expectedInjectedChangeCount
+    }
+}

@@ -14,6 +14,7 @@ struct TextInjectionTiming: Equatable {
     let clipboardSettleDelay: Duration
     let keyPressInterval: Duration
     let postPasteSettleDelay: Duration
+    let clipboardRestoreDelay: Duration
     let restoreInputSourceSettleDelay: Duration
 
     static let `default` = TextInjectionTiming(
@@ -21,6 +22,7 @@ struct TextInjectionTiming: Equatable {
         clipboardSettleDelay: .milliseconds(10),
         keyPressInterval: .milliseconds(8),
         postPasteSettleDelay: .milliseconds(60),
+        clipboardRestoreDelay: .milliseconds(220),
         restoreInputSourceSettleDelay: .milliseconds(20)
     )
 }

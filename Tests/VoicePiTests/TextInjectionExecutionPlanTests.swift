@@ -33,4 +33,29 @@ struct TextInjectionExecutionPlanTests {
         #expect(switched.blockingLatencyMilliseconds > baseline.blockingLatencyMilliseconds)
         #expect(switched.blockingLatencyMilliseconds < 180)
     }
+
+    @Test
+    func defaultTimingKeepsClipboardAvailableLongerThanBlockingPasteWindow() {
+        #expect(TextInjectionTiming.default.clipboardRestoreDelay.wholeMilliseconds >= 180)
+        #expect(
+            TextInjectionTiming.default.clipboardRestoreDelay.wholeMilliseconds
+                > TextInjectionTiming.default.postPasteSettleDelay.wholeMilliseconds
+        )
+    }
+
+    @Test
+    func clipboardRestoreIsSkippedWhenClipboardChangedAfterInjection() {
+        #expect(
+            PasteboardRestoreDecision.shouldRestore(
+                expectedInjectedChangeCount: 5,
+                currentChangeCount: 5
+            )
+        )
+        #expect(
+            PasteboardRestoreDecision.shouldRestore(
+                expectedInjectedChangeCount: 5,
+                currentChangeCount: 6
+            ) == false
+        )
+    }
 }

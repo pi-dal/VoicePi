@@ -62,6 +62,8 @@ struct PerformanceBenchmarkReport: Equatable {
         let partialStopFallbackMilliseconds = durationMilliseconds(
             speechRecorderStopPolicy.fallbackDelay(forCurrentTranscript: "partial transcript")
         )
+        let legacyClipboardRestoreDelayMilliseconds = 60
+        let minimumReliableClipboardRestoreDelayMilliseconds = 180
 
         return PerformanceBenchmarkReport(
             budgetMetrics: [
@@ -77,6 +79,19 @@ struct PerformanceBenchmarkReport: Equatable {
                     title: "CJK text injection blocking latency",
                     legacyValue: 470,
                     currentValue: cjkPlan.blockingLatencyMilliseconds,
+                    unit: "ms"
+                ),
+                BudgetMetric(
+                    id: "text_injection_clipboard_restore_deficit_ms",
+                    title: "Clipboard restore reliability deficit after paste",
+                    legacyValue: clipboardRestoreDeficitMilliseconds(
+                        restoreDelay: .milliseconds(legacyClipboardRestoreDelayMilliseconds),
+                        minimumReliableRestoreDelayMilliseconds: minimumReliableClipboardRestoreDelayMilliseconds
+                    ),
+                    currentValue: clipboardRestoreDeficitMilliseconds(
+                        restoreDelay: textInjectionTiming.clipboardRestoreDelay,
+                        minimumReliableRestoreDelayMilliseconds: minimumReliableClipboardRestoreDelayMilliseconds
+                    ),
                     unit: "ms"
                 ),
                 BudgetMetric(
@@ -208,5 +223,12 @@ struct PerformanceBenchmarkReport: Equatable {
 
     private static func durationMilliseconds(_ duration: Duration) -> Int {
         duration.wholeMilliseconds
+    }
+
+    private static func clipboardRestoreDeficitMilliseconds(
+        restoreDelay: Duration,
+        minimumReliableRestoreDelayMilliseconds: Int
+    ) -> Int {
+        max(0, minimumReliableRestoreDelayMilliseconds - restoreDelay.wholeMilliseconds)
     }
 }
