@@ -584,6 +584,42 @@ final class AppController: NSObject {
         )
     }
 
+    static func resolvedCapturedSourceSnapshot(
+        existingSnapshot: CapturedSourceSnapshot?,
+        workflow: ProcessingWorkflowSelection,
+        workflowOverride: RecordingWorkflowOverride?,
+        targetSnapshot: EditableTextTargetSnapshot,
+        sourceApplicationBundleID: String?,
+        fallbackSelectedText: String?
+    ) -> CapturedSourceSnapshot? {
+        if let existingSnapshot {
+            return existingSnapshot
+        }
+
+        guard workflowOverride == .externalProcessorShortcut
+            || (
+                workflow.postProcessingMode == .refinement
+                && workflow.refinementProvider == .externalProcessor
+            ) else {
+            return nil
+        }
+
+        guard let normalizedText = ExternalProcessorSourceSnapshotSupport.normalizedSourceText(
+            fallbackSelectedText ?? ""
+        ) else {
+            return nil
+        }
+
+        return CapturedSourceSnapshot(
+            text: normalizedText,
+            previewText: ExternalProcessorSourceSnapshotSupport.previewText(from: normalizedText),
+            sourceApplicationBundleID: sourceApplicationBundleID?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            targetIdentifier: targetSnapshot.targetIdentifier?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     static func shouldResolveAutomaticRefinementPrompt(
         workflowOverride: RecordingWorkflowOverride?,
         promptPresetOverrideID: String?
@@ -1751,6 +1787,11 @@ final class AppController: NSObject {
                 return
             }
 
+            await self.hydrateCapturedSourceSnapshotFromClipboardIfNeeded(
+                workflow: captureWorkflow,
+                workflowOverride: workflowOverride
+            )
+
             do {
                 self.speechRecorder.updateLocale(identifier: self.model.selectedLanguage.localeIdentifier)
                 self.floatingPanelController.showRecording(
@@ -1782,6 +1823,127 @@ final class AppController: NSObject {
 
             self.isStartingRecording = false
         }
+    }
+
+    private func hydrateCapturedSourceSnapshotFromClipboardIfNeeded(
+        workflow: ProcessingWorkflowSelection,
+        workflowOverride: RecordingWorkflowOverride?
+    ) async {
+        guard activeCapturedSourceSnapshot == nil else {
+            return
+        }
+
+        let sourceApplicationBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let fallbackSelectedText = await Self.captureSelectedTextFromClipboardFallback(
+            workflow: workflow,
+            workflowOverride: workflowOverride,
+            sourceApplicationBundleID: sourceApplicationBundleID
+        )
+        guard let fallbackSelectedText else {
+            return
+        }
+
+        activeCapturedSourceSnapshot = Self.resolvedCapturedSourceSnapshot(
+            existingSnapshot: activeCapturedSourceSnapshot,
+            workflow: workflow,
+            workflowOverride: workflowOverride,
+            targetSnapshot: editableTextTargetInspector.currentSnapshot(),
+            sourceApplicationBundleID: sourceApplicationBundleID,
+            fallbackSelectedText: fallbackSelectedText
+        )
+    }
+
+    private static func captureSelectedTextFromClipboardFallback(
+        workflow: ProcessingWorkflowSelection,
+        workflowOverride: RecordingWorkflowOverride?,
+        sourceApplicationBundleID: String?
+    ) async -> String? {
+        guard workflowOverride == .externalProcessorShortcut
+            || (
+                workflow.postProcessingMode == .refinement
+                && workflow.refinementProvider == .externalProcessor
+            ) else {
+            return nil
+        }
+
+        if let bundleIdentifier = Bundle.main.bundleIdentifier,
+           sourceApplicationBundleID == bundleIdentifier {
+            return nil
+        }
+
+        let pasteboard = NSPasteboard.general
+        let originalItems = capturePasteboardItems(from: pasteboard)
+        let originalChangeCount = pasteboard.changeCount
+
+        do {
+            try await Task.sleep(for: .milliseconds(35))
+            try await simulateCommandCopy(keyPressInterval: .milliseconds(8))
+
+            let deadline = Date().addingTimeInterval(0.22)
+            while pasteboard.changeCount == originalChangeCount, Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+
+            let copiedText = pasteboard.changeCount == originalChangeCount
+                ? nil
+                : pasteboard.string(forType: .string)
+            restorePasteboardItems(originalItems, to: pasteboard)
+            return ExternalProcessorSourceSnapshotSupport.normalizedSourceText(copiedText ?? "")
+        } catch {
+            restorePasteboardItems(originalItems, to: pasteboard)
+            return nil
+        }
+    }
+
+    private static func capturePasteboardItems(from pasteboard: NSPasteboard) -> [NSPasteboardItem]? {
+        pasteboard.pasteboardItems?.compactMap { item in
+            let copy = NSPasteboardItem()
+            var copiedAnyType = false
+
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                    copiedAnyType = true
+                } else if let string = item.string(forType: type) {
+                    copy.setString(string, forType: type)
+                    copiedAnyType = true
+                } else if let propertyList = item.propertyList(forType: type) {
+                    copy.setPropertyList(propertyList, forType: type)
+                    copiedAnyType = true
+                }
+            }
+
+            return copiedAnyType ? copy : nil
+        }
+    }
+
+    private static func restorePasteboardItems(
+        _ items: [NSPasteboardItem]?,
+        to pasteboard: NSPasteboard
+    ) {
+        pasteboard.clearContents()
+        guard let items, !items.isEmpty else { return }
+        _ = pasteboard.writeObjects(items)
+    }
+
+    private static func simulateCommandCopy(keyPressInterval: Duration) async throws {
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            throw TextInjectorError.eventSourceUnavailable
+        }
+
+        let keyCode: CGKeyCode = 8 // ANSI C
+        guard
+            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        else {
+            throw TextInjectorError.eventSourceUnavailable
+        }
+
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        try await Task.sleep(for: keyPressInterval)
+        keyUp.post(tap: .cghidEventTap)
     }
 
     private func endRecordingAndInject() {

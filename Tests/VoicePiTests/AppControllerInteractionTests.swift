@@ -935,6 +935,38 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func resolvedCapturedSourceSnapshotUsesFallbackSelectionTextWhenAXSelectionIsMissing() throws {
+        let targetSnapshot = EditableTextTargetSnapshot(
+            inspection: .notEditable,
+            targetIdentifier: "target-clipboard",
+            textValue: nil,
+            selectedText: nil,
+            selectedTextRange: nil
+        )
+        let workflow = AppController.ProcessingWorkflowSelection(
+            postProcessingMode: .refinement,
+            refinementProvider: .externalProcessor
+        )
+
+        let captured = try #require(
+            AppController.resolvedCapturedSourceSnapshot(
+                existingSnapshot: nil,
+                workflow: workflow,
+                workflowOverride: nil,
+                targetSnapshot: targetSnapshot,
+                sourceApplicationBundleID: "com.apple.Safari",
+                fallbackSelectedText: " Clipboard quoted webpage text "
+            )
+        )
+
+        #expect(captured.text == "Clipboard quoted webpage text")
+        #expect(captured.previewText == "Clipboard quoted webpage text")
+        #expect(captured.sourceApplicationBundleID == "com.apple.Safari")
+        #expect(captured.targetIdentifier == "target-clipboard")
+    }
+
+    @Test
+    @MainActor
     func processorShortcutIsIgnoredWhileProcessingRelease() {
         #expect(
             AppController.processorShortcutPressAction(
