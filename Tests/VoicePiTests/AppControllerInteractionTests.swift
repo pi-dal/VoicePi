@@ -722,6 +722,38 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func selectedTextReviewSessionCapturesSourceSnapshotForExternalProcessorPrompt() throws {
+        let selectedText = "Quoted webpage text"
+        let session = AppController.RefinementReviewSession(
+            sourceType: .selectedText,
+            rawTranscript: selectedText,
+            selectedPromptPresetID: PromptPreset.builtInDefaultID,
+            selectedPromptTitle: PromptPreset.builtInDefault.title,
+            currentResultText: selectedText,
+            selectionAnchor: AppController.ResultReviewSelectionAnchor(
+                targetIdentifier: "target-3",
+                selectedText: selectedText,
+                selectedRange: NSRange(location: 0, length: selectedText.utf16.count),
+                sourceApplicationBundleID: "com.apple.Safari"
+            ),
+            recordingDurationMilliseconds: 900,
+            workflow: AppController.ProcessingWorkflowSelection(
+                postProcessingMode: .refinement,
+                refinementProvider: .externalProcessor
+            ),
+            workflowOverride: nil,
+            isAutoOpened: false
+        )
+
+        let sourceSnapshot = try #require(session.sourceSnapshot)
+        #expect(sourceSnapshot.text == selectedText)
+        #expect(sourceSnapshot.previewText == selectedText)
+        #expect(sourceSnapshot.sourceApplicationBundleID == "com.apple.Safari")
+        #expect(sourceSnapshot.targetIdentifier == "target-3")
+    }
+
+    @Test
+    @MainActor
     func selectedTextRewriteWithoutRecentInsertionMatchOpensReviewPanelWithoutAutoRegenerate() {
         #expect(
             AppController.selectionRewritePresentationDecision(hasRecentInsertionMatch: false)

@@ -88,4 +88,49 @@ struct EditableTextTargetInspectorTests {
         )
         #expect(selected == nil)
     }
+
+    @Test
+    func selectedTextFromValueFallsBackToSelectedChildrenText() {
+        let selected = EditableTextTargetInspector.selectedTextFromValue(
+            nil,
+            range: nil,
+            preferredSelectedText: nil,
+            selectedTextRangeStrings: [],
+            selectedChildrenText: [
+                " First selected line ",
+                "",
+                "Second selected line"
+            ]
+        )
+        #expect(selected == "First selected line\nSecond selected line")
+    }
+
+    @Test
+    func selectedTextFromValueFallsBackToSelectedTextRangesText() {
+        let selected = EditableTextTargetInspector.selectedTextFromValue(
+            nil,
+            range: nil,
+            preferredSelectedText: nil,
+            selectedTextRangeStrings: [
+                " First selected paragraph ",
+                "",
+                "Second selected paragraph"
+            ],
+            selectedChildrenText: []
+        )
+        #expect(selected == "First selected paragraph\nSecond selected paragraph")
+    }
+
+    @Test
+    func selectedTextFromValueFallsBackToSelectedTextMarkerRangeText() {
+        let selected = EditableTextTargetInspector.selectedTextFromValue(
+            nil,
+            range: nil,
+            preferredSelectedText: nil,
+            selectedTextRangeStrings: [],
+            selectedChildrenText: [],
+            selectedTextMarkerRangeText: " Selected PDF paragraph "
+        )
+        #expect(selected == "Selected PDF paragraph")
+    }
 }

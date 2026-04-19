@@ -152,6 +152,7 @@ final class AppController: NSObject {
         let sourceType: ResultReviewSourceType
         let rawTranscript: String
         let regenerateSourceText: String
+        let sourceSnapshot: CapturedSourceSnapshot?
         var selectedPromptPresetID: String
         var selectedPromptTitle: String
         var pendingPromptPresetID: String?
@@ -204,6 +205,21 @@ final class AppController: NSObject {
                         ? normalizedRawTranscript
                         : normalizedSelectedSource
                 }
+            }
+            if sourceType == .selectedText,
+               let normalizedSourceText = ExternalProcessorSourceSnapshotSupport.normalizedSourceText(
+                selectionAnchor.selectedText
+               ) {
+                self.sourceSnapshot = CapturedSourceSnapshot(
+                    text: normalizedSourceText,
+                    previewText: ExternalProcessorSourceSnapshotSupport.previewText(
+                        from: normalizedSourceText
+                    ),
+                    sourceApplicationBundleID: selectionAnchor.sourceApplicationBundleID,
+                    targetIdentifier: selectionAnchor.targetIdentifier
+                )
+            } else {
+                self.sourceSnapshot = nil
             }
             self.selectedPromptPresetID = selectedPromptPresetID
             self.selectedPromptTitle = selectedPromptTitle
@@ -2184,6 +2200,7 @@ final class AppController: NSObject {
                 workflow: session.workflow,
                 workflowOverride: session.workflowOverride,
                 promptPresetOverrideID: session.pendingPromptPresetID ?? session.selectedPromptPresetID,
+                sourceSnapshot: session.sourceSnapshot,
                 refiningPresentationMode: Self.refiningPresentationModeForRegenerate()
             )
             guard !Task.isCancelled else { return }

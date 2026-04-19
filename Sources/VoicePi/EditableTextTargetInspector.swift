@@ -105,10 +105,16 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
             kAXSelectedTextAttribute as String,
             from: focusedElement
         )
+        let selectedTextRangeStrings = copySelectedTextRangeStrings(from: focusedElement)
+        let selectedTextMarkerRangeText = copySelectedTextMarkerRangeText(around: focusedElement)
+        let selectedChildrenText = copySelectedChildrenText(around: focusedElement)
         let selectedText = Self.selectedTextFromValue(
             textValue,
             range: selectedTextRange,
-            preferredSelectedText: selectedTextFromAttribute
+            preferredSelectedText: selectedTextFromAttribute,
+            selectedTextRangeStrings: selectedTextRangeStrings,
+            selectedChildrenText: selectedChildrenText,
+            selectedTextMarkerRangeText: selectedTextMarkerRangeText
         )
         let selectedTextBoundsInScreen = selectedTextRange.flatMap {
             copyBounds(for: $0, from: focusedElement)
@@ -128,23 +134,62 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
     static func selectedTextFromValue(
         _ textValue: String?,
         range: NSRange?,
-        preferredSelectedText: String? = nil
+        preferredSelectedText: String? = nil,
+        selectedTextRangeStrings: [String] = [],
+        selectedChildrenText: [String] = [],
+        selectedTextMarkerRangeText: String? = nil
     ) -> String? {
         if let preferredSelectedText, !preferredSelectedText.isEmpty {
             return preferredSelectedText
         }
         guard let textValue, let range, range.location >= 0, range.length > 0 else {
-            return preferredSelectedText
+            if let selectedTextFromRanges = joinedSelectedChildrenText(selectedTextRangeStrings) {
+                return selectedTextFromRanges
+            }
+            if let selectedTextMarkerRangeText = normalizedFallbackFragment(selectedTextMarkerRangeText) {
+                return selectedTextMarkerRangeText
+            }
+            return joinedSelectedChildrenText(selectedChildrenText)
         }
 
         let nsText = textValue as NSString
         guard range.location <= nsText.length else {
-            return preferredSelectedText
+            if let selectedTextFromRanges = joinedSelectedChildrenText(selectedTextRangeStrings) {
+                return selectedTextFromRanges
+            }
+            if let selectedTextMarkerRangeText = normalizedFallbackFragment(selectedTextMarkerRangeText) {
+                return selectedTextMarkerRangeText
+            }
+            return joinedSelectedChildrenText(selectedChildrenText)
         }
         guard range.location + range.length <= nsText.length else {
-            return preferredSelectedText
+            if let selectedTextFromRanges = joinedSelectedChildrenText(selectedTextRangeStrings) {
+                return selectedTextFromRanges
+            }
+            if let selectedTextMarkerRangeText = normalizedFallbackFragment(selectedTextMarkerRangeText) {
+                return selectedTextMarkerRangeText
+            }
+            return joinedSelectedChildrenText(selectedChildrenText)
         }
         return nsText.substring(with: range)
+    }
+
+    private static func normalizedFallbackFragment(_ fragment: String?) -> String? {
+        let trimmed = fragment?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func joinedSelectedChildrenText(_ fragments: [String]) -> String? {
+        let cleanedFragments = fragments
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleanedFragments.isEmpty else {
+            return nil
+        }
+        return cleanedFragments.joined(separator: "\n")
     }
 
     func restoreSelectionRange(targetIdentifier: String?, range: NSRange) -> Bool {
@@ -252,6 +297,215 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
         }
 
         return nil
+    }
+
+    private func copyRawAttributeValue(_ attribute: String, from element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard status == .success, let value else {
+            return nil
+        }
+        return value
+    }
+
+    private func copyElementAttribute(_ attribute: String, from element: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard status == .success, let value else {
+            return nil
+        }
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private func copyElementArrayAttribute(_ attribute: String, from element: AXUIElement) -> [AXUIElement]? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard status == .success, let value else {
+            return nil
+        }
+        guard let values = value as? [Any] else {
+            return nil
+        }
+
+        let elements = values.compactMap { item -> AXUIElement? in
+            let raw = item as AnyObject
+            guard CFGetTypeID(raw) == AXUIElementGetTypeID() else {
+                return nil
+            }
+            return unsafeBitCast(raw, to: AXUIElement.self)
+        }
+        return elements.isEmpty ? nil : elements
+    }
+
+    private func copySelectedTextRangeStrings(from element: AXUIElement) -> [String] {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangesAttribute as CFString,
+            &value
+        )
+        guard status == .success, let values = value as? [Any] else {
+            return []
+        }
+
+        return values.compactMap { item in
+            guard CFGetTypeID(item as CFTypeRef) == AXValueGetTypeID() else {
+                return nil
+            }
+            let axValue = unsafeBitCast(item as CFTypeRef, to: AXValue.self)
+            guard AXValueGetType(axValue) == .cfRange else {
+                return nil
+            }
+
+            var range = CFRange()
+            guard AXValueGetValue(axValue, .cfRange, &range) else {
+                return nil
+            }
+            guard range.location >= 0, range.length > 0 else {
+                return nil
+            }
+
+            var parameterRange = range
+            guard let parameter = AXValueCreate(.cfRange, &parameterRange) else {
+                return nil
+            }
+
+            var stringValue: CFTypeRef?
+            let stringStatus = AXUIElementCopyParameterizedAttributeValue(
+                element,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                parameter,
+                &stringValue
+            )
+            guard stringStatus == .success, let stringValue else {
+                return nil
+            }
+
+            if let string = stringValue as? String {
+                return string
+            }
+            if let attributedString = stringValue as? NSAttributedString {
+                return attributedString.string
+            }
+            return nil
+        }
+    }
+
+    private func copySelectedChildrenText(around element: AXUIElement, maxAncestorDepth: Int = 6) -> [String] {
+        var currentElement: AXUIElement? = element
+        var depth = 0
+
+        while depth <= maxAncestorDepth, let resolvedElement = currentElement {
+            let fragments = copySelectedChildrenText(from: resolvedElement)
+            if !fragments.isEmpty {
+                return fragments
+            }
+
+            currentElement = copyElementAttribute(kAXParentAttribute as String, from: resolvedElement)
+            depth += 1
+        }
+
+        return []
+    }
+
+    private func copySelectedTextMarkerRangeText(
+        around element: AXUIElement,
+        maxAncestorDepth: Int = 6
+    ) -> String? {
+        var currentElement: AXUIElement? = element
+        var depth = 0
+
+        while depth <= maxAncestorDepth, let resolvedElement = currentElement {
+            if let selectedText = copySelectedTextMarkerRangeText(from: resolvedElement) {
+                return selectedText
+            }
+
+            currentElement = copyElementAttribute(kAXParentAttribute as String, from: resolvedElement)
+            depth += 1
+        }
+
+        return nil
+    }
+
+    private func copySelectedTextMarkerRangeText(from element: AXUIElement) -> String? {
+        guard let markerRange = copyRawAttributeValue("AXSelectedTextMarkerRange", from: element) else {
+            return nil
+        }
+
+        if let stringValue = copyStringForTextMarkerRange(markerRange, from: element, attribute: "AXStringForTextMarkerRange") {
+            return stringValue
+        }
+
+        return copyStringForTextMarkerRange(
+            markerRange,
+            from: element,
+            attribute: "AXAttributedStringForTextMarkerRange"
+        )
+    }
+
+    private func copyStringForTextMarkerRange(
+        _ markerRange: CFTypeRef,
+        from element: AXUIElement,
+        attribute: String
+    ) -> String? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            attribute as CFString,
+            markerRange,
+            &value
+        )
+        guard status == .success, let value else {
+            return nil
+        }
+
+        if let stringValue = value as? String {
+            return stringValue
+        }
+
+        if let attributedValue = value as? NSAttributedString {
+            return attributedValue.string
+        }
+
+        return nil
+    }
+
+    private func copySelectedChildrenText(from element: AXUIElement) -> [String] {
+        guard let selectedChildren = copyElementArrayAttribute("AXSelectedChildren", from: element) else {
+            return []
+        }
+
+        return selectedChildren.flatMap { copyTextFragments(from: $0, depthRemaining: 3) }
+    }
+
+    private func copyTextFragments(from element: AXUIElement, depthRemaining: Int) -> [String] {
+        if let selectedText = copyStringLikeAttribute(kAXSelectedTextAttribute as String, from: element)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !selectedText.isEmpty {
+            return [selectedText]
+        }
+
+        if let valueText = copyStringLikeAttribute(kAXValueAttribute, from: element)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !valueText.isEmpty {
+            return [valueText]
+        }
+
+        if let titleText = copyStringLikeAttribute(kAXTitleAttribute as String, from: element)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !titleText.isEmpty {
+            return [titleText]
+        }
+
+        guard depthRemaining > 0,
+              let children = copyElementArrayAttribute(kAXChildrenAttribute as String, from: element) else {
+            return []
+        }
+
+        return children.flatMap { copyTextFragments(from: $0, depthRemaining: depthRemaining - 1) }
     }
 
     private func copySelectedTextRange(from element: AXUIElement) -> NSRange? {
