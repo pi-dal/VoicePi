@@ -10,6 +10,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarController(_ controller: StatusBarController, didSave configuration: LLMConfiguration)
     func statusBarController(_ controller: StatusBarController, didSaveRemoteASRConfiguration configuration: RemoteASRConfiguration)
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut)
+    func statusBarController(_ controller: StatusBarController, didUpdateCancelShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didUpdatePromptCycleShortcut shortcut: ActivationShortcut)
     func statusBarController(_ controller: StatusBarController, didUpdateProcessorShortcut shortcut: ActivationShortcut)
@@ -1078,15 +1079,17 @@ enum SettingsLayoutMetrics {
     static let pageSpacing: CGFloat = 12
     static let cardPaddingHorizontal: CGFloat = 18
     static let cardPaddingVertical: CGFloat = 16
+    static let compactCardPaddingVertical: CGFloat = 12
     static let sectionHeaderSpacing: CGFloat = 4
     static let formRowVerticalInset: CGFloat = 9
     static let twoColumnSpacing: CGFloat = 12
+    static let compactShortcutCardSpacing: CGFloat = 6
     static let actionButtonHeight: CGFloat = 32
     static let navigationButtonHeight: CGFloat = 52
     static let navigationButtonMinWidth: CGFloat = 72
     static let contentMinWidth: CGFloat = 660
     static let contentMaxWidth: CGFloat = 792
-    static let contentMinHeight: CGFloat = 360
+    static let contentMinHeight: CGFloat = 300
     static let updatePanelWidth: CGFloat = 436
     static let updatePanelMinHeight: CGFloat = 408
     static let updatePanelNotesHeight: CGFloat = 120
@@ -1134,6 +1137,11 @@ protocol SettingsWindowControllerDelegate: AnyObject {
     func settingsWindowController(
         _ controller: SettingsWindowController,
         didUpdateActivationShortcut shortcut: ActivationShortcut
+    )
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
+        didUpdateCancelShortcut shortcut: ActivationShortcut
     )
 
     func settingsWindowController(
@@ -1300,6 +1308,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let homePermissionSummaryLabel = NSTextField(labelWithString: "")
     private let homeLanguageLabel = NSTextField(labelWithString: "")
     private let homeShortcutLabel = NSTextField(labelWithString: "")
+    private let homeCancelShortcutLabel = NSTextField(labelWithString: "")
     private let homeModeShortcutLabel = NSTextField(labelWithString: "")
     private let homePromptShortcutLabel = NSTextField(labelWithString: "")
     private let homeASRLabel = NSTextField(labelWithString: "")
@@ -1324,6 +1333,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private let shortcutRecorderField = ShortcutRecorderField()
     private let shortcutHintLabel = NSTextField(labelWithString: "")
+    private let cancelShortcutRecorderField = ShortcutRecorderField()
+    private let cancelShortcutHintLabel = NSTextField(labelWithString: "")
     private let modeShortcutRecorderField = ShortcutRecorderField()
     private let modeShortcutHintLabel = NSTextField(labelWithString: "")
     private let promptShortcutRecorderField = ShortcutRecorderField()
@@ -1483,9 +1494,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.title = SettingsWindowChrome.title
         window.isReleasedWhenClosed = false
         window.minSize = SettingsWindowChrome.minimumSize
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = false
         if #available(macOS 11.0, *) {
-            window.toolbarStyle = .preference
+            window.toolbarStyle = .unifiedCompact
         }
         window.center()
 
@@ -1581,15 +1592,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         titleStack.orientation = .vertical
         titleStack.spacing = 2
         titleStack.alignment = .leading
+        titleStack.setContentHuggingPriority(.required, for: .vertical)
+        titleStack.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let navigation = makeSectionNavigation()
         navigation.translatesAutoresizingMaskIntoConstraints = false
+        navigation.setContentHuggingPriority(.required, for: .vertical)
+        navigation.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let headerRow = NSStackView(views: [titleStack, NSView(), navigation])
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
         headerRow.spacing = 12
         headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.setContentHuggingPriority(.required, for: .vertical)
+        headerRow.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let separator = NSBox()
         separator.boxType = .separator
@@ -1604,18 +1621,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.activate([
             headerRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
             headerRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            headerRow.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            headerRow.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+            headerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.navigationButtonHeight),
+            headerRow.heightAnchor.constraint(lessThanOrEqualToConstant: SettingsLayoutMetrics.navigationButtonHeight + 6),
 
             separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 12),
+            separator.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 6),
+            separator.heightAnchor.constraint(equalToConstant: 1),
 
             contentContainer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             contentContainer.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 24),
             contentContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
             contentContainer.widthAnchor.constraint(lessThanOrEqualToConstant: SettingsLayoutMetrics.contentMaxWidth),
             contentContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.contentMinWidth),
-            contentContainer.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 16),
+            contentContainer.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
             contentContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
             contentContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.contentMinHeight)
         ])
@@ -1662,6 +1682,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         homePermissionSummaryLabel.maximumNumberOfLines = 0
         homeShortcutLabel.font = .systemFont(ofSize: 13)
         homeShortcutLabel.alignment = .left
+        homeCancelShortcutLabel.font = .systemFont(ofSize: 13)
+        homeCancelShortcutLabel.alignment = .left
         homeModeShortcutLabel.font = .systemFont(ofSize: 13)
         homeModeShortcutLabel.alignment = .left
         homePromptShortcutLabel.font = .systemFont(ofSize: 13)
@@ -1684,6 +1706,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         shortcutHintLabel.lineBreakMode = .byWordWrapping
         shortcutHintLabel.maximumNumberOfLines = 0
         shortcutHintLabel.stringValue = "Click the shortcut field, then press the combination you want to use. Standard shortcuts work without Input Monitoring. Advanced shortcuts use Input Monitoring. Accessibility is still required for paste injection and advanced shortcut suppression."
+
+        cancelShortcutRecorderField.target = self
+        cancelShortcutRecorderField.action = #selector(cancelShortcutRecorderChanged(_:))
+        cancelShortcutHintLabel.font = .systemFont(ofSize: 12)
+        cancelShortcutHintLabel.textColor = .secondaryLabelColor
+        cancelShortcutHintLabel.alignment = .left
+        cancelShortcutHintLabel.lineBreakMode = .byWordWrapping
+        cancelShortcutHintLabel.maximumNumberOfLines = 0
+        cancelShortcutHintLabel.stringValue = cancelShortcutHintText(for: model.cancelShortcut)
 
         modeShortcutRecorderField.target = self
         modeShortcutRecorderField.action = #selector(modeShortcutRecorderChanged(_:))
@@ -1714,33 +1745,38 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         configureAppearanceControl()
 
-        let shortcutControl = NSStackView(views: [shortcutRecorderField, shortcutHintLabel])
-        shortcutControl.orientation = .vertical
-        shortcutControl.spacing = 8
-        shortcutControl.alignment = .leading
-
-        let modeShortcutControl = NSStackView(views: [modeShortcutRecorderField, modeShortcutHintLabel])
-        modeShortcutControl.orientation = .vertical
-        modeShortcutControl.spacing = 8
-        modeShortcutControl.alignment = .leading
-
-        let promptShortcutControl = NSStackView(views: [promptShortcutRecorderField, promptShortcutHintLabel])
-        promptShortcutControl.orientation = .vertical
-        promptShortcutControl.spacing = 8
-        promptShortcutControl.alignment = .leading
-
-        let processorShortcutControl = NSStackView(views: [processorShortcutRecorderField, processorShortcutHintLabel])
-        processorShortcutControl.orientation = .vertical
-        processorShortcutControl.spacing = 8
-        processorShortcutControl.alignment = .leading
+        let shortcutGrid = makeTwoColumnGrid([
+            makeShortcutPreferenceCard(
+                title: "Activation Shortcut",
+                control: shortcutRecorderField,
+                hintLabel: shortcutHintLabel
+            ),
+            makeShortcutPreferenceCard(
+                title: "Cancel Shortcut",
+                control: cancelShortcutRecorderField,
+                hintLabel: cancelShortcutHintLabel
+            ),
+            makeShortcutPreferenceCard(
+                title: "Mode Switch Shortcut",
+                control: modeShortcutRecorderField,
+                hintLabel: modeShortcutHintLabel
+            ),
+            makeShortcutPreferenceCard(
+                title: "Prompt Cycle Shortcut",
+                control: promptShortcutRecorderField,
+                hintLabel: promptShortcutHintLabel
+            ),
+            makeShortcutPreferenceCard(
+                title: "Processor Shortcut",
+                control: processorShortcutRecorderField,
+                hintLabel: processorShortcutHintLabel
+            )
+        ])
 
         let overviewSection = makeGroupedSection(rows: [
-            makePreferenceRow(title: "Activation Shortcut", control: shortcutControl),
-            makePreferenceRow(title: "Mode Switch Shortcut", control: modeShortcutControl),
-            makePreferenceRow(title: "Prompt Cycle Shortcut", control: promptShortcutControl),
-            makePreferenceRow(title: "Processor Shortcut", control: processorShortcutControl),
             makePreferenceRow(title: "Appearance", control: interfaceThemeControl),
             makePreferenceRow(title: "Recognition Language", control: homeLanguageLabel),
+            makePreferenceRow(title: "Cancellation", control: homeCancelShortcutLabel),
             makePreferenceRow(title: "Mode Switching", control: homeModeShortcutLabel),
             makePreferenceRow(title: "Prompt Switching", control: homePromptShortcutLabel),
             makePreferenceRow(title: "Permissions", control: homePermissionSummaryLabel),
@@ -1755,12 +1791,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 title: "A tighter control center for dictation, translation, and post-processing.",
                 description: "VoicePi stays in the menu bar, lets you keep dedicated shortcuts for recording, mode switching, and prompt switching, and can reopen processor output from a dedicated processor shortcut."
             ),
+            shortcutGrid,
             overviewSection,
             homeSummaryLabel
         ])
         leftStack.orientation = .vertical
         leftStack.spacing = SettingsLayoutMetrics.pageSpacing
         leftStack.alignment = .leading
+
+        shortcutGrid.translatesAutoresizingMaskIntoConstraints = false
+        overviewSection.translatesAutoresizingMaskIntoConstraints = false
+        homeSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        shortcutGrid.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
+        overviewSection.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
+        homeSummaryLabel.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
 
         let statusRail = NSStackView(views: [
             makeFeatureCard(
@@ -1791,13 +1835,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         contentStack.addArrangedSubview(makeTwoColumnSection(left: leftStack, right: statusRail, leftPriority: 0.68))
 
-        homeView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: homeView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: homeView.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: homeView.topAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: homeView.bottomAnchor)
-        ])
+        installScrollablePage(contentStack, in: homeView)
     }
 
     private func buildPermissionsView() {
@@ -1869,13 +1907,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ))
         contentStack.setCustomSpacing(20, after: permissionGrid)
 
-        permissionsView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: permissionsView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: permissionsView.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: permissionsView.topAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: permissionsView.bottomAnchor)
-        ])
+        installScrollablePage(contentStack, in: permissionsView)
     }
 
     private func buildASRView() {
@@ -1917,13 +1949,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentStack.addArrangedSubview(buttons)
         contentStack.addArrangedSubview(asrStatusView)
 
-        asrView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: asrView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: asrView.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: asrView.topAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: asrView.bottomAnchor),
+        installScrollablePage(contentStack, in: asrView)
 
+        NSLayoutConstraint.activate([
             asrBaseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrAPIKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrModelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
@@ -2033,13 +2061,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentStack.addArrangedSubview(buttons)
         contentStack.addArrangedSubview(llmStatusView)
 
-        llmView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: llmView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: llmView.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: llmView.topAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: llmView.bottomAnchor),
+        installScrollablePage(contentStack, in: llmView)
 
+        NSLayoutConstraint.activate([
             postProcessingModePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
             translationProviderPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
             targetLanguagePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
@@ -2087,13 +2111,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentStack.addArrangedSubview(makeBodyLabel("Use this section to add, edit, test, and disable processor profiles. Text processing still controls when the processor is used; this section only manages the backends themselves."))
         contentStack.addArrangedSubview(processorSummaryCard)
 
-        externalProcessorsView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: externalProcessorsView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: externalProcessorsView.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: externalProcessorsView.topAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: externalProcessorsView.bottomAnchor)
-        ])
+        installScrollablePage(contentStack, in: externalProcessorsView)
 
         refreshExternalProcessorsSection()
     }
@@ -2197,13 +2215,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             leftPriority: 0.66
         ))
 
-        aboutView.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: aboutView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: aboutView.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: aboutView.topAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: aboutView.bottomAnchor)
-        ])
+        installScrollablePage(contentStack, in: aboutView)
     }
 
     private func buildDictionaryView() {
@@ -2398,6 +2410,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if !shortcutRecorderField.isRecordingShortcut {
             shortcutRecorderField.shortcut = model.activationShortcut
         }
+        if !cancelShortcutRecorderField.isRecordingShortcut {
+            cancelShortcutRecorderField.shortcut = model.cancelShortcut
+        }
         if !modeShortcutRecorderField.isRecordingShortcut {
             modeShortcutRecorderField.shortcut = model.modeCycleShortcut
         }
@@ -2424,6 +2439,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshHomeSection() {
         let presentation = SettingsPresentation.homeSectionPresentation(model: model)
         homeShortcutLabel.stringValue = presentation.shortcutSummary
+        homeCancelShortcutLabel.stringValue = presentation.cancelShortcutSummary
         homeModeShortcutLabel.stringValue = presentation.modeShortcutSummary
         homePromptShortcutLabel.stringValue = presentation.promptShortcutSummary
         homeLanguageLabel.stringValue = presentation.languageSummary
@@ -2431,6 +2447,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         homeASRLabel.stringValue = presentation.asrSummary
         homeLLMLabel.stringValue = presentation.llmSummary
         shortcutHintLabel.stringValue = presentation.shortcutHint
+        cancelShortcutHintLabel.stringValue = presentation.cancelShortcutHint
         modeShortcutHintLabel.stringValue = presentation.modeShortcutHint
         promptShortcutHintLabel.stringValue = presentation.promptShortcutHint
         processorShortcutHintLabel.stringValue = processorShortcutHintText(for: model.processorShortcut)
@@ -2444,6 +2461,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func promptShortcutHintText(for shortcut: ActivationShortcut) -> String {
         SettingsWindowSupport.promptCycleShortcutHintText(for: shortcut)
+    }
+
+    private func cancelShortcutHintText(for shortcut: ActivationShortcut) -> String {
+        SettingsWindowSupport.cancelShortcutHintText(for: shortcut)
     }
 
     private func refreshASRSection() {
@@ -3484,6 +3505,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
+    private func cancelShortcutRecorderChanged(_ sender: ShortcutRecorderField) {
+        let shortcut = sender.shortcut
+
+        guard !shortcut.isEmpty else {
+            sender.shortcut = model.cancelShortcut
+            return
+        }
+
+        model.setCancelShortcut(shortcut)
+        delegate?.settingsWindowController(self, didUpdateCancelShortcut: shortcut)
+        reloadFromModel()
+        window?.makeFirstResponder(nil)
+    }
+
+    @objc
     private func modeShortcutRecorderChanged(_ sender: ShortcutRecorderField) {
         let shortcut = sender.shortcut
 
@@ -4279,15 +4315,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return card
     }
 
-    private func pinCardContent(_ content: NSView, into card: NSView) {
+    private func pinCardContent(
+        _ content: NSView,
+        into card: NSView,
+        horizontalPadding: CGFloat = SettingsLayoutMetrics.cardPaddingHorizontal,
+        verticalPadding: CGFloat = SettingsLayoutMetrics.cardPaddingVertical
+    ) {
         content.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(content)
 
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: SettingsLayoutMetrics.cardPaddingHorizontal),
-            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -SettingsLayoutMetrics.cardPaddingHorizontal),
-            content.topAnchor.constraint(equalTo: card.topAnchor, constant: SettingsLayoutMetrics.cardPaddingVertical),
-            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -SettingsLayoutMetrics.cardPaddingVertical)
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: horizontalPadding),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -horizontalPadding),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: verticalPadding),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -verticalPadding)
         ])
     }
 
@@ -4298,6 +4339,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.alignment = .leading
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
+    }
+
+    private func installScrollablePage(_ contentStack: NSStackView, in container: NSView) {
+        addPageSection(makeFlexiblePageSpacer(), to: contentStack)
+
+        let scrollView = NSScrollView(frame: .zero)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+
+        let documentView = FlippedLayoutView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+
+        container.addSubview(scrollView)
+        documentView.addSubview(contentStack)
+
+        let clipView = scrollView.contentView
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            documentView.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: clipView.topAnchor),
+            documentView.bottomAnchor.constraint(greaterThanOrEqualTo: clipView.bottomAnchor),
+            documentView.widthAnchor.constraint(equalTo: clipView.widthAnchor),
+
+            contentStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor)
+        ])
     }
 
     private func makeGroupedSection(rows: [NSView] = [], customViews: [NSView] = []) -> NSView {
@@ -4345,6 +4424,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ])
 
         return row
+    }
+
+    private func makeShortcutPreferenceCard(
+        title: String,
+        control: NSView,
+        hintLabel: NSTextField
+    ) -> NSView {
+        let card = makeCardView()
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.alignment = .left
+
+        control.translatesAutoresizingMaskIntoConstraints = false
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [titleLabel, control, hintLabel])
+        stack.orientation = .vertical
+        stack.spacing = SettingsLayoutMetrics.compactShortcutCardSpacing
+        stack.alignment = .leading
+
+        pinCardContent(
+            stack,
+            into: card,
+            verticalPadding: SettingsLayoutMetrics.compactCardPaddingVertical
+        )
+        return card
     }
 
     private func configurePromptWorkspaceControls() {
@@ -6609,6 +6714,14 @@ extension StatusBarController: SettingsWindowControllerDelegate {
         shortcutMenuItem?.title = shortcutMenuTitle()
         refreshAll()
         delegate?.statusBarController(self, didUpdateActivationShortcut: shortcut)
+    }
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
+        didUpdateCancelShortcut shortcut: ActivationShortcut
+    ) {
+        refreshAll()
+        delegate?.statusBarController(self, didUpdateCancelShortcut: shortcut)
     }
 
     func settingsWindowController(

@@ -344,6 +344,11 @@ VoicePi needs four macOS permissions for the full shortcut-to-paste flow:
 - **Accessibility**: required to inject the final paste, and also required if you use advanced shortcuts that need suppression
 - **Input Monitoring**: required only for advanced global shortcuts such as modifier-only, `fn`-based, or multi-key chords
 
+VoicePi also supports a configurable cancel shortcut during an active capture or processing run:
+
+- the default **Cancel Shortcut** is `Control + .`, which uses the standard registered-hotkey path and does not need **Input Monitoring**
+- if you change **Cancel Shortcut** to bare `Esc` in **Settings → Home**, VoicePi treats it as an advanced global key and needs both **Input Monitoring** for listening and **Accessibility** for suppression
+
 If you switch to a remote ASR backend, the app still needs **Microphone**, but local **Speech Recognition** may no longer be the primary transcription path.
 
 ### Granting permissions
@@ -377,6 +382,8 @@ Make sure `VoicePi.app` is enabled in each relevant section.
 6. Press the trigger again to stop recording
 7. VoicePi injects the final transcribed text into the currently focused input field
 
+While a capture session is active, you can also press the configured **Cancel Shortcut** to cancel the current run instead of finishing it. By default this is `Control + .`. During startup or active recording, the cancel shortcut aborts the session immediately. During post-stop transcription or refinement, it cancels the in-flight processing task and hides the overlay. If you rebind **Cancel Shortcut** to `Esc`, VoicePi will remind you in Settings that bare `Esc` needs both **Accessibility** and **Input Monitoring**.
+
 While recording, a floating capsule appears centered near the bottom of the screen and shows:
 
 - live waveform bars driven by real audio RMS
@@ -388,8 +395,13 @@ If LLM refinement is enabled and configured, the capsule shows a refining state 
 
 The intended trigger behavior is:
 
-- press **Option + Fn** to start recording
-- press it again to inject text
+- press the configured activation shortcut to start recording
+- press the same activation shortcut again to inject text
+- press the configured **Cancel Shortcut** while VoicePi is actively starting, recording, or processing to cancel the current run
+- the default **Cancel Shortcut** is **Control + .**
+- if you change **Cancel Shortcut** to **Esc**, grant both **Accessibility** and **Input Monitoring** so VoicePi can intercept and suppress the bare `Esc` key
+
+VoicePi keeps the cancel shortcut disabled while idle.
 
 The **Home** section in Settings also summarizes this trigger flow and explains the basic VoicePi workflow for new users.
 
@@ -657,6 +669,18 @@ Check:
 - **Accessibility** is enabled for `VoicePi.app` if you expect paste injection to work
 - if your configured shortcut is advanced, relaunch VoicePi after changing Input Monitoring if macOS did not apply it immediately
 - the shortcut shown in **Settings → Home** matches the keys you are pressing
+
+### The cancel shortcut does not cancel the current run
+
+Check:
+
+- VoicePi is actively starting, recording, or processing; idle state does not monitor the temporary cancel shortcut
+- the shortcut shown in **Settings → Home → Cancel Shortcut** matches the keys you are pressing
+- if the configured cancel shortcut is an advanced shortcut, **Input Monitoring** is enabled for `VoicePi.app`
+- if the configured cancel shortcut is bare **Esc**, **Accessibility** is also enabled for `VoicePi.app`
+- VoicePi was relaunched after changing either permission if macOS did not apply it immediately
+
+If you do not want to depend on `Esc` permissions, keep **Cancel Shortcut** on the default `Control + .` or choose another standard modifier-plus-key shortcut.
 
 ### The transcript is empty
 

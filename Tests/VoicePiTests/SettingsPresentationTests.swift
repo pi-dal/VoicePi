@@ -92,21 +92,26 @@ struct SettingsPresentationTests {
         #expect(presentation.shortcutSummary == "Current shortcut: A + S")
         #expect(presentation.modeShortcutSummary == "Mode-switch shortcut: Command + Shift + Space")
         #expect(presentation.promptShortcutSummary == "Prompt-cycle shortcut: Command + P")
+        #expect(presentation.cancelShortcutSummary == "Cancel shortcut: Control + .")
         #expect(presentation.languageSummary == "Recognition language: English")
         #expect(presentation.permissionSummary == "Permissions: Mic Granted, Speech Denied, Accessibility Unknown, Input Monitoring Granted")
         #expect(presentation.asrSummary == "ASR backend: Remote OpenAI-Compatible ASR • Remote configured")
         #expect(presentation.llmSummary == "Text processing: Translate via Apple Translate • Target Japanese")
         #expect(
             presentation.shortcutHint
-                == "Current shortcut: A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
+                == "Current shortcut: A + S. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility covers suppression and paste injection."
         )
         #expect(
             presentation.modeShortcutHint
-                == "Current mode-switch shortcut: ⌘⇧ + Space. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+                == "Current mode-switch shortcut: ⌘⇧ + Space. Click above to change it. Standard shortcuts work without Input Monitoring."
         )
         #expect(
             presentation.promptShortcutHint
-                == "Current prompt-cycle shortcut: ⌘ + P. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+                == "Current prompt-cycle shortcut: ⌘ + P. Click above to change it. Standard shortcuts work without Input Monitoring."
+        )
+        #expect(
+            presentation.cancelShortcutHint
+                == "Current cancel shortcut: ⌃ + . Click above to change it. Standard shortcuts work without Input Monitoring."
         )
         #expect(presentation.statusTone == .secondary)
     }
@@ -192,7 +197,7 @@ struct SettingsPresentationTests {
 
         #expect(
             presentation.shortcutHint
-                == "Current shortcut: ⌘⌥ + Space. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+                == "Current shortcut: ⌘⌥ + Space. Click above to change it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
         )
     }
 
@@ -215,7 +220,7 @@ struct SettingsPresentationTests {
 
         #expect(
             presentation.modeShortcutHint
-                == "Current mode-switch shortcut: ⌘ + A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+                == "Current mode-switch shortcut: ⌘ + A + S. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
         )
     }
 
@@ -238,7 +243,26 @@ struct SettingsPresentationTests {
 
         #expect(
             presentation.promptShortcutHint
-                == "Current prompt-cycle shortcut: ⌘ + A + S. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+                == "Current prompt-cycle shortcut: ⌘ + A + S. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
+        )
+    }
+
+    @Test
+    @MainActor
+    func homePresentationExplainsThatEscapeCancelShortcutNeedsAdvancedPermissions() {
+        let defaults = UserDefaults(suiteName: "VoicePiTests.homePresentationExplainsThatEscapeCancelShortcutNeedsAdvancedPermissions.\(UUID().uuidString)")!
+        let model = AppModel(defaults: defaults)
+        model.setCancelShortcut(ActivationShortcut(keyCodes: [53], modifierFlagsRawValue: 0))
+
+        let presentation = SettingsPresentation.homeSectionPresentation(
+            model: model,
+            appleTranslateSupported: true
+        )
+
+        #expect(presentation.cancelShortcutSummary == "Cancel shortcut: Escape")
+        #expect(
+            presentation.cancelShortcutHint
+                == "Current cancel shortcut: ⎋. Click above to change it. Escape is an advanced global key. It requires Input Monitoring for listening, and Accessibility lets VoicePi suppress it before the frontmost app also handles Escape."
         )
     }
 
@@ -312,19 +336,31 @@ struct SettingsPresentationTests {
         )
         #expect(
             PermissionsCopy.standardShortcutHint
-                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+                == "Current shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
         )
         #expect(
             PermissionsCopy.advancedShortcutHint
-                == "Current shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
+                == "Current shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility covers suppression and paste injection."
         )
         #expect(
             PermissionsCopy.standardModeShortcutHint
-                == "Current mode-switch shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+                == "Current mode-switch shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring."
         )
         #expect(
             PermissionsCopy.advancedModeShortcutHint
-                == "Current mode-switch shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+                == "Current mode-switch shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
+        )
+        #expect(
+            PermissionsCopy.standardCancelShortcutHint
+                == "Current cancel shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring."
+        )
+        #expect(
+            PermissionsCopy.advancedCancelShortcutHint
+                == "Current cancel shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
+        )
+        #expect(
+            PermissionsCopy.escapeCancelShortcutHint
+                == "Current cancel shortcut: %@. Click above to change it. Escape is an advanced global key. It requires Input Monitoring for listening, and Accessibility lets VoicePi suppress it before the frontmost app also handles Escape."
         )
     }
 }

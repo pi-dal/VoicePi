@@ -21,6 +21,7 @@ struct HomeSectionPresentation: Equatable {
     let shortcutSummary: String
     let modeShortcutSummary: String
     let promptShortcutSummary: String
+    let cancelShortcutSummary: String
     let languageSummary: String
     let permissionSummary: String
     let asrSummary: String
@@ -28,6 +29,7 @@ struct HomeSectionPresentation: Equatable {
     let shortcutHint: String
     let modeShortcutHint: String
     let promptShortcutHint: String
+    let cancelShortcutHint: String
     let statusSummary: String
     let statusTone: SettingsPresentationStatusTone
 }
@@ -72,25 +74,34 @@ enum PermissionsCopy {
         "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for advanced shortcut handling and paste injection."
 
     static let standardShortcutHint =
-        "Current shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
+        "Current shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."
 
     static let advancedShortcutHint =
-        "Current shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring, while Accessibility covers suppression and paste injection."
+        "Current shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility covers suppression and paste injection."
 
     static let standardModeShortcutHint =
-        "Current mode-switch shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+        "Current mode-switch shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring."
 
     static let advancedModeShortcutHint =
-        "Current mode-switch shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+        "Current mode-switch shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
+
+    static let standardCancelShortcutHint =
+        "Current cancel shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring."
+
+    static let advancedCancelShortcutHint =
+        "Current cancel shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
+
+    static let escapeCancelShortcutHint =
+        "Current cancel shortcut: %@. Click above to change it. Escape is an advanced global key. It requires Input Monitoring for listening, and Accessibility lets VoicePi suppress it before the frontmost app also handles Escape."
 
     static let unsetModeShortcutHint =
         "Mode-switch shortcut is not set. Click the field above and press a combination to enable quick cycling between Disabled, Refinement, and Translate."
 
     static let standardPromptCycleShortcutHint =
-        "Current prompt-cycle shortcut: %@. Click the field above and press a new combination to replace it. Standard shortcuts work without Input Monitoring."
+        "Current prompt-cycle shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring."
 
     static let advancedPromptCycleShortcutHint =
-        "Current prompt-cycle shortcut: %@. Click the field above and press a new combination to replace it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+        "Current prompt-cycle shortcut: %@. Click above to change it. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it before it reaches the frontmost app."
 
     static let unsetPromptCycleShortcutHint =
         "Prompt-cycle shortcut is not set. Click the field above and press a combination to enable quick prompt switching."
@@ -171,7 +182,10 @@ enum SettingsPresentation {
             let modeShortcutHintFormat = model.modeCycleShortcut.isRegisteredHotkeyCompatible
                 ? PermissionsCopy.standardModeShortcutHint
                 : PermissionsCopy.advancedModeShortcutHint
-            modeShortcutHint = String(format: modeShortcutHintFormat, model.modeCycleShortcut.displayString)
+            modeShortcutHint = SettingsWindowSupport.formattedShortcutHint(
+                format: modeShortcutHintFormat,
+                shortcutDisplay: model.modeCycleShortcut.displayString
+            )
         }
 
         let promptShortcutHint: String
@@ -181,20 +195,29 @@ enum SettingsPresentation {
             let promptShortcutHintFormat = model.promptCycleShortcut.isRegisteredHotkeyCompatible
                 ? PermissionsCopy.standardPromptCycleShortcutHint
                 : PermissionsCopy.advancedPromptCycleShortcutHint
-            promptShortcutHint = String(format: promptShortcutHintFormat, model.promptCycleShortcut.displayString)
+            promptShortcutHint = SettingsWindowSupport.formattedShortcutHint(
+                format: promptShortcutHintFormat,
+                shortcutDisplay: model.promptCycleShortcut.displayString
+            )
         }
+        let cancelShortcutHint = SettingsWindowSupport.cancelShortcutHintText(for: model.cancelShortcut)
 
         return HomeSectionPresentation(
             shortcutSummary: "Current shortcut: \(model.activationShortcut.menuTitle)",
             modeShortcutSummary: "Mode-switch shortcut: \(model.modeCycleShortcut.menuTitle)",
             promptShortcutSummary: "Prompt-cycle shortcut: \(model.promptCycleShortcut.menuTitle)",
+            cancelShortcutSummary: "Cancel shortcut: \(model.cancelShortcut.menuTitle)",
             languageSummary: "Recognition language: \(model.selectedLanguage.menuTitle)",
             permissionSummary: "Permissions: Mic \(permissionPresentation(for: model.microphoneAuthorization).title), Speech \(permissionPresentation(for: model.speechAuthorization).title), Accessibility \(permissionPresentation(for: model.accessibilityAuthorization).title), Input Monitoring \(permissionPresentation(for: model.inputMonitoringAuthorization).title)",
             asrSummary: "ASR backend: \(model.asrBackend.title) • \(model.remoteASRConfiguration.isConfigured ? "Remote configured" : "Remote not configured")",
             llmSummary: llmSummary,
-            shortcutHint: String(format: shortcutHintFormat, model.activationShortcut.displayString),
+            shortcutHint: SettingsWindowSupport.formattedShortcutHint(
+                format: shortcutHintFormat,
+                shortcutDisplay: model.activationShortcut.displayString
+            ),
             modeShortcutHint: modeShortcutHint,
             promptShortcutHint: promptShortcutHint,
+            cancelShortcutHint: cancelShortcutHint,
             statusSummary: statusSummary,
             statusTone: statusTone
         )

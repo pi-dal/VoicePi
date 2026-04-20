@@ -1511,6 +1511,7 @@ final class AppModel: ObservableObject {
         static let selectedExternalProcessorEntryID = "selectedExternalProcessorEntryID"
         static let targetLanguage = "targetLanguage"
         static let activationShortcut = "activationShortcut"
+        static let cancelShortcut = "cancelShortcut"
         static let modeCycleShortcut = "modeCycleShortcut"
         static let processorShortcut = "processorShortcut"
         static let promptCycleShortcut = "promptCycleShortcut"
@@ -1582,6 +1583,12 @@ final class AppModel: ObservableObject {
     @Published var modeCycleShortcut: ActivationShortcut {
         didSet {
             persistModeCycleShortcut()
+        }
+    }
+
+    @Published var cancelShortcut: ActivationShortcut {
+        didSet {
+            persistCancelShortcut()
         }
     }
 
@@ -1772,6 +1779,19 @@ final class AppModel: ObservableObject {
             shouldPersistModeCycleShortcut = true
         }
 
+        let shouldPersistCancelShortcut: Bool
+        if
+            let data = defaults.data(forKey: Keys.cancelShortcut),
+            let decoded = try? decoder.decode(ActivationShortcut.self, from: data),
+            !decoded.isEmpty
+        {
+            self.cancelShortcut = decoded
+            shouldPersistCancelShortcut = false
+        } else {
+            self.cancelShortcut = AppModel.defaultCancelShortcut
+            shouldPersistCancelShortcut = true
+        }
+
         let shouldPersistProcessorShortcut: Bool
         if
             let data = defaults.data(forKey: Keys.processorShortcut),
@@ -1831,6 +1851,9 @@ final class AppModel: ObservableObject {
         }
         if shouldPersistModeCycleShortcut {
             persistModeCycleShortcut()
+        }
+        if shouldPersistCancelShortcut {
+            persistCancelShortcut()
         }
         if shouldPersistProcessorShortcut {
             persistProcessorShortcut()
@@ -2151,6 +2174,10 @@ final class AppModel: ObservableObject {
         modeCycleShortcut = shortcut
     }
 
+    func setCancelShortcut(_ shortcut: ActivationShortcut) {
+        cancelShortcut = shortcut
+    }
+
     func setProcessorShortcut(_ shortcut: ActivationShortcut) {
         processorShortcut = shortcut
     }
@@ -2452,6 +2479,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func persistCancelShortcut() {
+        if let data = try? encoder.encode(cancelShortcut) {
+            defaults.set(data, forKey: Keys.cancelShortcut)
+        }
+    }
+
     private func persistProcessorShortcut() {
         if let data = try? encoder.encode(processorShortcut) {
             defaults.set(data, forKey: Keys.processorShortcut)
@@ -2589,6 +2622,11 @@ final class AppModel: ObservableObject {
         return .default
     }
 
+    private static let defaultCancelShortcut = ActivationShortcut(
+        keyCodes: [47],
+        modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+    )
+
     private static func hasExistingInstallationState(defaults: UserDefaults) -> Bool {
         let legacyAndCurrentKeys = [
             Keys.selectedLanguage,
@@ -2603,6 +2641,7 @@ final class AppModel: ObservableObject {
             Keys.selectedExternalProcessorEntryID,
             Keys.targetLanguage,
             Keys.modeCycleShortcut,
+            Keys.cancelShortcut,
             Keys.processorShortcut,
             Keys.promptCycleShortcut,
             Keys.asrBackend,

@@ -109,6 +109,13 @@ final class AppController: NSObject {
         case ignore
     }
 
+    enum EscapeCancelAction: Equatable {
+        case cancelStartup
+        case cancelRecording
+        case cancelProcessing
+        case ignore
+    }
+
     enum RefiningPresentationMode: Equatable {
         case floatingOverlayAndStatusBar
         case statusBarOnly
@@ -299,6 +306,7 @@ final class AppController: NSObject {
     private let modeCycleShortcutAction = ShortcutActionController()
     private let promptCycleShortcutAction = ShortcutActionController()
     private let processorShortcutAction = ShortcutActionController()
+    private let cancelShortcutAction = ShortcutActionController()
     private let speechRecorder = SpeechRecorder(localeIdentifier: SupportedLanguage.default.localeIdentifier)
     private let floatingPanelController = FloatingPanelController()
     private let inputFallbackPanelController = InputFallbackPanelController()
@@ -328,9 +336,18 @@ final class AppController: NSObject {
 
     private var statusBarController: StatusBarController?
     private var cancellables: Set<AnyCancellable> = []
-    private var isStartingRecording = false
-    private var isProcessingRelease = false
+    private var isStartingRecording = false {
+        didSet {
+            refreshCancelShortcutMonitorState()
+        }
+    }
+    private var isProcessingRelease = false {
+        didSet {
+            refreshCancelShortcutMonitorState()
+        }
+    }
     private var processingTask: Task<Void, Never>?
+    private var recordingStartupTask: Task<Void, Never>?
     private var latestTranscript = ""
     private var pendingErrorHideTask: Task<Void, Never>?
     private var accessibilityAuthorizationFollowUpTask: Task<Void, Never>?
@@ -404,6 +421,7 @@ final class AppController: NSObject {
     static let directUpdateDownloadPollIntervalNanoseconds: UInt64 = 100_000_000
 
     private static let lastPromptedUpdateVersionKey = "VoicePi.lastPromptedUpdateVersion"
+    private static let escapeCancelShortcut = ActivationShortcut(keyCodes: [53], modifierFlagsRawValue: 0)
 
     static func pressAction(
         isRecording: Bool,
@@ -520,6 +538,70 @@ final class AppController: NSObject {
         }
 
         return .startProcessorCapture(.externalProcessorShortcut)
+    }
+
+    static func escapeCancelMonitorPlan(
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        guard accessibilityState == .granted, inputMonitoringState == .granted else {
+            return HotkeyMonitorPlan(strategy: nil, statusMessage: nil)
+        }
+
+        return HotkeyMonitorPlan(
+            strategy: .eventTap(.listenAndSuppress),
+            statusMessage: nil
+        )
+    }
+
+    static func commandPeriodCancelMonitorPlan() -> HotkeyMonitorPlan {
+        HotkeyMonitorPlan(
+            strategy: .registeredHotkey,
+            statusMessage: nil
+        )
+    }
+
+    static func cancelShortcutMonitorPlan(
+        shortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState,
+        accessibilityState: AuthorizationState
+    ) -> HotkeyMonitorPlan {
+        if shortcut.keyCodes == Self.escapeCancelShortcut.keyCodes,
+           shortcut.modifierFlagsRawValue == Self.escapeCancelShortcut.modifierFlagsRawValue {
+            return escapeCancelMonitorPlan(
+                inputMonitoringState: inputMonitoringState,
+                accessibilityState: accessibilityState
+            )
+        }
+
+        return monitorPlan(
+            shortcut: shortcut,
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState,
+            registeredHotkeyAccessibilityWarning: nil,
+            eventTapAccessibilityWarning: Self.shortcutSuppressionWarningMessage,
+            inputMonitoringFailureMessage: Self.shortcutMonitoringFailureMessage
+        )
+    }
+
+    static func escapeCancelAction(
+        isStartingRecording: Bool,
+        isRecording: Bool,
+        isProcessingRelease: Bool
+    ) -> EscapeCancelAction {
+        if isStartingRecording {
+            return .cancelStartup
+        }
+
+        if isRecording {
+            return .cancelRecording
+        }
+
+        if isProcessingRelease {
+            return .cancelProcessing
+        }
+
+        return .ignore
     }
 
     static func effectiveProcessingWorkflow(
@@ -1061,6 +1143,7 @@ final class AppController: NSObject {
             activationShortcut: shortcut,
             modeCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            cancelShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
@@ -1075,6 +1158,7 @@ final class AppController: NSObject {
             activationShortcut: activationShortcut,
             modeCycleShortcut: modeCycleShortcut,
             processorShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+            cancelShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             promptCycleShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
             inputMonitoringState: inputMonitoringState
         )
@@ -1084,6 +1168,7 @@ final class AppController: NSObject {
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
         processorShortcut: ActivationShortcut,
+        cancelShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
         promptCycleShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
         inputMonitoringState: AuthorizationState
     ) -> LaunchPermissionPlan {
@@ -1098,6 +1183,7 @@ final class AppController: NSObject {
                 activationShortcut: activationShortcut,
                 modeCycleShortcut: modeCycleShortcut,
                 processorShortcut: processorShortcut,
+                cancelShortcut: cancelShortcut,
                 promptCycleShortcut: promptCycleShortcut
             ),
             useSystemAccessibilityPrompt: true
@@ -1119,11 +1205,13 @@ final class AppController: NSObject {
         activationShortcut: ActivationShortcut,
         modeCycleShortcut: ActivationShortcut,
         processorShortcut: ActivationShortcut,
+        cancelShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
         promptCycleShortcut: ActivationShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
     ) -> Bool {
         activationShortcut.requiresInputMonitoring
             || modeCycleShortcut.requiresInputMonitoring
             || processorShortcut.requiresInputMonitoring
+            || cancelShortcut.requiresInputMonitoring
             || promptCycleShortcut.requiresInputMonitoring
     }
 
@@ -1492,6 +1580,13 @@ final class AppController: NSObject {
         }
         processorShortcutAction.shortcut = model.processorShortcut
 
+        cancelShortcutAction.onPress = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleCancelShortcutPress()
+            }
+        }
+        cancelShortcutAction.shortcut = model.cancelShortcut
+
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
         statusBarController.start()
@@ -1542,6 +1637,8 @@ final class AppController: NSObject {
         modeCycleShortcutAction.stop()
         promptCycleShortcutAction.stop()
         processorShortcutAction.stop()
+        cancelShortcutAction.stop()
+        recordingStartupTask?.cancel()
 
         if speechRecorder.isRecording {
             Task { @MainActor [weak self] in
@@ -1723,6 +1820,21 @@ final class AppController: NSObject {
         }
     }
 
+    private func handleCancelShortcutPress() {
+        switch Self.escapeCancelAction(
+            isStartingRecording: isStartingRecording,
+            isRecording: speechRecorder.isRecording,
+            isProcessingRelease: isProcessingRelease
+        ) {
+        case .cancelStartup, .cancelRecording:
+            cancelCurrentRecordingAndHideOverlay()
+        case .cancelProcessing:
+            cancelProcessingAndHideOverlay()
+        case .ignore:
+            return
+        }
+    }
+
     private func beginRecording(
         workflowOverride: RecordingWorkflowOverride? = nil
     ) {
@@ -1776,10 +1888,17 @@ final class AppController: NSObject {
         statusBarController?.setTransientStatus(nil)
         inputFallbackPanelController.hide()
 
-        Task { @MainActor [weak self] in
+        recordingStartupTask?.cancel()
+        recordingStartupTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.recordingStartupTask = nil
+            }
 
             let permissionsReady = await self.prepareForRecording()
+            guard !Task.isCancelled else {
+                return
+            }
             guard permissionsReady else {
                 self.finishActiveRecordingLatency(.cancelled)
                 self.clearActiveRecordingWorkflowState()
@@ -1791,6 +1910,9 @@ final class AppController: NSObject {
                 workflow: captureWorkflow,
                 workflowOverride: workflowOverride
             )
+            guard !Task.isCancelled else {
+                return
+            }
 
             do {
                 self.speechRecorder.updateLocale(identifier: self.model.selectedLanguage.localeIdentifier)
@@ -1805,6 +1927,9 @@ final class AppController: NSObject {
                     try await self.startRealtimeRecordingSession()
                 } else {
                     try await self.speechRecorder.startRecording(mode: self.model.asrBackend.speechRecorderMode)
+                }
+                guard !Task.isCancelled else {
+                    return
                 }
             } catch {
                 self.statusBarController?.setRecording(false)
@@ -2113,6 +2238,29 @@ final class AppController: NSObject {
             self.isProcessingRelease = false
             self.clearActiveRecordingWorkflowState()
         }
+    }
+
+    private func cancelCurrentRecordingAndHideOverlay() {
+        guard isStartingRecording || speechRecorder.isRecording else { return }
+
+        recordingStartupTask?.cancel()
+        recordingStartupTask = nil
+        latestTranscript = ""
+        speechRecorder.cancelImmediately()
+
+        Task { @MainActor [weak self] in
+            await self?.realtimeASRSessionCoordinator.close()
+        }
+
+        activeRecordingStartedAt = nil
+        finishActiveRecordingLatency(.cancelled)
+        clearActiveRecordingWorkflowState()
+        isStartingRecording = false
+        statusBarController?.setRecording(false)
+        statusBarController?.setTransientStatus(nil)
+        floatingPanelController.hide()
+        model.hideOverlay()
+        refreshCancelShortcutMonitorState()
     }
 
     private func cancelProcessingAndHideOverlay() {
@@ -3566,7 +3714,45 @@ final class AppController: NSObject {
         } else if statusBarController != nil, model.errorState == nil {
             statusBarController?.setTransientStatus(nil)
         }
+        refreshCancelShortcutMonitorState(
+            inputMonitoringState: inputMonitoringState,
+            accessibilityState: accessibilityState
+        )
         return statusMessage
+    }
+
+    private func refreshCancelShortcutMonitorState(
+        inputMonitoringState: AuthorizationState? = nil,
+        accessibilityState: AuthorizationState? = nil
+    ) {
+        guard isStartingRecording || speechRecorder.isRecording || isProcessingRelease else {
+            cancelShortcutAction.stop()
+            return
+        }
+
+        let resolvedInputMonitoringState = inputMonitoringState ?? currentInputMonitoringAuthorizationState()
+        let resolvedAccessibilityState = accessibilityState ?? currentAccessibilityAuthorizationState(prompt: false)
+        let plan = Self.cancelShortcutMonitorPlan(
+            shortcut: model.cancelShortcut,
+            inputMonitoringState: resolvedInputMonitoringState,
+            accessibilityState: resolvedAccessibilityState
+        )
+
+        let fallbackPlanAfterRegistrationFailure = model.cancelShortcut.isRegisteredHotkeyCompatible
+            ? Self.hotkeyMonitorFallbackPlanAfterRegistrationFailure(
+                shortcut: model.cancelShortcut,
+                inputMonitoringState: resolvedInputMonitoringState,
+                accessibilityState: resolvedAccessibilityState
+            )
+            : nil
+
+        _ = applyHotkeyMonitorPlan(
+            plan,
+            actionController: cancelShortcutAction,
+            registrationFailureMessage: "Cancel shortcut registration is unavailable.",
+            monitoringFailureMessage: "Cancel shortcut monitoring is unavailable.",
+            fallbackPlanAfterRegistrationFailure: fallbackPlanAfterRegistrationFailure
+        )
     }
 
     private func applyHotkeyMonitorPlan(
@@ -3614,6 +3800,7 @@ final class AppController: NSObject {
             activationShortcut: model.activationShortcut,
             modeCycleShortcut: model.modeCycleShortcut,
             processorShortcut: model.processorShortcut,
+            cancelShortcut: model.cancelShortcut,
             promptCycleShortcut: model.promptCycleShortcut
         )
     }
@@ -4099,6 +4286,7 @@ extension AppController: SpeechRecorderDelegate {
             statusBarController?.setRecording(false)
             presentTransientError(error.localizedDescription)
         }
+        refreshCancelShortcutMonitorState()
     }
 
     func speechRecorderDidStop(_ recorder: SpeechRecorder, finalTranscript: String, audioFileURL: URL?) {
@@ -4122,6 +4310,13 @@ extension AppController: StatusBarControllerDelegate {
     func statusBarController(_ controller: StatusBarController, didUpdateActivationShortcut shortcut: ActivationShortcut) {
         model.setActivationShortcut(shortcut)
         recordingShortcutAction.shortcut = shortcut
+        controller.refreshAll()
+        ensureHotkeyMonitorRunning()
+    }
+
+    func statusBarController(_ controller: StatusBarController, didUpdateCancelShortcut shortcut: ActivationShortcut) {
+        model.setCancelShortcut(shortcut)
+        cancelShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
     }

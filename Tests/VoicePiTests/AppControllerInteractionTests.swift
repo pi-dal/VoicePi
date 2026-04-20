@@ -114,6 +114,126 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func escapeCancelMonitorPlanUsesCombinedEventTapWhenBothPermissionsAreGranted() {
+        #expect(
+            AppController.escapeCancelMonitorPlan(
+                inputMonitoringState: .granted,
+                accessibilityState: .granted
+            ) == AppController.HotkeyMonitorPlan(
+                strategy: .eventTap(.listenAndSuppress),
+                statusMessage: nil
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func escapeCancelMonitorPlanStaysDisabledWhenAccessibilityIsMissing() {
+        #expect(
+            AppController.escapeCancelMonitorPlan(
+                inputMonitoringState: .granted,
+                accessibilityState: .denied
+            ) == AppController.HotkeyMonitorPlan(
+                strategy: nil,
+                statusMessage: nil
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func commandPeriodCancelMonitorPlanUsesRegisteredHotkeyWithoutExtraPermissions() {
+        #expect(
+            AppController.commandPeriodCancelMonitorPlan() == AppController.HotkeyMonitorPlan(
+                strategy: .registeredHotkey,
+                statusMessage: nil
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func cancelShortcutMonitorPlanPrefersRegisteredHotkeyForStandardShortcut() {
+        #expect(
+            AppController.cancelShortcutMonitorPlan(
+                shortcut: ActivationShortcut(
+                    keyCodes: [47],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                ),
+                inputMonitoringState: .unknown,
+                accessibilityState: .unknown
+            ) == AppController.HotkeyMonitorPlan(
+                strategy: .registeredHotkey,
+                statusMessage: nil
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func cancelShortcutMonitorPlanRequiresAdvancedPathForEscape() {
+        #expect(
+            AppController.cancelShortcutMonitorPlan(
+                shortcut: ActivationShortcut(keyCodes: [53], modifierFlagsRawValue: 0),
+                inputMonitoringState: .granted,
+                accessibilityState: .granted
+            ) == AppController.HotkeyMonitorPlan(
+                strategy: .eventTap(.listenAndSuppress),
+                statusMessage: nil
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func escapeCancelActionCancelsStartupBeforeOtherStates() {
+        #expect(
+            AppController.escapeCancelAction(
+                isStartingRecording: true,
+                isRecording: true,
+                isProcessingRelease: true
+            ) == .cancelStartup
+        )
+    }
+
+    @Test
+    @MainActor
+    func escapeCancelActionCancelsRecordingWhenCaptureIsActive() {
+        #expect(
+            AppController.escapeCancelAction(
+                isStartingRecording: false,
+                isRecording: true,
+                isProcessingRelease: false
+            ) == .cancelRecording
+        )
+    }
+
+    @Test
+    @MainActor
+    func escapeCancelActionCancelsProcessingWhenOverlayIsBusy() {
+        #expect(
+            AppController.escapeCancelAction(
+                isStartingRecording: false,
+                isRecording: false,
+                isProcessingRelease: true
+            ) == .cancelProcessing
+        )
+    }
+
+    @Test
+    @MainActor
+    func escapeCancelActionIsIgnoredWhenVoicePiIsIdle() {
+        #expect(
+            AppController.escapeCancelAction(
+                isStartingRecording: false,
+                isRecording: false,
+                isProcessingRelease: false
+            ) == .ignore
+        )
+    }
+
+    @Test
+    @MainActor
     func standardShortcutUsesRegisteredHotkeyWithoutInputMonitoring() {
         #expect(
             AppController.hotkeyMonitorPlan(

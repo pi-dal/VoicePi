@@ -14,6 +14,7 @@ struct SettingsLayoutMetricsTests {
         #expect(SettingsLayoutMetrics.actionButtonHeight == 32)
         #expect(SettingsLayoutMetrics.navigationButtonHeight == 52)
         #expect(SettingsLayoutMetrics.navigationButtonMinWidth == 72)
+        #expect(SettingsLayoutMetrics.contentMinHeight == 300)
     }
 
     @Test

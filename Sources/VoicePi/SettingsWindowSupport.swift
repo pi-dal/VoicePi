@@ -3,8 +3,8 @@ import AppKit
 enum SettingsWindowChrome {
     static let title = "VoicePi Settings"
     static let subtitle = "Quick controls for permissions, dictation, dictionary, and processor settings."
-    static let defaultSize = NSSize(width: 820, height: 560)
-    static let minimumSize = NSSize(width: 720, height: 520)
+    static let defaultSize = NSSize(width: 820, height: 600)
+    static let minimumSize = NSSize(width: 720, height: 600)
 }
 
 struct ExternalProcessorsSectionPresentation: Equatable {
@@ -185,6 +185,20 @@ struct HistoryUsageVisualization: Equatable {
 }
 
 enum SettingsWindowSupport {
+    static func cancelShortcutHintText(for shortcut: ActivationShortcut) -> String {
+        let format: String
+
+        if shortcut.keyCodes == [53], shortcut.modifierFlags.isEmpty {
+            format = PermissionsCopy.escapeCancelShortcutHint
+        } else if shortcut.isRegisteredHotkeyCompatible {
+            format = PermissionsCopy.standardCancelShortcutHint
+        } else {
+            format = PermissionsCopy.advancedCancelShortcutHint
+        }
+
+        return formattedShortcutHint(format: format, shortcutDisplay: shortcut.displayString)
+    }
+
     static func dictionaryTermsRowsHeight(
         forVisibleRowCount rowCount: Int,
         rowHeight: CGFloat = 56,
@@ -201,26 +215,56 @@ enum SettingsWindowSupport {
 
     static func processorShortcutHintText(for shortcut: ActivationShortcut) -> String {
         if shortcut.isEmpty {
-            return "Set a processor shortcut to start a dedicated voice capture that always runs through the selected processor."
+            return "Set a processor shortcut to start a dedicated processor capture."
         }
 
         if shortcut.isRegisteredHotkeyCompatible {
-            return "Current shortcut: \(shortcut.displayString). It starts a dedicated processor capture, and standard shortcuts work without Input Monitoring."
+            return "Current shortcut: \(sentenceTerminatedShortcutDisplay(shortcut.displayString)) Starts a dedicated processor capture. Standard shortcuts work without Input Monitoring."
         }
 
-        return "Current shortcut: \(shortcut.displayString). It starts a dedicated processor capture. Advanced shortcuts require Input Monitoring, and Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+        return "Current shortcut: \(sentenceTerminatedShortcutDisplay(shortcut.displayString)) Starts a dedicated processor capture. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it first."
     }
 
     static func promptCycleShortcutHintText(for shortcut: ActivationShortcut) -> String {
         if shortcut.isEmpty {
-            return "Set a prompt-cycle shortcut to quickly rotate the global Active Prompt before recording."
+            return "Set a prompt-cycle shortcut to rotate the Active Prompt before recording."
         }
 
         if shortcut.isRegisteredHotkeyCompatible {
-            return "Current shortcut: \(shortcut.displayString). It cycles the global Active Prompt by one preset per press, and standard shortcuts work without Input Monitoring."
+            return "Current shortcut: \(sentenceTerminatedShortcutDisplay(shortcut.displayString)) Cycles the Active Prompt. Standard shortcuts work without Input Monitoring."
         }
 
-        return "Current shortcut: \(shortcut.displayString). It cycles the global Active Prompt by one preset per press. Advanced shortcuts require Input Monitoring, and Accessibility lets VoicePi suppress the shortcut before it reaches the frontmost app."
+        return "Current shortcut: \(sentenceTerminatedShortcutDisplay(shortcut.displayString)) Cycles the Active Prompt. Advanced shortcuts require Input Monitoring. Accessibility lets VoicePi suppress it first."
+    }
+
+    static func formattedShortcutHint(format: String, shortcutDisplay: String) -> String {
+        let hint = String(format: format, shortcutDisplay)
+        let duplicatedSentenceBoundary = "\(shortcutDisplay)."
+
+        guard shortcutDisplayHasTerminalPunctuation(shortcutDisplay),
+              let duplicatedRange = hint.range(of: duplicatedSentenceBoundary) else {
+            return hint
+        }
+
+        var normalizedHint = hint
+        normalizedHint.replaceSubrange(duplicatedRange, with: shortcutDisplay)
+        return normalizedHint
+    }
+
+    static func sentenceTerminatedShortcutDisplay(_ shortcutDisplay: String) -> String {
+        guard !shortcutDisplayHasTerminalPunctuation(shortcutDisplay) else {
+            return shortcutDisplay
+        }
+
+        return shortcutDisplay + "."
+    }
+
+    static func shortcutDisplayHasTerminalPunctuation(_ shortcutDisplay: String) -> Bool {
+        guard let lastCharacter = shortcutDisplay.last else {
+            return false
+        }
+
+        return ".!?".contains(lastCharacter)
     }
 
     static func historySummaryText(forEntryCount count: Int) -> String {

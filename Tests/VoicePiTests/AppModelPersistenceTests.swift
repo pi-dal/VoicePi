@@ -55,6 +55,13 @@ struct AppModelPersistenceTests {
         #expect(model.externalProcessorEntries.isEmpty)
         #expect(model.processorShortcut.isEmpty)
         #expect(model.promptCycleShortcut.isEmpty)
+        #expect(
+            model.cancelShortcut
+                == ActivationShortcut(
+                    keyCodes: [47],
+                    modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+                )
+        )
     }
 
     @Test
@@ -180,6 +187,12 @@ struct AppModelPersistenceTests {
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
             )
         )
+        model.setCancelShortcut(
+            ActivationShortcut(
+                keyCodes: [47],
+                modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
 
         let reloaded = AppModel(defaults: defaults)
 
@@ -217,6 +230,12 @@ struct AppModelPersistenceTests {
             reloaded.promptCycleShortcut == ActivationShortcut(
                 keyCodes: [31],
                 modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+            )
+        )
+        #expect(
+            reloaded.cancelShortcut == ActivationShortcut(
+                keyCodes: [47],
+                modifierFlagsRawValue: NSEvent.ModifierFlags.control.intersection(.deviceIndependentFlagsMask).rawValue
             )
         )
     }
