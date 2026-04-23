@@ -16,12 +16,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Set up mise toolchain
-        uses: jdx/mise-action@v3
+      - name: Set up Swift toolchain
+        uses: swift-actions/setup-swift@v3
         with:
-          experimental: true
-          install: true
-          cache: true
+          swift-version: "6.3.1"
 
       - name: Show toolchain versions
         run: |
