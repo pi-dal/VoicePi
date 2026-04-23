@@ -133,4 +133,59 @@ struct EditableTextTargetInspectorTests {
         )
         #expect(selected == "Selected PDF paragraph")
     }
+
+    @Test
+    func fallbackResolverPicksDeepestWritableGroupWhenFocusedElementIsUnavailable() {
+        let candidates: [EditableTextTargetFallbackCandidate] = [
+            .init(
+                role: "AXWindow",
+                editableAttribute: nil,
+                valueAttributeSettable: false,
+                selectedTextRangeAttributeSettable: false,
+                depth: 0
+            ),
+            .init(
+                role: "AXGroup",
+                editableAttribute: nil,
+                valueAttributeSettable: true,
+                selectedTextRangeAttributeSettable: true,
+                depth: 2
+            ),
+            .init(
+                role: "AXGroup",
+                editableAttribute: nil,
+                valueAttributeSettable: true,
+                selectedTextRangeAttributeSettable: true,
+                depth: 6
+            )
+        ]
+
+        #expect(
+            EditableTextTargetFallbackResolver.bestCandidate(in: candidates)?.depth == 6
+        )
+    }
+
+    @Test
+    func fallbackResolverPrefersEditableTextRoleOverWritableGenericGroup() {
+        let candidates: [EditableTextTargetFallbackCandidate] = [
+            .init(
+                role: "AXGroup",
+                editableAttribute: nil,
+                valueAttributeSettable: true,
+                selectedTextRangeAttributeSettable: true,
+                depth: 5
+            ),
+            .init(
+                role: kAXTextAreaRole as String,
+                editableAttribute: true,
+                valueAttributeSettable: true,
+                selectedTextRangeAttributeSettable: true,
+                depth: 3
+            )
+        ]
+
+        #expect(
+            EditableTextTargetFallbackResolver.bestCandidate(in: candidates)?.role == kAXTextAreaRole as String
+        )
+    }
 }

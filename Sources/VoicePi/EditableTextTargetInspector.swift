@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import Foundation
 
@@ -36,7 +37,7 @@ protocol EditableTextTargetInspecting {
 }
 
 struct EditableTextTargetClassifier {
-    private static let editableRoles: Set<String> = [
+    static let editableRoles: Set<String> = [
         kAXTextFieldRole as String,
         kAXTextAreaRole as String,
         kAXComboBoxRole as String,
@@ -65,6 +66,82 @@ struct EditableTextTargetClassifier {
         }
 
         return .unavailable
+    }
+
+    static func isPreferredEditableRole(_ role: String?) -> Bool {
+        guard let role else { return false }
+        return editableRoles.contains(role)
+    }
+}
+
+struct EditableTextTargetFallbackCandidate: Equatable {
+    let role: String?
+    let editableAttribute: Bool?
+    let valueAttributeSettable: Bool?
+    let selectedTextRangeAttributeSettable: Bool?
+    let depth: Int
+}
+
+enum EditableTextTargetFallbackResolver {
+    static func bestCandidate(
+        in candidates: [EditableTextTargetFallbackCandidate]
+    ) -> EditableTextTargetFallbackCandidate? {
+        candidates.max { lhs, rhs in
+            compare(lhs, rhs) == .orderedAscending
+        }
+    }
+
+    private static func compare(
+        _ lhs: EditableTextTargetFallbackCandidate,
+        _ rhs: EditableTextTargetFallbackCandidate
+    ) -> ComparisonResult {
+        let lhsScore = score(for: lhs)
+        let rhsScore = score(for: rhs)
+
+        if lhsScore != rhsScore {
+            return lhsScore < rhsScore ? .orderedAscending : .orderedDescending
+        }
+
+        if lhs.depth != rhs.depth {
+            return lhs.depth < rhs.depth ? .orderedAscending : .orderedDescending
+        }
+
+        return .orderedSame
+    }
+
+    private static func score(for candidate: EditableTextTargetFallbackCandidate) -> Int {
+        var score = 0
+
+        let inspection = EditableTextTargetClassifier.classify(
+            role: candidate.role,
+            editableAttribute: candidate.editableAttribute,
+            valueAttributeSettable: candidate.valueAttributeSettable
+        )
+
+        switch inspection {
+        case .editable:
+            score += 1_000
+        case .notEditable:
+            score += 100
+        case .unavailable:
+            return 0
+        }
+
+        if EditableTextTargetClassifier.isPreferredEditableRole(candidate.role) {
+            score += 300
+        }
+        if candidate.editableAttribute == true {
+            score += 250
+        }
+        if candidate.valueAttributeSettable == true {
+            score += 200
+        }
+        if candidate.selectedTextRangeAttributeSettable == true {
+            score += 100
+        }
+
+        score += candidate.depth
+        return score
     }
 }
 
@@ -232,11 +309,69 @@ struct EditableTextTargetInspector: EditableTextTargetInspecting {
             &focusedElementReference
         )
 
-        guard focusStatus == .success, let focusedElementReference else {
+        if focusStatus == .success, let focusedElementReference {
+            return unsafeBitCast(focusedElementReference, to: AXUIElement.self)
+        }
+
+        return fallbackFocusedElementFromFrontmostWindow()
+    }
+
+    private func fallbackFocusedElementFromFrontmostWindow() -> AXUIElement? {
+        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
             return nil
         }
 
-        return unsafeBitCast(focusedElementReference, to: AXUIElement.self)
+        let applicationElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+        guard let windowElement =
+            copyElementAttribute(kAXFocusedWindowAttribute as String, from: applicationElement)
+            ?? copyElementAttribute(kAXMainWindowAttribute as String, from: applicationElement)
+        else {
+            return nil
+        }
+
+        return bestWritableDescendant(from: windowElement)
+    }
+
+    private func bestWritableDescendant(from rootElement: AXUIElement) -> AXUIElement? {
+        let maxVisitedElements = 512
+        var visitedCount = 0
+        var queue: [(element: AXUIElement, depth: Int)] = [(rootElement, 0)]
+        var bestMatch: (element: AXUIElement, candidate: EditableTextTargetFallbackCandidate)?
+
+        while !queue.isEmpty, visitedCount < maxVisitedElements {
+            let (element, depth) = queue.removeFirst()
+            visitedCount += 1
+
+            let candidate = EditableTextTargetFallbackCandidate(
+                role: copyStringAttribute(kAXRoleAttribute as String, from: element),
+                editableAttribute: copyBoolAttribute("AXEditable", from: element),
+                valueAttributeSettable: isAttributeSettable(kAXValueAttribute, on: element),
+                selectedTextRangeAttributeSettable: isAttributeSettable(
+                    kAXSelectedTextRangeAttribute as String,
+                    on: element
+                ),
+                depth: depth
+            )
+
+            if let resolvedBest = bestMatch?.candidate {
+                if EditableTextTargetFallbackResolver.bestCandidate(
+                    in: [resolvedBest, candidate]
+                ) == candidate {
+                    bestMatch = (element, candidate)
+                }
+            } else if EditableTextTargetFallbackResolver.bestCandidate(in: [candidate]) == candidate,
+                      candidate.valueAttributeSettable == true || candidate.selectedTextRangeAttributeSettable == true {
+                bestMatch = (element, candidate)
+            }
+
+            if let children = copyElementArrayAttribute(kAXChildrenAttribute as String, from: element) {
+                for child in children {
+                    queue.append((child, depth + 1))
+                }
+            }
+        }
+
+        return bestMatch?.element
     }
 
     private func copyStringAttribute(_ attribute: String, from element: AXUIElement) -> String? {

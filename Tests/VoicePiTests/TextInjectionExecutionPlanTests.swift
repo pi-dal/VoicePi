@@ -31,7 +31,7 @@ struct TextInjectionExecutionPlanTests {
         )
 
         #expect(switched.blockingLatencyMilliseconds > baseline.blockingLatencyMilliseconds)
-        #expect(switched.blockingLatencyMilliseconds < 180)
+        #expect(switched.blockingLatencyMilliseconds < 260)
     }
 
     @Test
@@ -41,6 +41,19 @@ struct TextInjectionExecutionPlanTests {
             TextInjectionTiming.default.clipboardRestoreDelay.wholeMilliseconds
                 > TextInjectionTiming.default.postPasteSettleDelay.wholeMilliseconds
         )
+    }
+
+    @Test
+    func defaultTimingKeepsPrePasteReliabilityWindowsAboveMinimumFloors() {
+        #expect(TextInjectionTiming.default.clipboardSettleDelay.wholeMilliseconds >= 30)
+        #expect(TextInjectionTiming.default.keyPressInterval.wholeMilliseconds >= 20)
+        #expect(TextInjectionTiming.default.postPasteSettleDelay.wholeMilliseconds >= 60)
+    }
+
+    @Test
+    func defaultTimingKeepsCJKInputSourceSwitchingAboveMinimumFloors() {
+        #expect(TextInjectionTiming.default.inputSourceSwitchSettleDelay.wholeMilliseconds >= 60)
+        #expect(TextInjectionTiming.default.restoreInputSourceSettleDelay.wholeMilliseconds >= 40)
     }
 
     @Test

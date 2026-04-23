@@ -18,12 +18,14 @@ struct TextInjectionTiming: Equatable {
     let restoreInputSourceSettleDelay: Duration
 
     static let `default` = TextInjectionTiming(
-        inputSourceSwitchSettleDelay: .milliseconds(30),
-        clipboardSettleDelay: .milliseconds(10),
-        keyPressInterval: .milliseconds(8),
+        // Keep the injection path responsive without collapsing the short waits
+        // that certain web and IME-backed inputs need to observe clipboard and key events.
+        inputSourceSwitchSettleDelay: .milliseconds(60),
+        clipboardSettleDelay: .milliseconds(30),
+        keyPressInterval: .milliseconds(20),
         postPasteSettleDelay: .milliseconds(60),
         clipboardRestoreDelay: .milliseconds(220),
-        restoreInputSourceSettleDelay: .milliseconds(20)
+        restoreInputSourceSettleDelay: .milliseconds(40)
     )
 }
 
