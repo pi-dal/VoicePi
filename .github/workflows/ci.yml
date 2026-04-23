@@ -16,6 +16,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Set up mise toolchain
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+
       - name: Show toolchain versions
         run: |
           xcodebuild -version

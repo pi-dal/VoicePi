@@ -33,6 +33,13 @@ jobs:
           path: release-src
           fetch-depth: 0
 
+      - name: Set up mise toolchain
+        uses: jdx/mise-action@v3
+        with:
+          working_directory: release-src
+          install: true
+          cache: true
+
       - name: Show toolchain versions
         run: |
           xcodebuild -version
