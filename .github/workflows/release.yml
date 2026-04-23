@@ -37,6 +37,7 @@ jobs:
         uses: jdx/mise-action@v3
         with:
           working_directory: release-src
+          experimental: true
           install: true
           cache: true
 
