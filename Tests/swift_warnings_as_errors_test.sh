@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-swift build -Xswiftc -warnings-as-errors >/dev/null
+./Scripts/swiftw build -Xswiftc -warnings-as-errors >/dev/null

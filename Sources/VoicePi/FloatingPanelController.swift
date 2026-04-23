@@ -161,12 +161,20 @@ final class FloatingPanelController: NSWindowController {
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.35, 0.0, 0.8, 1.0)
             panel.animator().alphaValue = 0
             panel.animator().setFrame(targetFrame, display: true)
-        } completionHandler: {
-            panel.orderOut(nil)
-            panel.alphaValue = 1
-            panel.setFrame(originalFrame, display: false)
-            self.contentController.resetForNextSession()
-            completion?()
+        } completionHandler: { [weak self] in
+            // AppKit runs animation completions on the main thread, but the API is not main-actor annotated.
+            MainActor.assumeIsolated {
+                guard let self else {
+                    completion?()
+                    return
+                }
+
+                panel.orderOut(nil)
+                panel.alphaValue = 1
+                panel.setFrame(originalFrame, display: false)
+                self.contentController.resetForNextSession()
+                completion?()
+            }
         }
     }
 

@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+if command -v mise >/dev/null 2>&1 && [ -f ".mise.toml" ]; then
+  exec mise exec -- swift "$@"
+fi
+
+exec swift "$@"

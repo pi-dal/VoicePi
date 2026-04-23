@@ -1323,7 +1323,7 @@ struct AppControllerInteractionTests {
                 requestMediaPermissions: true,
                 promptAccessibility: true,
                 requestInputMonitoringPermission: false,
-                useSystemAccessibilityPrompt: true
+                useSystemAccessibilityPrompt: false
             )
         )
     }
@@ -1344,7 +1344,7 @@ struct AppControllerInteractionTests {
                 requestMediaPermissions: true,
                 promptAccessibility: true,
                 requestInputMonitoringPermission: true,
-                useSystemAccessibilityPrompt: true
+                useSystemAccessibilityPrompt: false
             )
         )
     }
@@ -1370,7 +1370,7 @@ struct AppControllerInteractionTests {
                 requestMediaPermissions: true,
                 promptAccessibility: true,
                 requestInputMonitoringPermission: true,
-                useSystemAccessibilityPrompt: true
+                useSystemAccessibilityPrompt: false
             )
         )
     }
@@ -1398,7 +1398,7 @@ struct AppControllerInteractionTests {
                 requestMediaPermissions: true,
                 promptAccessibility: true,
                 requestInputMonitoringPermission: true,
-                useSystemAccessibilityPrompt: true
+                useSystemAccessibilityPrompt: false
             )
         )
     }
@@ -1426,7 +1426,7 @@ struct AppControllerInteractionTests {
                 requestMediaPermissions: true,
                 promptAccessibility: true,
                 requestInputMonitoringPermission: true,
-                useSystemAccessibilityPrompt: true
+                useSystemAccessibilityPrompt: false
             )
         )
     }
@@ -1480,6 +1480,39 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func customAccessibilityFlowDefersRemainingLaunchPermissionPrompts() {
+        #expect(
+            AppController.shouldDeferRemainingPermissionPromptsAfterAccessibilityLaunch(
+                promptAccessibility: true,
+                useSystemAccessibilityPrompt: false,
+                accessibilityStateAfterPrompt: .denied
+            )
+        )
+        #expect(
+            !AppController.shouldDeferRemainingPermissionPromptsAfterAccessibilityLaunch(
+                promptAccessibility: true,
+                useSystemAccessibilityPrompt: true,
+                accessibilityStateAfterPrompt: .denied
+            )
+        )
+        #expect(
+            !AppController.shouldDeferRemainingPermissionPromptsAfterAccessibilityLaunch(
+                promptAccessibility: true,
+                useSystemAccessibilityPrompt: false,
+                accessibilityStateAfterPrompt: .granted
+            )
+        )
+        #expect(
+            !AppController.shouldDeferRemainingPermissionPromptsAfterAccessibilityLaunch(
+                promptAccessibility: false,
+                useSystemAccessibilityPrompt: false,
+                accessibilityStateAfterPrompt: .denied
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func permissionSettingsPromptsUseConsistentCopyAndDestinations() {
         #expect(
             AppController.permissionSettingsPrompt(for: .accessibility) == .init(
@@ -1507,9 +1540,34 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func accessibilityPermissionPromptUsesScenarioSource() {
+        #expect(
+            AppController.accessibilityPermissionPromptSource(from: .launchFollowUp) == .launchFollowUp
+        )
+        #expect(
+            AppController.accessibilityPermissionPromptSource(from: .accessibilityFollowUp) == .accessibilityFollowUp
+        )
+        #expect(
+            AppController.accessibilityPermissionPromptSource(from: .manualSettingsButton) == .manualSettingsButton
+        )
+    }
+
+    @Test
+    @MainActor
     func permissionSettingsTransitionsPreferCustomSettingsPrompts() {
-        #expect(AppController.permissionSettingsTransitionStyle(for: .accessibility) == .customPrompt)
-        #expect(AppController.permissionSettingsTransitionStyle(for: .inputMonitoring) == .customPrompt)
+        #expect(AppController.permissionSettingsTransitionStyle(for: .accessibility) == .permissionFlow)
+        #expect(AppController.permissionSettingsTransitionStyle(for: .inputMonitoring) == .permissionFlow)
+        #expect(AppController.permissionSettingsTransitionStyle(for: .microphone) == .customPrompt)
+        #expect(AppController.permissionSettingsTransitionStyle(for: .speech) == .customPrompt)
+    }
+
+    @Test
+    @MainActor
+    func permissionFlowOnlyCoversAccessibilityAndInputMonitoring() {
+        #expect(AppController.permissionGuidanceFlowDestination(for: .accessibility) == .accessibility)
+        #expect(AppController.permissionGuidanceFlowDestination(for: .inputMonitoring) == .inputMonitoring)
+        #expect(AppController.permissionGuidanceFlowDestination(for: .microphone) == nil)
+        #expect(AppController.permissionGuidanceFlowDestination(for: .speech) == nil)
     }
 
     @Test

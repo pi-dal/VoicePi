@@ -8,6 +8,9 @@ import SwiftUI
 #if canImport(Translation)
 import Translation
 #endif
+#if canImport(_Translation_SwiftUI)
+import _Translation_SwiftUI
+#endif
 
 enum AppleTranslateServiceError: LocalizedError, Equatable {
     case unsupported
@@ -74,7 +77,7 @@ final class AppleTranslateService: TranscriptTranslating {
         sourceLanguage: SupportedLanguage,
         targetLanguage: SupportedLanguage
     ) async throws -> String {
-#if canImport(AppKit) && canImport(SwiftUI) && canImport(Translation)
+#if canImport(AppKit) && canImport(SwiftUI) && canImport(Translation) && canImport(_Translation_SwiftUI)
         guard Self.isSupported else {
             throw AppleTranslateServiceError.unsupported
         }
@@ -109,7 +112,7 @@ final class AppleTranslateService: TranscriptTranslating {
 #endif
     }
 
-#if canImport(AppKit) && canImport(SwiftUI) && canImport(Translation)
+#if canImport(AppKit) && canImport(SwiftUI) && canImport(Translation) && canImport(_Translation_SwiftUI)
     private static let canUseTranslationFramework = true
 #else
     private static let canUseTranslationFramework = false
@@ -302,7 +305,7 @@ private extension SupportedLanguage {
     }
 }
 
-#if canImport(AppKit) && canImport(SwiftUI) && canImport(Translation)
+#if canImport(AppKit) && canImport(SwiftUI) && canImport(Translation) && canImport(_Translation_SwiftUI)
 @available(macOS 15.0, *)
 @MainActor
 private final class AppleTranslationBridge {

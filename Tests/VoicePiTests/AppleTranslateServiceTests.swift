@@ -10,7 +10,7 @@ struct AppleTranslateServiceTests {
                 operatingSystemVersion: .init(majorVersion: 14, minorVersion: 6, patchVersion: 0)
             ) == false
         )
-#if canImport(Translation)
+#if canImport(Translation) && canImport(_Translation_SwiftUI)
         #expect(
             AppleTranslateService.isSupported(
                 operatingSystemVersion: .init(majorVersion: 15, minorVersion: 0, patchVersion: 0)

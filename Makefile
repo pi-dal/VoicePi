@@ -1,9 +1,11 @@
 APP_NAME := VoicePi
 BUILD_DIR := .build
 DIST_DIR := dist
+SWIFT := ./Scripts/swiftw
+SWIFTC := ./Scripts/swiftcw
 
-DEBUG_BIN_DIR := $(shell swift build --show-bin-path)
-RELEASE_BIN_DIR := $(shell swift build -c release --show-bin-path)
+DEBUG_BIN_DIR := $(shell $(SWIFT) build --show-bin-path)
+RELEASE_BIN_DIR := $(shell $(SWIFT) build -c release --show-bin-path)
 
 APP_BUNDLE := $(DIST_DIR)/release/$(APP_NAME).app
 DEBUG_APP_BUNDLE := $(DIST_DIR)/debug/$(APP_NAME).app
@@ -40,13 +42,13 @@ zip: package
 
 debug:
 	@echo "==> Running verification build"
-	swift build
+	$(SWIFT) build
 	@$(MAKE) bundle APP_DIR="$(DEBUG_APP_BUNDLE)" EXEC="$(DEBUG_EXECUTABLE)"
 	@echo "Built app bundle: $(DEBUG_APP_BUNDLE)"
 
 release:
 	@echo "==> Running release packaging build"
-	swift build -c release
+	$(SWIFT) build -c release
 	@$(MAKE) bundle APP_DIR="$(APP_BUNDLE)" EXEC="$(EXECUTABLE)"
 	@echo "Built app bundle: $(APP_BUNDLE)"
 
@@ -92,7 +94,7 @@ install: package
 	@echo "Installed to $(INSTALL_DIR)/$(APP_NAME).app"
 
 clean:
-	swift package clean
+	$(SWIFT) package clean
 	rm -rf "$(BUILD_DIR)"
 
 dist-clean:

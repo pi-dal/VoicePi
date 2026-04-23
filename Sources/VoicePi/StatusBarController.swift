@@ -1882,7 +1882,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 title: "Accessibility",
                 description: PermissionsCopy.accessibilityDescription,
                 statusLabel: accessibilityStatusLabel,
-                primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openAccessibilitySettingsFromSettings)),
+                primaryButton: makePrimaryActionButton(title: "Guide Accessibility", action: #selector(openAccessibilitySettingsFromSettings)),
                 secondaryButtons: []
             ),
             makePermissionCard(
@@ -1890,7 +1890,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 title: "Input Monitoring",
                 description: PermissionsCopy.inputMonitoringDescription,
                 statusLabel: inputMonitoringStatusLabel,
-                primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openInputMonitoringSettings)),
+                primaryButton: makePrimaryActionButton(title: "Guide Input Monitoring", action: #selector(openInputMonitoringSettings)),
                 secondaryButtons: []
             )
         ])

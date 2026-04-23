@@ -52,6 +52,12 @@ final class AppController: NSObject {
 
     enum PermissionSettingsTransitionStyle: Equatable {
         case customPrompt
+        case permissionFlow
+    }
+
+    enum PermissionGuidanceFlowDestination: Equatable {
+        case accessibility
+        case inputMonitoring
     }
 
     enum MediaPermissionTransitionStyle: Equatable {
@@ -323,6 +329,7 @@ final class AppController: NSObject {
     private let postInjectionLearningCoordinator = PostInjectionLearningCoordinator()
     private let updateChecker = GitHubReleaseUpdateChecker()
     private let homebrewInstallationDetector = HomebrewInstallationDetector()
+    private let permissionGuidanceFlow = PermissionGuidanceFlow()
     private let appDefaults = UserDefaults.standard
     private let promptDestinationInspector = PromptDestinationInspector()
     private let editableTextTargetInspector: EditableTextTargetInspecting = EditableTextTargetInspector()
@@ -1186,7 +1193,7 @@ final class AppController: NSObject {
                 cancelShortcut: cancelShortcut,
                 promptCycleShortcut: promptCycleShortcut
             ),
-            useSystemAccessibilityPrompt: true
+            useSystemAccessibilityPrompt: false
         )
     }
 
@@ -1396,6 +1403,16 @@ final class AppController: NSObject {
         accessibilityStateAfterPrompt != .granted
     }
 
+    static func shouldDeferRemainingPermissionPromptsAfterAccessibilityLaunch(
+        promptAccessibility: Bool,
+        useSystemAccessibilityPrompt: Bool,
+        accessibilityStateAfterPrompt: AuthorizationState
+    ) -> Bool {
+        promptAccessibility &&
+        !useSystemAccessibilityPrompt &&
+        accessibilityStateAfterPrompt != .granted
+    }
+
     static func permissionSettingsPrompt(for destination: PermissionSettingsDestination) -> PermissionSettingsPrompt {
         switch destination {
         case .accessibility:
@@ -1428,8 +1445,25 @@ final class AppController: NSObject {
     static func permissionSettingsTransitionStyle(
         for destination: PermissionSettingsDestination
     ) -> PermissionSettingsTransitionStyle {
-        _ = destination
-        return .customPrompt
+        switch destination {
+        case .accessibility, .inputMonitoring:
+            return .permissionFlow
+        case .microphone, .speech:
+            return .customPrompt
+        }
+    }
+
+    static func permissionGuidanceFlowDestination(
+        for destination: PermissionSettingsDestination
+    ) -> PermissionGuidanceFlowDestination? {
+        switch destination {
+        case .accessibility:
+            return .accessibility
+        case .inputMonitoring:
+            return .inputMonitoring
+        case .microphone, .speech:
+            return nil
+        }
     }
 
     static func mediaPermissionTransitionStyle(
@@ -1474,6 +1508,12 @@ final class AppController: NSObject {
         case .manualSettingsButton:
             return false
         }
+    }
+
+    static func accessibilityPermissionPromptSource(
+        from source: PermissionPromptSource
+    ) -> PermissionPromptSource {
+        source
     }
 
     func start() {
@@ -3520,7 +3560,10 @@ final class AppController: NSObject {
             if currentAccessibilityState != .granted, useSystemAccessibilityPrompt {
                 _ = currentAccessibilityAuthorizationState(prompt: true)
             } else if currentAccessibilityState != .granted {
-                offerPermissionSettingsPrompt(for: .accessibility, source: .manualSettingsButton)
+                offerPermissionSettingsPrompt(
+                    for: .accessibility,
+                    source: Self.accessibilityPermissionPromptSource(from: inputMonitoringPromptSource)
+                )
             }
             accessibilityStateAfterPrompt = currentAccessibilityAuthorizationState(prompt: false)
         } else {
@@ -3536,6 +3579,21 @@ final class AppController: NSObject {
         } else {
             accessibilityAuthorizationFollowUpTask?.cancel()
             accessibilityAuthorizationFollowUpTask = nil
+        }
+
+        if Self.shouldDeferRemainingPermissionPromptsAfterAccessibilityLaunch(
+            promptAccessibility: promptAccessibility,
+            useSystemAccessibilityPrompt: useSystemAccessibilityPrompt,
+            accessibilityStateAfterPrompt: accessibilityStateAfterPrompt
+        ) {
+            updateAuthorizationStates(
+                microphoneState: currentMicrophoneAuthorizationState(),
+                speechState: currentSpeechAuthorizationState(),
+                accessibilityState: accessibilityStateAfterPrompt,
+                inputMonitoringState: currentInputMonitoringAuthorizationState()
+            )
+            ensureHotkeyMonitorRunning()
+            return
         }
 
         if Self.permissionRefreshSequence(
@@ -4460,6 +4518,16 @@ extension AppController: StatusBarControllerDelegate {
         source: PermissionPromptSource,
         beforeOpen: (() -> Void)? = nil
     ) {
+        if Self.permissionSettingsTransitionStyle(for: destination) == .permissionFlow,
+           let guidanceDestination = Self.permissionGuidanceFlowDestination(for: destination) {
+            if Self.shouldActivateAppForPermissionPrompt(source: source) {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            beforeOpen?()
+            permissionGuidanceFlow.present(for: guidanceDestination)
+            return
+        }
+
         let prompt = Self.permissionSettingsPrompt(for: destination)
         if Self.shouldActivateAppForPermissionPrompt(source: source) {
             NSApp.activate(ignoringOtherApps: true)

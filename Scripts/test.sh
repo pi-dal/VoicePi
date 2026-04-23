@@ -9,7 +9,12 @@ fi
 echo "==> Running Swift tests"
 set -- test
 
-swift "$@"
+SWIFT=./Scripts/swiftw
+if [ ! -x "$SWIFT" ]; then
+  SWIFT=swift
+fi
+
+"$SWIFT" "$@"
 
 echo
 echo "==> Running shell tests"

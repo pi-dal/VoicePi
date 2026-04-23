@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-if [ ! -f "Package.swift" ] || [ ! -d "Sources/VoicePi" ]; then
+ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+
+if [ ! -f "$ROOT_DIR/Package.swift" ] || [ ! -d "$ROOT_DIR/Sources/VoicePi" ]; then
   echo "error: run this script from the project root containing Package.swift and Sources/VoicePi" >&2
   exit 1
 fi
@@ -11,22 +13,27 @@ trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
 BINARY_PATH="$TMP_DIR/voicepi-benchmark"
 
-swiftc \
+SWIFTC=${ROOT_DIR}/Scripts/swiftcw
+if [ ! -x "$SWIFTC" ]; then
+  SWIFTC=swiftc
+fi
+
+"$SWIFTC" \
   -parse-as-library \
   -O \
   -whole-module-optimization \
-  Sources/VoicePi/TextInjectionTiming.swift \
-  Sources/VoicePi/SpeechRecorderStopPolicy.swift \
-  Sources/VoicePi/RealtimeOverlayUpdateGate.swift \
-  Sources/VoicePi/PostInjectionLearningLoopPolicy.swift \
-  Sources/VoicePi/RecordingLatencyTrace.swift \
-  Sources/VoicePi/RecordingLatencyHistory.swift \
-  Sources/VoicePi/DictionaryModels.swift \
-  Sources/VoicePi/DictionarySuggestionExtractor.swift \
-  Sources/VoicePi/DictionaryTextNormalizer.swift \
-  Sources/VoicePi/FloatingPanelTranscriptPresentationState.swift \
-  Sources/VoicePi/PerformanceBenchmarkReport.swift \
-  Scripts/benchmark_main.swift \
+  "$ROOT_DIR/Sources/VoicePi/TextInjectionTiming.swift" \
+  "$ROOT_DIR/Sources/VoicePi/SpeechRecorderStopPolicy.swift" \
+  "$ROOT_DIR/Sources/VoicePi/RealtimeOverlayUpdateGate.swift" \
+  "$ROOT_DIR/Sources/VoicePi/PostInjectionLearningLoopPolicy.swift" \
+  "$ROOT_DIR/Sources/VoicePi/RecordingLatencyTrace.swift" \
+  "$ROOT_DIR/Sources/VoicePi/RecordingLatencyHistory.swift" \
+  "$ROOT_DIR/Sources/VoicePi/DictionaryModels.swift" \
+  "$ROOT_DIR/Sources/VoicePi/DictionarySuggestionExtractor.swift" \
+  "$ROOT_DIR/Sources/VoicePi/DictionaryTextNormalizer.swift" \
+  "$ROOT_DIR/Sources/VoicePi/FloatingPanelTranscriptPresentationState.swift" \
+  "$ROOT_DIR/Sources/VoicePi/PerformanceBenchmarkReport.swift" \
+  "$ROOT_DIR/Scripts/benchmark_main.swift" \
   -o "$BINARY_PATH"
 
 "$BINARY_PATH" "$@"

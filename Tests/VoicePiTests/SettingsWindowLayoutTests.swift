@@ -196,6 +196,25 @@ struct SettingsWindowLayoutTests {
             #expect(sectionIsScrollable)
         }
     }
+
+    @Test
+    func permissionCardsUseGuidedActionTitlesForManualPermissions() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.permissionCardsUseGuidedActionTitlesForManualPermissions.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let accessibilityButton = try #require(findButton(in: contentView, title: "Guide Accessibility"))
+        let inputMonitoringButton = try #require(findButton(in: contentView, title: "Guide Input Monitoring"))
+        let microphoneButton = try #require(findButton(in: contentView, title: "Open Settings"))
+
+        #expect(accessibilityButton.title == "Guide Accessibility")
+        #expect(inputMonitoringButton.title == "Guide Input Monitoring")
+        #expect(microphoneButton.title == "Open Settings")
+    }
 }
 
 @MainActor
@@ -229,6 +248,24 @@ private func stackDescendantLabels(in view: NSView) -> [String] {
     }
 
     return labels
+}
+
+@MainActor
+private func findButton(
+    in view: NSView,
+    title: String
+) -> NSButton? {
+    if let button = view as? NSButton, button.title == title {
+        return button
+    }
+
+    for subview in view.subviews {
+        if let match = findButton(in: subview, title: title) {
+            return match
+        }
+    }
+
+    return nil
 }
 
 @MainActor

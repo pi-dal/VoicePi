@@ -24,6 +24,10 @@ dist/
 site/dist/
 site/node_modules/
 
+# Local dependency forks
+/PermissionFlow/
+/PermissionFlow-gh/
+
 # Debug
 *.hmap
 *.plist

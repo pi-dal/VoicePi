@@ -28,6 +28,14 @@
       }
     },
     {
+      "identity" : "permissionflow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pi-dal/PermissionFlow.git",
+      "state" : {
+        "revision" : "aa0df8557bea9032196294a9b938771ff6ad8784"
+      }
+    },
+    {
       "identity" : "swift-cmark",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-cmark",

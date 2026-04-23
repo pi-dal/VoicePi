@@ -14,13 +14,18 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/s1ntoneli/AppUpdater.git", from: "0.2.0")
+        .package(url: "https://github.com/s1ntoneli/AppUpdater.git", from: "0.2.0"),
+        .package(
+            url: "https://github.com/pi-dal/PermissionFlow.git",
+            revision: "aa0df8557bea9032196294a9b938771ff6ad8784"
+        )
     ],
     targets: [
         .executableTarget(
             name: "VoicePi",
             dependencies: [
-                .product(name: "AppUpdater", package: "AppUpdater")
+                .product(name: "AppUpdater", package: "AppUpdater"),
+                .product(name: "PermissionFlow", package: "PermissionFlow")
             ],
             path: "Sources/VoicePi",
             exclude: [

@@ -1205,7 +1205,7 @@ protocol ExternalProcessorRefining: Sendable {
 
 protocol ExternalProcessorRunning: ExternalProcessorRefining {}
 
-extension Process: ExternalProcessorProcess, @unchecked Sendable {}
+extension Process: ExternalProcessorProcess {}
 
 struct RemoteASRConfiguration: Codable, Equatable {
     var baseURL: String
