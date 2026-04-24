@@ -316,19 +316,23 @@ struct SettingsPresentationTests {
     func permissionCopyReflectsCurrentInputMonitoringRequirement() {
         #expect(
             PermissionsCopy.permissionsSectionSubtitle
-                == "Manage the macOS permissions VoicePi uses for shortcut listening, advanced shortcut suppression, recording, and paste injection."
+                == "Review the current macOS permissions VoicePi depends on for recording, recognition, automation, and shortcut capture."
         )
         #expect(
             PermissionsCopy.permissionsHint
-                == "VoicePi shows a guided permission flow first, then hands off to macOS only when you choose to continue. After changing anything in System Settings, refresh here."
+                == "Click a permission card to jump to the matching macOS settings pane. Use the footer action to open the broader Privacy & Security overview."
         )
         #expect(
             PermissionsCopy.accessibilityDescription
-                == "Required for advanced shortcut suppression and paste injection."
+                == "Required to control system UI."
         )
         #expect(
             PermissionsCopy.inputMonitoringDescription
-                == "Required for listening to advanced global shortcuts."
+                == "Required to capture keystrokes."
+        )
+        #expect(
+            PermissionsCopy.permissionsFooterNote
+                == "Some permissions require a restart to take effect."
         )
         #expect(
             PermissionsCopy.strategyDescription

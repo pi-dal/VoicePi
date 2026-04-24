@@ -201,6 +201,77 @@ struct LLMSectionFeedback {
     }
 }
 
+fileprivate enum ASRBackendMode: String, CaseIterable {
+    case local
+    case remote
+
+    var title: String {
+        switch self {
+        case .local:
+            return "Local"
+        case .remote:
+            return "Remote"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .local:
+            return "On-device"
+        case .remote:
+            return "Cloud"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .local:
+            return "Uses the built-in Apple Speech recognizer."
+        case .remote:
+            return "Routes transcription through a configurable cloud ASR provider."
+        }
+    }
+
+    var iconSymbolName: String {
+        switch self {
+        case .local:
+            return "desktopcomputer"
+        case .remote:
+            return "cloud"
+        }
+    }
+}
+
+fileprivate enum RemoteASRProvider: String, CaseIterable {
+    case openAICompatible = "OpenAI-Compatible"
+    case aliyun = "Aliyun"
+    case volcengine = "Volcengine"
+
+    var backend: ASRBackend {
+        switch self {
+        case .openAICompatible:
+            return .remoteOpenAICompatible
+        case .aliyun:
+            return .remoteAliyunASR
+        case .volcengine:
+            return .remoteVolcengineASR
+        }
+    }
+
+    init?(backend: ASRBackend) {
+        switch backend {
+        case .remoteOpenAICompatible:
+            self = .openAICompatible
+        case .remoteAliyunASR:
+            self = .aliyun
+        case .remoteVolcengineASR:
+            self = .volcengine
+        case .appleSpeech:
+            return nil
+        }
+    }
+}
+
 @MainActor
 final class StatusBarController: NSObject {
     private struct PromptBindingCapture {
@@ -374,7 +445,7 @@ final class StatusBarController: NSObject {
         settingsWindowController?.reloadFromModel()
     }
 
-    func showSettingsWindow(section: SettingsSection = .home) {
+    func showSettingsWindow(section: SettingsSection = .home, scrollToBottom: Bool = false) {
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(
                 model: model,
@@ -387,7 +458,7 @@ final class StatusBarController: NSObject {
             )
         }
 
-        settingsWindowController?.show(section: section)
+        settingsWindowController?.show(section: section, scrollToBottom: scrollToBottom)
         settingsWindowController?.window?.center()
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1077,16 +1148,17 @@ enum SettingsSection: Int, CaseIterable {
 
 enum SettingsLayoutMetrics {
     static let pageSpacing: CGFloat = 12
-    static let cardPaddingHorizontal: CGFloat = 18
-    static let cardPaddingVertical: CGFloat = 16
+    static let cardPaddingHorizontal: CGFloat = 16
+    static let cardPaddingVertical: CGFloat = 14
     static let compactCardPaddingVertical: CGFloat = 12
-    static let sectionHeaderSpacing: CGFloat = 4
-    static let formRowVerticalInset: CGFloat = 9
+    static let sectionHeaderSpacing: CGFloat = 3
+    static let formRowVerticalInset: CGFloat = 8
     static let twoColumnSpacing: CGFloat = 12
     static let compactShortcutCardSpacing: CGFloat = 6
     static let actionButtonHeight: CGFloat = 32
-    static let navigationButtonHeight: CGFloat = 52
-    static let navigationButtonMinWidth: CGFloat = 72
+    static let headerHeight: CGFloat = 64
+    static let navigationButtonHeight: CGFloat = 64
+    static let navigationButtonMinWidth: CGFloat = 88
     static let contentMinWidth: CGFloat = 660
     static let contentMaxWidth: CGFloat = 792
     static let contentMinHeight: CGFloat = 300
@@ -1119,6 +1191,7 @@ enum AboutProfile {
 
 @MainActor
 protocol SettingsWindowControllerDelegate: AnyObject {
+    func settingsWindowControllerDidRequestStartRecording(_ controller: SettingsWindowController)
     func settingsWindowController(
         _ controller: SettingsWindowController,
         didSave configuration: LLMConfiguration
@@ -1132,6 +1205,11 @@ protocol SettingsWindowControllerDelegate: AnyObject {
     func settingsWindowController(
         _ controller: SettingsWindowController,
         didSelectASRBackend backend: ASRBackend
+    )
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
+        didSelect language: SupportedLanguage
     )
 
     func settingsWindowController(
@@ -1198,7 +1276,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let externalProcessorManagerAddArgumentButtonTitle = "+"
     static let externalProcessorManagerEmptyStateText = ExternalProcessorManagerPresentation.emptyStateText
     static let externalProcessorManagerManageButtonTitle = "Processors"
-    static let navigationIconTopPadding: CGFloat = 4
+    static let navigationIconTopPadding: CGFloat = 6
     static let strictModeHelpText = "When on, app bindings override the active prompt for matching apps. When off, VoicePi always uses the active prompt."
     static let thinkingUnsetTitle = "Not Set"
     static let thinkingHelpText =
@@ -1303,14 +1381,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let aboutView = NSView()
     private let dictionaryView = NSScrollView()
     private let historyView = NSScrollView()
+    private var pageScrollViews: [SettingsSection: NSScrollView] = [:]
 
     private let homeSummaryLabel = NSTextField(labelWithString: "")
+    private let homeReadinessTitleLabel = NSTextField(labelWithString: "")
+    private let homeReadinessIconView = NSImageView()
     private let homePermissionSummaryLabel = NSTextField(labelWithString: "")
     private let homeLanguageLabel = NSTextField(labelWithString: "")
+    private let homeLanguageTitleLabel = NSTextField(labelWithString: "")
+    private let homeLanguageSubtitleLabel = NSTextField(labelWithString: "")
+    private let homeLanguagePopup = ThemedPopUpButton()
     private let homeShortcutLabel = NSTextField(labelWithString: "")
     private let homeCancelShortcutLabel = NSTextField(labelWithString: "")
     private let homeModeShortcutLabel = NSTextField(labelWithString: "")
     private let homePromptShortcutLabel = NSTextField(labelWithString: "")
+    private let homeProcessorShortcutLabel = NSTextField(labelWithString: "")
     private let homeASRLabel = NSTextField(labelWithString: "")
     private let homeLLMLabel = NSTextField(labelWithString: "")
     private let dictionarySummaryLabel = NSTextField(labelWithString: "")
@@ -1341,12 +1426,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let promptShortcutHintLabel = NSTextField(labelWithString: "")
     private let processorShortcutRecorderField = ShortcutRecorderField()
     private let processorShortcutHintLabel = NSTextField(labelWithString: "")
+    private lazy var homePrimaryActionButton = StyledSettingsButton(
+        title: "Start Listening",
+        role: .primary,
+        target: self,
+        action: #selector(startListeningFromHome)
+    )
 
     private let microphoneStatusLabel = NSTextField(labelWithString: "")
     private let speechStatusLabel = NSTextField(labelWithString: "")
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
     private let inputMonitoringStatusLabel = NSTextField(labelWithString: "")
+    private let microphoneStatusIconView = NSImageView()
+    private let speechStatusIconView = NSImageView()
+    private let accessibilityStatusIconView = NSImageView()
+    private let inputMonitoringStatusIconView = NSImageView()
     private let permissionsHintLabel = NSTextField(labelWithString: "")
+    private let asrSummaryLabel = NSTextField(labelWithString: "")
+    private let asrBackendCardsStack = NSStackView()
+    private let llmSummaryLabel = NSTextField(labelWithString: "")
     private let aboutVersionLabel = NSTextField(labelWithString: "")
     private let aboutBuildLabel = NSTextField(labelWithString: "")
     private let aboutAuthorLabel = NSTextField(labelWithString: "")
@@ -1373,7 +1471,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         target: self,
         action: #selector(handleAboutUpdateSecondaryAction)
     )
-    private let interfaceThemeControl = NSSegmentedControl()
+    private let interfaceThemePopup = ThemedPopUpButton()
+    private let homeAppearanceTitleLabel = NSTextField(labelWithString: "")
+    private let homeAppearanceSubtitleLabel = NSTextField(labelWithString: "")
 
     private let baseURLField = NSTextField(string: "")
     private let apiKeyField = NSSecureTextField(string: "")
@@ -1383,6 +1483,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let activePromptPopup = ThemedPopUpButton()
     private let promptStrictModeSwitch = NSSwitch()
     private let resolvedPromptSummaryLabel = NSTextField(labelWithString: "")
+    private let resolvedPromptBodyLabel = NSTextField(labelWithString: "")
+    private let promptRulesStrictModeLabel = NSTextField(labelWithString: "")
+    private let promptRulesBindingCoverageLabel = NSTextField(labelWithString: "")
+    private let promptRulesPreviewLabel = NSTextField(labelWithString: "")
     private lazy var externalProcessorManagerButton = StyledSettingsButton(
         title: Self.externalProcessorManagerManageButtonTitle,
         role: .secondary,
@@ -1391,6 +1495,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     )
     private let externalProcessorsSummaryLabel = NSTextField(labelWithString: "")
     private let externalProcessorsDetailLabel = NSTextField(labelWithString: "")
+    private let externalProcessorsRowsStack = NSStackView()
     private lazy var resolvedPromptPreviewButton = StyledSettingsButton(
         title: "Preview",
         role: .secondary,
@@ -1421,7 +1526,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         target: self,
         action: #selector(deletePromptPreset)
     )
-    private let asrBackendPopup = ThemedPopUpButton()
+    private let asrRemoteProviderPopup = ThemedPopUpButton()
     private let asrBaseURLField = NSTextField(string: "")
     private let asrAPIKeyField = NSSecureTextField(string: "")
     private let asrModelField = NSTextField(string: "")
@@ -1431,6 +1536,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         title: "Volcengine AppID",
         control: asrVolcengineAppIDField
     )
+    private let asrConnectionDetailsContentStack = NSStackView()
+    private var asrRemoteConfigurationSection: NSView?
+    private var asrConnectionActionButtons: NSView?
+    private var asrLocalModeHintView: NSView?
     private let postProcessingModePopup = ThemedPopUpButton()
     private let translationProviderPopup = ThemedPopUpButton()
     private let targetLanguagePopup = ThemedPopUpButton()
@@ -1443,6 +1552,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
 
     private var sectionButtons: [SettingsSection: NSButton] = [:]
+    private var asrBackendCardViews: [ASRBackendMode: ASRBackendModeChoiceView] = [:]
+    private var selectedASRBackendMode: ASRBackendMode = .local
     private var currentSection: SettingsSection = .home
     private var aboutUpdatePresentation = AppUpdateExperience.cardPresentation(for: .idle(source: .unknown))
     private var aboutUpdatePrimaryAction: (() -> Void)?
@@ -1475,6 +1586,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var externalProcessorManagerExecutablePathFields: [UUID: NSTextField] = [:]
     private var externalProcessorManagerEnabledSwitches: [UUID: NSSwitch] = [:]
     private var externalProcessorManagerArgumentFields: [UUID: [UUID: NSTextField]] = [:]
+    private var shouldRefreshPermissionsOnNextWindowActivation = false
 
     var isPromptEditorSheetPresented: Bool {
         promptEditorDraft != nil || window?.attachedSheet != nil
@@ -1518,9 +1630,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         reloadFromModel()
     }
 
-    func show(section: SettingsSection) {
+    func show(section: SettingsSection, scrollToBottom: Bool = false) {
         showWindow(nil)
         selectSection(section)
+        if scrollToBottom {
+            scrollPage(section: section, toBottom: true)
+        }
     }
 
     func openExternalProcessorManagerSheetFromShortcut() {
@@ -1573,70 +1688,58 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         model.closeSettings()
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
+        shouldRefreshPermissionsOnNextWindowActivation = currentSection == .permissions
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
+        guard shouldRefreshPermissionsOnNextWindowActivation else { return }
+        shouldRefreshPermissionsOnNextWindowActivation = false
+        guard currentSection == .permissions else { return }
+        refreshPermissions(showProgressCopy: false)
+    }
+
     private func buildUI() {
         guard let contentView = window?.contentView else { return }
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = pageBackgroundColor.cgColor
         librarySubviewControls = []
 
-        let titleLabel = NSTextField(labelWithString: SettingsWindowChrome.title)
-        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
-        titleLabel.alignment = .left
-
-        let subtitleLabel = NSTextField(labelWithString: SettingsWindowChrome.subtitle)
-        subtitleLabel.font = .systemFont(ofSize: 11)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.alignment = .left
-
-        let titleStack = NSStackView(views: [titleLabel, subtitleLabel])
-        titleStack.orientation = .vertical
-        titleStack.spacing = 2
-        titleStack.alignment = .leading
-        titleStack.setContentHuggingPriority(.required, for: .vertical)
-        titleStack.setContentCompressionResistancePriority(.required, for: .vertical)
-
         let navigation = makeSectionNavigation()
         navigation.translatesAutoresizingMaskIntoConstraints = false
         navigation.setContentHuggingPriority(.required, for: .vertical)
         navigation.setContentCompressionResistancePriority(.required, for: .vertical)
 
-        let headerRow = NSStackView(views: [titleStack, NSView(), navigation])
-        headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
-        headerRow.spacing = 12
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        headerRow.setContentHuggingPriority(.required, for: .vertical)
-        headerRow.setContentCompressionResistancePriority(.required, for: .vertical)
-
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
+        let navigationChrome = ThemedSurfaceView(style: .header)
+        navigationChrome.translatesAutoresizingMaskIntoConstraints = false
+        navigationChrome.addSubview(navigation)
+        NSLayoutConstraint.activate([
+            navigation.leadingAnchor.constraint(equalTo: navigationChrome.leadingAnchor),
+            navigation.trailingAnchor.constraint(equalTo: navigationChrome.trailingAnchor),
+            navigation.topAnchor.constraint(equalTo: navigationChrome.topAnchor),
+            navigation.bottomAnchor.constraint(equalTo: navigationChrome.bottomAnchor)
+        ])
 
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(headerRow)
-        contentView.addSubview(separator)
+        contentView.addSubview(navigationChrome)
         contentView.addSubview(contentContainer)
 
         NSLayoutConstraint.activate([
-            headerRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            headerRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            headerRow.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            headerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.navigationButtonHeight),
-            headerRow.heightAnchor.constraint(lessThanOrEqualToConstant: SettingsLayoutMetrics.navigationButtonHeight + 6),
-
-            separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 6),
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            navigationChrome.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            navigationChrome.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            navigationChrome.topAnchor.constraint(equalTo: contentView.topAnchor),
+            navigationChrome.heightAnchor.constraint(equalToConstant: SettingsLayoutMetrics.headerHeight),
 
             contentContainer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             contentContainer.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 24),
             contentContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
             contentContainer.widthAnchor.constraint(lessThanOrEqualToConstant: SettingsLayoutMetrics.contentMaxWidth),
             contentContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.contentMinWidth),
-            contentContainer.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
-            contentContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
+            contentContainer.topAnchor.constraint(equalTo: navigationChrome.bottomAnchor, constant: SettingsLayoutMetrics.pageSpacing),
+            contentContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24),
             contentContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.contentMinHeight)
         ])
 
@@ -1673,28 +1776,76 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildHomeView() {
         let contentStack = makePageStack()
+        let dynamicHomeReadinessTitleColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.homeReadinessTitleColor(for: appearance, isError: false)
+        }
 
-        homeLanguageLabel.font = .systemFont(ofSize: 13)
+        homeLanguageLabel.font = .systemFont(ofSize: 12.5)
         homeLanguageLabel.alignment = .left
-        homePermissionSummaryLabel.font = .systemFont(ofSize: 13)
-        homePermissionSummaryLabel.alignment = .left
+        homeLanguageLabel.lineBreakMode = .byWordWrapping
+        homeLanguageLabel.maximumNumberOfLines = 1
+        homeLanguageLabel.textColor = .secondaryLabelColor
+        homeLanguageTitleLabel.font = .systemFont(ofSize: 13.5, weight: .medium)
+        homeLanguageTitleLabel.textColor = .labelColor
+        homeLanguageSubtitleLabel.font = .systemFont(ofSize: 11.5)
+        homeLanguageSubtitleLabel.textColor = .secondaryLabelColor
+        homeAppearanceTitleLabel.font = .systemFont(ofSize: 13.5, weight: .medium)
+        homeAppearanceTitleLabel.textColor = .labelColor
+        homeAppearanceSubtitleLabel.font = .systemFont(ofSize: 11.5)
+        homeAppearanceSubtitleLabel.textColor = .secondaryLabelColor
+
+        homeLanguagePopup.removeAllItems()
+        homeLanguagePopup.addItems(withTitles: SupportedLanguage.allCases.map(\.rawValue))
+        homeLanguagePopup.target = self
+        homeLanguagePopup.action = #selector(homeLanguageChanged(_:))
+
+        homeReadinessTitleLabel.font = .systemFont(ofSize: 30, weight: .bold)
+        homeReadinessTitleLabel.textColor = dynamicHomeReadinessTitleColor
+        homeReadinessTitleLabel.alignment = .center
+        homeReadinessIconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 72, weight: .semibold)
+        homeReadinessIconView.imageScaling = .scaleProportionallyUpOrDown
+        homePermissionSummaryLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        homePermissionSummaryLabel.alignment = .center
         homePermissionSummaryLabel.lineBreakMode = .byWordWrapping
         homePermissionSummaryLabel.maximumNumberOfLines = 0
-        homeShortcutLabel.font = .systemFont(ofSize: 13)
+        homeShortcutLabel.font = .systemFont(ofSize: 12.5)
         homeShortcutLabel.alignment = .left
-        homeCancelShortcutLabel.font = .systemFont(ofSize: 13)
+        homeShortcutLabel.lineBreakMode = .byWordWrapping
+        homeShortcutLabel.maximumNumberOfLines = 2
+        homeShortcutLabel.textColor = .secondaryLabelColor
+        homeCancelShortcutLabel.font = .systemFont(ofSize: 12.5)
         homeCancelShortcutLabel.alignment = .left
-        homeModeShortcutLabel.font = .systemFont(ofSize: 13)
+        homeCancelShortcutLabel.lineBreakMode = .byWordWrapping
+        homeCancelShortcutLabel.maximumNumberOfLines = 2
+        homeCancelShortcutLabel.textColor = .secondaryLabelColor
+        homeModeShortcutLabel.font = .systemFont(ofSize: 12.5)
         homeModeShortcutLabel.alignment = .left
-        homePromptShortcutLabel.font = .systemFont(ofSize: 13)
+        homeModeShortcutLabel.lineBreakMode = .byWordWrapping
+        homeModeShortcutLabel.maximumNumberOfLines = 2
+        homeModeShortcutLabel.textColor = .secondaryLabelColor
+        homePromptShortcutLabel.font = .systemFont(ofSize: 12.5)
         homePromptShortcutLabel.alignment = .left
-        homeASRLabel.font = .systemFont(ofSize: 13)
-        homeASRLabel.alignment = .left
-        homeLLMLabel.font = .systemFont(ofSize: 13)
-        homeLLMLabel.alignment = .left
-        homeSummaryLabel.font = .systemFont(ofSize: 12.5)
+        homePromptShortcutLabel.lineBreakMode = .byWordWrapping
+        homePromptShortcutLabel.maximumNumberOfLines = 2
+        homePromptShortcutLabel.textColor = .secondaryLabelColor
+        homeProcessorShortcutLabel.font = .systemFont(ofSize: 12.5)
+        homeProcessorShortcutLabel.alignment = .left
+        homeProcessorShortcutLabel.lineBreakMode = .byWordWrapping
+        homeProcessorShortcutLabel.maximumNumberOfLines = 2
+        homeProcessorShortcutLabel.textColor = .secondaryLabelColor
+        homeASRLabel.font = .systemFont(ofSize: 12.5)
+        homeASRLabel.alignment = .center
+        homeASRLabel.lineBreakMode = .byWordWrapping
+        homeASRLabel.maximumNumberOfLines = 0
+        homeASRLabel.textColor = .secondaryLabelColor
+        homeLLMLabel.font = .systemFont(ofSize: 12.5)
+        homeLLMLabel.alignment = .center
+        homeLLMLabel.lineBreakMode = .byWordWrapping
+        homeLLMLabel.maximumNumberOfLines = 0
+        homeLLMLabel.textColor = .secondaryLabelColor
+        homeSummaryLabel.font = .systemFont(ofSize: 15, weight: .medium)
         homeSummaryLabel.textColor = .secondaryLabelColor
-        homeSummaryLabel.alignment = .left
+        homeSummaryLabel.alignment = .center
         homeSummaryLabel.lineBreakMode = .byWordWrapping
         homeSummaryLabel.maximumNumberOfLines = 0
 
@@ -1744,179 +1895,165 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         processorShortcutHintLabel.stringValue = processorShortcutHintText(for: model.processorShortcut)
 
         configureAppearanceControl()
+        homePrimaryActionButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
-        let shortcutGrid = makeTwoColumnGrid([
-            makeShortcutPreferenceCard(
-                title: "Activation Shortcut",
-                control: shortcutRecorderField,
-                hintLabel: shortcutHintLabel
-            ),
-            makeShortcutPreferenceCard(
-                title: "Cancel Shortcut",
-                control: cancelShortcutRecorderField,
-                hintLabel: cancelShortcutHintLabel
-            ),
-            makeShortcutPreferenceCard(
-                title: "Mode Switch Shortcut",
-                control: modeShortcutRecorderField,
-                hintLabel: modeShortcutHintLabel
-            ),
-            makeShortcutPreferenceCard(
-                title: "Prompt Cycle Shortcut",
-                control: promptShortcutRecorderField,
-                hintLabel: promptShortcutHintLabel
-            ),
-            makeShortcutPreferenceCard(
-                title: "Processor Shortcut",
-                control: processorShortcutRecorderField,
-                hintLabel: processorShortcutHintLabel
-            )
-        ])
+        let shortcutsCard = makeHomeShortcutsCard()
+        let readinessCard = makeHomeReadinessCard()
+        homeAppearanceSubtitleLabel.stringValue = "Follow system"
+        let appearanceCard = makeHomeSelectorCard(
+            sectionTitle: "Appearance",
+            icon: "circle.lefthalf.filled",
+            titleLabel: homeAppearanceTitleLabel,
+            subtitleLabel: homeAppearanceSubtitleLabel,
+            control: interfaceThemePopup
+        )
 
-        let overviewSection = makeGroupedSection(rows: [
-            makePreferenceRow(title: "Appearance", control: interfaceThemeControl),
-            makePreferenceRow(title: "Recognition Language", control: homeLanguageLabel),
-            makePreferenceRow(title: "Cancellation", control: homeCancelShortcutLabel),
-            makePreferenceRow(title: "Mode Switching", control: homeModeShortcutLabel),
-            makePreferenceRow(title: "Prompt Switching", control: homePromptShortcutLabel),
-            makePreferenceRow(title: "Permissions", control: homePermissionSummaryLabel),
-            makePreferenceRow(title: "ASR", control: homeASRLabel),
-            makePreferenceRow(title: "Text Processing", control: homeLLMLabel)
-        ])
+        homeLanguageSubtitleLabel.stringValue = "Primary language"
+        let languageCard = makeHomeSelectorCard(
+            sectionTitle: "Language",
+            icon: "globe",
+            titleLabel: homeLanguageTitleLabel,
+            subtitleLabel: homeLanguageSubtitleLabel,
+            control: homeLanguagePopup
+        )
 
-        let leftStack = NSStackView(views: [
-            makeFeatureHeader(
-                icon: "waveform.and.mic",
-                eyebrow: "General",
-                title: "A tighter control center for dictation, translation, and post-processing.",
-                description: "VoicePi stays in the menu bar, lets you keep dedicated shortcuts for recording, mode switching, and prompt switching, and can reopen processor output from a dedicated processor shortcut."
-            ),
-            shortcutGrid,
-            overviewSection,
-            homeSummaryLabel
-        ])
-        leftStack.orientation = .vertical
-        leftStack.spacing = SettingsLayoutMetrics.pageSpacing
-        leftStack.alignment = .leading
+        let leftColumn = makeVerticalStack(
+            [shortcutsCard, languageCard, appearanceCard],
+            spacing: SettingsLayoutMetrics.pageSpacing
+        )
 
-        shortcutGrid.translatesAutoresizingMaskIntoConstraints = false
-        overviewSection.translatesAutoresizingMaskIntoConstraints = false
-        homeSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        shortcutGrid.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
-        overviewSection.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
-        homeSummaryLabel.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
+        languageCard.heightAnchor.constraint(equalToConstant: 112).isActive = true
+        appearanceCard.heightAnchor.constraint(equalToConstant: 112).isActive = true
+        shortcutsCard.widthAnchor.constraint(equalTo: leftColumn.widthAnchor).isActive = true
+        languageCard.widthAnchor.constraint(equalTo: leftColumn.widthAnchor).isActive = true
+        appearanceCard.widthAnchor.constraint(equalTo: leftColumn.widthAnchor).isActive = true
 
-        let statusRail = NSStackView(views: [
-            makeFeatureCard(
-                icon: "keyboard",
-                title: "Trigger",
-                description: "Standard shortcuts work without Input Monitoring. Advanced shortcuts use Input Monitoring, and Accessibility handles advanced suppression plus final paste injection."
-            ),
-            makeFeatureCard(
-                icon: "sparkles.rectangle.stack",
-                title: "Flow",
-                description: "Keep ASR local with Apple Speech or switch to a remote backend, then optionally refine or translate the final transcript."
-            ),
-            makeActionCard(
-                title: "Made With Love By pi-dal",
-                description: "VoicePi is an open-source dictation utility built to feel compact, quiet, and intentional instead of form-heavy.",
-                actions: [
-                    makePrimaryActionButton(title: "View Repo", action: #selector(openRepository)),
-                    makeSecondaryActionButton(title: "About VoicePi", action: #selector(openAboutSection))
-                ],
-                verticalActions: true
-            )
-        ])
-        statusRail.orientation = .vertical
-        statusRail.spacing = SettingsLayoutMetrics.pageSpacing
-        statusRail.alignment = .leading
-        statusRail.translatesAutoresizingMaskIntoConstraints = false
-        statusRail.widthAnchor.constraint(equalToConstant: 208).isActive = true
+        let primaryRow = NSStackView(views: [leftColumn, readinessCard])
+        primaryRow.orientation = .horizontal
+        primaryRow.spacing = 16
+        primaryRow.alignment = .top
+        primaryRow.distribution = .fillEqually
+        leftColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        leftColumn.setContentCompressionResistancePriority(.required, for: .horizontal)
+        readinessCard.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        readinessCard.setContentCompressionResistancePriority(.required, for: .horizontal)
+        readinessCard.widthAnchor.constraint(equalTo: leftColumn.widthAnchor).isActive = true
 
-        contentStack.addArrangedSubview(makeTwoColumnSection(left: leftStack, right: statusRail, leftPriority: 0.68))
+        contentStack.addArrangedSubview(primaryRow)
 
-        installScrollablePage(contentStack, in: homeView)
+        installScrollablePage(contentStack, in: homeView, section: .home)
     }
 
     private func buildPermissionsView() {
         let contentStack = makePageStack()
 
-        permissionsHintLabel.font = .systemFont(ofSize: 12.5)
+        let sectionTitleLabel = NSTextField(labelWithString: "Permissions")
+        sectionTitleLabel.font = .systemFont(ofSize: 30, weight: .bold)
+        sectionTitleLabel.textColor = .labelColor
+        sectionTitleLabel.alignment = .left
+
+        [
+            microphoneStatusLabel,
+            speechStatusLabel,
+            accessibilityStatusLabel,
+            inputMonitoringStatusLabel
+        ].forEach { label in
+            label.font = .systemFont(ofSize: 14, weight: .semibold)
+            label.alignment = .right
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+
+        [
+            microphoneStatusIconView,
+            speechStatusIconView,
+            accessibilityStatusIconView,
+            inputMonitoringStatusIconView
+        ].forEach { iconView in
+            iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+            iconView.imageScaling = .scaleProportionallyDown
+            iconView.setContentHuggingPriority(.required, for: .horizontal)
+            iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+
+        permissionsHintLabel.font = .systemFont(ofSize: 13)
         permissionsHintLabel.textColor = .secondaryLabelColor
         permissionsHintLabel.alignment = .left
         permissionsHintLabel.lineBreakMode = .byWordWrapping
         permissionsHintLabel.maximumNumberOfLines = 0
-        permissionsHintLabel.stringValue = PermissionsCopy.permissionsHint
+        permissionsHintLabel.stringValue = PermissionsCopy.permissionsFooterNote
 
-        microphoneStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        microphoneStatusLabel.alignment = .center
-
-        speechStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        speechStatusLabel.alignment = .center
-
-        accessibilityStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        accessibilityStatusLabel.alignment = .center
-
-        inputMonitoringStatusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        inputMonitoringStatusLabel.alignment = .center
-
-        let permissionGrid = makeTwoColumnGrid([
-            makePermissionCard(
+        let permissionRows = makeVerticalStack([
+            makePermissionOverviewCard(
                 icon: "mic.fill",
                 title: "Microphone",
-                description: "Required for capturing your voice while you hold the shortcut.",
+                description: "Required for capturing audio.",
                 statusLabel: microphoneStatusLabel,
-                primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openMicrophoneSettings)),
-                secondaryButtons: []
+                statusIconView: microphoneStatusIconView,
+                action: #selector(openMicrophoneSettingsFromCard(_:))
             ),
-            makePermissionCard(
+            makePermissionOverviewCard(
                 icon: "waveform",
                 title: "Speech Recognition",
-                description: "Required for on-device and Apple speech transcription services.",
+                description: "Required for on-device recognition.",
                 statusLabel: speechStatusLabel,
-                primaryButton: makePrimaryActionButton(title: "Open Settings", action: #selector(openSpeechSettings)),
-                secondaryButtons: []
+                statusIconView: speechStatusIconView,
+                action: #selector(openSpeechSettingsFromCard(_:))
             ),
-            makePermissionCard(
+            makePermissionOverviewCard(
                 icon: "figure.wave",
                 title: "Accessibility",
-                description: PermissionsCopy.accessibilityDescription,
+                description: "Required to control system UI.",
                 statusLabel: accessibilityStatusLabel,
-                primaryButton: makePrimaryActionButton(title: "Guide Accessibility", action: #selector(openAccessibilitySettingsFromSettings)),
-                secondaryButtons: []
+                statusIconView: accessibilityStatusIconView,
+                action: #selector(openAccessibilitySettingsFromCard(_:))
             ),
-            makePermissionCard(
-                icon: "slider.horizontal.3",
+            makePermissionOverviewCard(
+                icon: "keyboard",
                 title: "Input Monitoring",
-                description: PermissionsCopy.inputMonitoringDescription,
+                description: "Required to capture keystrokes.",
                 statusLabel: inputMonitoringStatusLabel,
-                primaryButton: makePrimaryActionButton(title: "Guide Input Monitoring", action: #selector(openInputMonitoringSettings)),
-                secondaryButtons: []
+                statusIconView: inputMonitoringStatusIconView,
+                action: #selector(openInputMonitoringSettingsFromCard(_:))
             )
-        ])
+        ], spacing: 16)
+        permissionRows.arrangedSubviews.forEach { row in
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.widthAnchor.constraint(equalTo: permissionRows.widthAnchor).isActive = true
+        }
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Permissions", subtitle: PermissionsCopy.permissionsSectionSubtitle))
-        contentStack.addArrangedSubview(permissionsHintLabel)
-        contentStack.addArrangedSubview(permissionGrid)
-        contentStack.addArrangedSubview(makeActionCard(
-            title: "Permission Strategy",
-            description: PermissionsCopy.strategyDescription,
-            actions: [
-                makePrimaryActionButton(title: "Refresh", action: #selector(refreshPermissions))
-            ]
-        ))
-        contentStack.setCustomSpacing(20, after: permissionGrid)
+        let refreshButton = makeSecondaryActionButton(
+            title: "Refresh",
+            action: #selector(refreshPermissionsFromFooter)
+        )
+        refreshButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 108).isActive = true
+        let openSettingsButton = makeSecondaryActionButton(
+            title: "Open Settings...",
+            action: #selector(openSystemSettingsOverview)
+        )
+        openSettingsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 168).isActive = true
 
-        installScrollablePage(contentStack, in: permissionsView)
+        let actionButtons = makeButtonGroup([refreshButton, openSettingsButton])
+        let footerRow = NSStackView(views: [permissionsHintLabel, NSView(), actionButtons] as [NSView])
+        footerRow.orientation = .horizontal
+        footerRow.spacing = 12
+        footerRow.alignment = .centerY
+
+        addPageSection(sectionTitleLabel, to: contentStack)
+        addPageSection(permissionRows, to: contentStack)
+        addPageSection(footerRow, to: contentStack)
+
+        installScrollablePage(contentStack, in: permissionsView, section: .permissions)
     }
 
     private func buildASRView() {
         let contentStack = makePageStack()
 
-        asrBackendPopup.removeAllItems()
-        asrBackendPopup.addItems(withTitles: ASRBackend.allCases.map(\.title))
-        asrBackendPopup.target = self
-        asrBackendPopup.action = #selector(asrBackendChanged(_:))
+        asrRemoteProviderPopup.removeAllItems()
+        asrRemoteProviderPopup.addItems(withTitles: RemoteASRProvider.allCases.map(\.rawValue))
+        asrRemoteProviderPopup.target = self
+        asrRemoteProviderPopup.action = #selector(remoteASRProviderChanged(_:))
 
         asrAPIKeyField.placeholderString = "sk-..."
         asrPromptField.placeholderString = "Optional add-on hints (appended after VoicePi default ASR bias prompt)"
@@ -1929,8 +2066,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrSaveButton.action = #selector(saveRemoteASRConfiguration)
         asrSaveButton.keyEquivalent = "\r"
 
+        asrBackendCardsStack.orientation = .vertical
+        asrBackendCardsStack.spacing = 12
+        asrBackendCardsStack.alignment = .leading
+        asrBackendCardsStack.distribution = .fill
+        asrBackendCardViews = [:]
+        replaceArrangedSubviews(
+            in: asrBackendCardsStack,
+            with: ASRBackendMode.allCases.map(makeASRBackendChoiceCard(for:))
+        )
+
         let configurationSection = makeGroupedSection(rows: [
-            makePreferenceRow(title: "Backend", control: asrBackendPopup),
+            makePreferenceRow(title: "Remote Provider", control: asrRemoteProviderPopup),
             makePreferenceRow(title: "API Base URL", control: asrBaseURLField),
             makePreferenceRow(title: "API Key", control: asrAPIKeyField),
             makePreferenceRow(title: "Model", control: asrModelField),
@@ -1942,16 +2089,56 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makeSecondaryActionButton(title: "Test Connection", action: #selector(testRemoteASRConfiguration)),
             makePrimaryActionButton(title: "Save", action: #selector(saveRemoteASRConfiguration))
         ])
+        let localModeHintView = makeASRLocalModeHintView()
+        asrRemoteConfigurationSection = configurationSection
+        asrConnectionActionButtons = buttons
+        asrLocalModeHintView = localModeHintView
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "ASR", subtitle: "Choose Apple Speech, OpenAI-compatible ASR, Aliyun ASR, or Volcengine ASR."))
-        contentStack.addArrangedSubview(makeBodyLabel("Use a remote backend when you want stronger large-model transcription quality. OpenAI-compatible ASR uploads captured audio after release, while Aliyun and Volcengine stream realtime audio over WebSocket and inject final text on release."))
-        contentStack.addArrangedSubview(configurationSection)
-        contentStack.addArrangedSubview(buttons)
-        contentStack.addArrangedSubview(asrStatusView)
+        asrConnectionDetailsContentStack.orientation = .vertical
+        asrConnectionDetailsContentStack.spacing = 10
+        asrConnectionDetailsContentStack.alignment = .leading
+        asrConnectionDetailsContentStack.distribution = .fill
+        replaceArrangedSubviews(in: asrConnectionDetailsContentStack, with: [localModeHintView])
 
-        installScrollablePage(contentStack, in: asrView)
+        asrSummaryLabel.font = .systemFont(ofSize: 12.5)
+        asrSummaryLabel.textColor = .secondaryLabelColor
+        asrSummaryLabel.alignment = .left
+        asrSummaryLabel.lineBreakMode = .byWordWrapping
+        asrSummaryLabel.maximumNumberOfLines = 0
+
+        let backendCard = makeSimpleSummaryCard(
+            title: "ASR Backend",
+            subtitle: "Pick Local or Remote. For Remote, choose OpenAI-compatible, Aliyun, or Volcengine in Connection Details.",
+            bodyViews: [
+                asrBackendCardsStack,
+                asrSummaryLabel
+            ]
+        )
+
+        let connectionCard = makeSimpleSummaryCard(
+            title: "Connection Details",
+            subtitle: "Keep the current backend fields and save flow unchanged.",
+            bodyViews: [asrConnectionDetailsContentStack]
+        )
+
+        let statusCard = makeSimpleSummaryCard(
+            title: "Live Status",
+            subtitle: "Feedback updates immediately when the backend changes or after you test a remote endpoint.",
+            bodyViews: [asrStatusView]
+        )
+        let rightColumn = makeVerticalStack(
+            [connectionCard, statusCard],
+            spacing: SettingsLayoutMetrics.pageSpacing
+        )
+
+        contentStack.addArrangedSubview(
+            makeTwoColumnSection(left: backendCard, right: rightColumn, leftPriority: 0.46)
+        )
+
+        installScrollablePage(contentStack, in: asrView, section: .asr)
 
         NSLayoutConstraint.activate([
+            asrRemoteProviderPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrBaseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrAPIKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrModelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
@@ -1976,77 +2163,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         saveButton.action = #selector(saveConfiguration)
         saveButton.keyEquivalent = "\r"
 
-        let resolvedPromptControl = NSStackView(views: [resolvedPromptSummaryLabel])
-        resolvedPromptControl.orientation = .vertical
-        resolvedPromptControl.alignment = .leading
-        resolvedPromptControl.spacing = 8
-
-        let strictModeHelpLabel = NSTextField(
-            wrappingLabelWithString: Self.strictModeHelpText
-        )
-        strictModeHelpLabel.font = .systemFont(ofSize: 12)
-        strictModeHelpLabel.textColor = .secondaryLabelColor
-        strictModeHelpLabel.maximumNumberOfLines = 0
-        strictModeHelpLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let strictModeControl = NSStackView(views: [promptStrictModeSwitch, strictModeHelpLabel])
-        strictModeControl.orientation = .vertical
-        strictModeControl.alignment = .leading
-        strictModeControl.spacing = 6
-        strictModeControl.translatesAutoresizingMaskIntoConstraints = false
-        strictModeHelpLabel.widthAnchor.constraint(equalTo: strictModeControl.widthAnchor).isActive = true
-
-        let refinementProviderHelpLabel = NSTextField(
-            wrappingLabelWithString: "Refinement can use the built-in LLM provider or a configurable processor backend."
-        )
-        refinementProviderHelpLabel.font = .systemFont(ofSize: 12)
-        refinementProviderHelpLabel.textColor = .secondaryLabelColor
-        refinementProviderHelpLabel.maximumNumberOfLines = 0
-        refinementProviderHelpLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let refinementProviderControl = NSStackView(views: [refinementProviderPopup, refinementProviderHelpLabel])
-        refinementProviderControl.orientation = .vertical
-        refinementProviderControl.alignment = .leading
-        refinementProviderControl.spacing = 6
-        refinementProviderControl.translatesAutoresizingMaskIntoConstraints = false
-        refinementProviderHelpLabel.widthAnchor.constraint(equalTo: refinementProviderControl.widthAnchor).isActive = true
-
-        let thinkingHelpLabel = NSTextField(
-            wrappingLabelWithString: Self.thinkingHelpText
-        )
-        thinkingHelpLabel.font = .systemFont(ofSize: 12)
-        thinkingHelpLabel.textColor = .secondaryLabelColor
-        thinkingHelpLabel.maximumNumberOfLines = 0
-        thinkingHelpLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let thinkingControl = NSStackView(views: [thinkingPopup, thinkingHelpLabel])
-        thinkingControl.orientation = .vertical
-        thinkingControl.alignment = .leading
-        thinkingControl.spacing = 6
-        thinkingControl.translatesAutoresizingMaskIntoConstraints = false
-        thinkingHelpLabel.widthAnchor.constraint(equalTo: thinkingControl.widthAnchor).isActive = true
-
-        let promptActionsRow = makeButtonGroup([
-            editPromptButton,
-            newPromptButton,
-            promptBindingsButton,
-            deletePromptButton,
-            resolvedPromptPreviewButton
+        let promptActionsGrid = makeButtonRows([
+            [editPromptButton, newPromptButton, promptBindingsButton],
+            [deletePromptButton, resolvedPromptPreviewButton]
         ])
 
-        let configurationSection = makeGroupedSection(rows: [
-            makePreferenceRow(title: "Mode", control: postProcessingModePopup),
-            makePreferenceRow(title: Self.refinementProviderLabel, control: refinementProviderControl),
-            makePreferenceRow(title: "Translate Provider", control: translationProviderPopup),
-            makePreferenceRow(title: "Target Language", control: targetLanguagePopup),
+        let refinementCard = makeFormListCard(
+            title: "Refinement & Translation",
+            rows: [
+                makePreferenceRow(title: "Action", control: postProcessingModePopup),
+                makePreferenceRow(title: Self.refinementProviderLabel, control: refinementProviderPopup),
+                makePreferenceRow(title: "Translate Provider", control: translationProviderPopup),
+                makePreferenceRow(title: "Target Language", control: targetLanguagePopup),
+                makePreferenceRow(title: Self.thinkingLabel, control: thinkingPopup)
+            ],
+            footerViews: [
+                makeSubtleCaption("Refinement can use the built-in LLM provider or a configurable processor backend.")
+            ]
+        )
+
+        let promptSelectionRow = makePreferenceRow(title: "Active Prompt", control: activePromptPopup)
+
+        let providerSection = makeFormListCard(title: "Connection Details", rows: [
             makePreferenceRow(title: "API Base URL", control: baseURLField),
             makePreferenceRow(title: "API Key", control: apiKeyField),
-            makePreferenceRow(title: "Model", control: modelField),
-            makePreferenceRow(title: Self.thinkingLabel, control: thinkingControl),
-            makePreferenceRow(title: "Active Prompt", control: activePromptPopup),
-            makePreferenceRow(title: Self.strictModeToggleLabel, control: strictModeControl),
-            makePreferenceRow(title: "Prompt Summary", control: resolvedPromptControl),
-            makePreferenceRow(title: "Prompt Actions", control: promptActionsRow)
+            makePreferenceRow(title: "Model", control: modelField)
         ])
 
         let buttons = makeButtonGroup([
@@ -2054,14 +2195,62 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             makePrimaryActionButton(title: "Save", action: #selector(saveConfiguration))
         ])
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Text Processing", subtitle: "Choose between no processing, LLM refinement, processors, or explicit translation."))
-        contentStack.addArrangedSubview(makeBodyLabel("Refinement can use the built-in LLM provider or a configured processor backend. Translation defaults to Apple Translate, and target-language output is folded into the LLM prompt whenever refinement mode is active."))
-        contentStack.addArrangedSubview(makeBodyLabel("Strict Mode controls whether app bindings can override the selected Active Prompt. Keep it on for automatic routing by app, or switch it off for manual prompt routing."))
-        contentStack.addArrangedSubview(configurationSection)
-        contentStack.addArrangedSubview(buttons)
-        contentStack.addArrangedSubview(llmStatusView)
+        llmSummaryLabel.font = .systemFont(ofSize: 12.5)
+        llmSummaryLabel.textColor = .secondaryLabelColor
+        llmSummaryLabel.alignment = .left
+        llmSummaryLabel.lineBreakMode = .byWordWrapping
+        llmSummaryLabel.maximumNumberOfLines = 0
 
-        installScrollablePage(contentStack, in: llmView)
+        let promptPreviewSurface = ThemedSurfaceView(style: .row)
+        promptPreviewSurface.translatesAutoresizingMaskIntoConstraints = false
+        resolvedPromptBodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        promptPreviewSurface.addSubview(resolvedPromptBodyLabel)
+        NSLayoutConstraint.activate([
+            resolvedPromptBodyLabel.leadingAnchor.constraint(equalTo: promptPreviewSurface.leadingAnchor, constant: 12),
+            resolvedPromptBodyLabel.trailingAnchor.constraint(equalTo: promptPreviewSurface.trailingAnchor, constant: -12),
+            resolvedPromptBodyLabel.topAnchor.constraint(equalTo: promptPreviewSurface.topAnchor, constant: 12),
+            resolvedPromptBodyLabel.bottomAnchor.constraint(equalTo: promptPreviewSurface.bottomAnchor, constant: -12),
+            promptPreviewSurface.heightAnchor.constraint(greaterThanOrEqualToConstant: 156)
+        ])
+
+        let systemPromptCard = makeSimpleSummaryCard(
+            title: "System Prompt",
+            bodyViews: [promptSelectionRow, promptPreviewSurface, promptActionsGrid]
+        )
+
+        let processingRulesCard = makeFormListCard(
+            title: "Processing Rules",
+            rows: [
+                makeSummaryDetailRow(
+                    title: Self.strictModeToggleLabel,
+                    detailLabel: promptRulesStrictModeLabel,
+                    accessory: promptStrictModeSwitch
+                ),
+                makeSummaryDetailRow(
+                    title: "Binding Coverage",
+                    detailLabel: promptRulesBindingCoverageLabel
+                ),
+                makeSummaryDetailRow(
+                    title: "Prompt Preview",
+                    detailLabel: promptRulesPreviewLabel
+                )
+            ]
+        )
+
+        let rightColumn = makeVerticalStack([systemPromptCard, processingRulesCard], spacing: SettingsLayoutMetrics.pageSpacing)
+
+        let providerOverviewCard = makeSimpleSummaryCard(
+            title: "Provider Connection",
+            bodyViews: [llmStatusView, llmSummaryLabel, buttons]
+        )
+
+        contentStack.addArrangedSubview(
+            makeTwoColumnSection(left: refinementCard, right: rightColumn, leftPriority: 0.42)
+        )
+        contentStack.addArrangedSubview(providerOverviewCard)
+        contentStack.addArrangedSubview(providerSection)
+
+        installScrollablePage(contentStack, in: llmView, section: .llm)
 
         NSLayoutConstraint.activate([
             postProcessingModePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
@@ -2090,28 +2279,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         externalProcessorsDetailLabel.lineBreakMode = .byWordWrapping
         externalProcessorsDetailLabel.maximumNumberOfLines = 0
 
-        externalProcessorManagerButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 186).isActive = true
+        externalProcessorManagerButton.title = "Add Processor"
+        externalProcessorManagerButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
+        externalProcessorsRowsStack.orientation = .vertical
+        externalProcessorsRowsStack.spacing = 8
+        externalProcessorsRowsStack.alignment = .leading
 
-        let openManagerRow = makeButtonGroup([
-            externalProcessorManagerButton
-        ])
+        let listCard = makeExternalProcessorsListCard()
+        let selectedCard = makeSimpleSummaryCard(
+            title: "Selected Processor",
+            subtitle: "VoicePi routes refinement through the currently enabled selection.",
+            bodyViews: [externalProcessorsSummaryLabel, externalProcessorsDetailLabel]
+        )
 
-        let processorSummaryCard = makeCardView()
-        let processorSummaryStack = NSStackView(views: [
-            externalProcessorsSummaryLabel,
-            externalProcessorsDetailLabel,
-            openManagerRow
-        ])
-        processorSummaryStack.orientation = .vertical
-        processorSummaryStack.spacing = 8
-        processorSummaryStack.alignment = .leading
-        pinCardContent(processorSummaryStack, into: processorSummaryCard)
+        contentStack.addArrangedSubview(listCard)
+        contentStack.addArrangedSubview(selectedCard)
 
-        contentStack.addArrangedSubview(makeSectionHeader(title: "Processors", subtitle: "Configure command-line backends used for refinement."))
-        contentStack.addArrangedSubview(makeBodyLabel("Use this section to add, edit, test, and disable processor profiles. Text processing still controls when the processor is used; this section only manages the backends themselves."))
-        contentStack.addArrangedSubview(processorSummaryCard)
-
-        installScrollablePage(contentStack, in: externalProcessorsView)
+        installScrollablePage(contentStack, in: externalProcessorsView, section: .externalProcessors)
 
         refreshExternalProcessorsSection()
     }
@@ -2162,60 +2346,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         aboutUpdateSecondaryButton.heightAnchor.constraint(
             equalToConstant: SettingsLayoutMetrics.actionButtonHeight
         ).isActive = true
-
-        let versionSection = makeGroupedSection(customViews: [
-            makeAboutMetaRow(title: "Version", valueView: aboutVersionLabel),
-            makeAboutMetaRow(title: "Build", valueView: aboutBuildLabel),
-            makeAboutMetaRow(title: "Author", valueView: aboutAuthorLabel),
-            makeAboutLinkRow(
-                title: "Repository",
-                valueView: aboutRepositoryLabel,
-                buttonTitle: "Open",
-                action: #selector(openRepository)
-            ),
-            makeAboutLinkRow(
-                title: "Website",
-                valueView: aboutWebsiteLabel,
-                buttonTitle: "Open",
-                action: #selector(openPersonalWebsite)
-            ),
-            makeAboutLinkRow(
-                title: "GitHub",
-                valueView: aboutGitHubLabel,
-                buttonTitle: "Open",
-                action: #selector(openGitHubProfile)
-            ),
-            makeAboutLinkRow(
-                title: "X",
-                valueView: aboutXLabel,
-                buttonTitle: "Open",
-                action: #selector(openXProfile)
-            )
-        ])
-        versionSection.translatesAutoresizingMaskIntoConstraints = false
-        versionSection.widthAnchor.constraint(greaterThanOrEqualToConstant: 188).isActive = true
-        versionSection.setContentHuggingPriority(.required, for: .horizontal)
-        versionSection.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let overviewCard = makeAboutOverviewCard(
-            title: "VoicePi",
-            description: "VoicePi is a lightweight macOS dictation utility that lives in the menu bar, captures speech with a shortcut, optionally refines or translates transcripts, and pastes the final text into the active app.",
-            supplementaryContent: makeUpdateExperienceSection()
+        let brandCard = makeAboutBrandCard()
+        let updatesCard = makeSimpleSummaryCard(
+            title: "Updates",
+            subtitle: "Check GitHub Releases and apply the right update flow for this install.",
+            bodyViews: [makeUpdateExperienceSection()]
         )
+        let creditsCard = makeAboutCreditsCard()
+        let rightColumn = makeVerticalStack([updatesCard, creditsCard], spacing: 12)
 
-        let capabilitiesCard = makeFeatureCard(
-            icon: "text.badge.checkmark",
-            title: "Project Focus",
-            description: "Fast dictation, conservative transcript cleanup, safe paste injection, and a compact settings experience that feels closer to Raycast than a generic form."
-        )
-        contentStack.addArrangedSubview(makeSectionHeader(title: "About", subtitle: "Version info and a concise overview of what VoicePi does."))
         contentStack.addArrangedSubview(makeTwoColumnSection(
-            left: makeVerticalStack([overviewCard, capabilitiesCard], spacing: 12),
-            right: versionSection,
-            leftPriority: 0.66
+            left: brandCard,
+            right: rightColumn,
+            leftPriority: 0.44
         ))
 
-        installScrollablePage(contentStack, in: aboutView)
+        installScrollablePage(contentStack, in: aboutView, section: .about)
     }
 
     private func buildDictionaryView() {
@@ -2276,7 +2422,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             listContainerView: suggestionRowsScrollView
         )
 
-        addPageSection(makeSectionHeader(title: "Library"), to: contentStack)
         addPageSection(librarySubviewControlRow, to: contentStack)
         addPageSection(summaryCard, to: contentStack)
         addPageSection(termsCard, to: contentStack)
@@ -2339,7 +2484,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         historyRowsStack.alignment = .leading
 
         let librarySubviewControlRow = makeLibrarySubviewControl(selectedSection: .history)
-        addPageSection(makeSectionHeader(title: "Library"), to: contentStack)
         addPageSection(librarySubviewControlRow, to: contentStack)
         addPageSection(makeHistorySummaryCard(), to: contentStack)
         addPageSection(makeHistoryEntriesCard(), to: contentStack)
@@ -2380,8 +2524,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func loadCurrentValues() {
-        if let index = ASRBackend.allCases.firstIndex(of: model.asrBackend) {
-            asrBackendPopup.selectItem(at: index)
+        if let provider = RemoteASRProvider(backend: model.asrBackend) {
+            selectedASRBackendMode = .remote
+            selectPopupItem(in: asrRemoteProviderPopup, matching: provider.rawValue)
+        } else {
+            selectedASRBackendMode = .local
+            asrRemoteProviderPopup.selectItem(at: 0)
         }
         asrBaseURLField.stringValue = model.remoteASRConfiguration.baseURL
         asrAPIKeyField.stringValue = model.remoteASRConfiguration.apiKey
@@ -2423,7 +2571,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             processorShortcutRecorderField.shortcut = model.processorShortcut
         }
 
-        interfaceThemeControl.selectedSegment = SettingsPresentation.selectedThemeIndex(for: model.interfaceTheme)
+        selectPopupItem(in: homeLanguagePopup, matching: model.selectedLanguage.rawValue)
+        selectPopupItem(in: interfaceThemePopup, matching: model.interfaceTheme.rawValue)
 
         let aboutPresentation = SettingsPresentation.aboutPresentation(infoDictionary: Bundle.main.infoDictionary)
         aboutVersionLabel.stringValue = aboutPresentation.version
@@ -2442,7 +2591,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         homeCancelShortcutLabel.stringValue = presentation.cancelShortcutSummary
         homeModeShortcutLabel.stringValue = presentation.modeShortcutSummary
         homePromptShortcutLabel.stringValue = presentation.promptShortcutSummary
-        homeLanguageLabel.stringValue = presentation.languageSummary
+        homeProcessorShortcutLabel.stringValue = "Processor shortcut: \(model.processorShortcut.menuTitle)"
+        homeLanguageLabel.stringValue = model.selectedLanguage.menuTitle
+        homeLanguageTitleLabel.stringValue = model.selectedLanguage.recognitionDisplayName
+        homeAppearanceTitleLabel.stringValue = model.interfaceTheme.title
+        homeAppearanceSubtitleLabel.stringValue = model.interfaceTheme == .system ? "Follow system" : "Selected theme"
         homePermissionSummaryLabel.stringValue = presentation.permissionSummary
         homeASRLabel.stringValue = presentation.asrSummary
         homeLLMLabel.stringValue = presentation.llmSummary
@@ -2451,8 +2604,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         modeShortcutHintLabel.stringValue = presentation.modeShortcutHint
         promptShortcutHintLabel.stringValue = presentation.promptShortcutHint
         processorShortcutHintLabel.stringValue = processorShortcutHintText(for: model.processorShortcut)
-        homeSummaryLabel.stringValue = presentation.statusSummary
+        homeSummaryLabel.stringValue = presentation.statusTone == .error
+            ? presentation.statusSummary
+            : "All systems go."
         homeSummaryLabel.textColor = presentation.statusTone == .error ? .systemRed : .secondaryLabelColor
+        homeReadinessTitleLabel.stringValue = presentation.statusTone == .error ? "Needs Attention" : "Ready"
+        homeReadinessTitleLabel.textColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.homeReadinessTitleColor(
+                for: appearance,
+                isError: presentation.statusTone == .error
+            )
+        }
+        homeReadinessIconView.image = NSImage(
+            systemSymbolName: presentation.statusTone == .error ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+            accessibilityDescription: homeReadinessTitleLabel.stringValue
+        )
+        homeReadinessIconView.contentTintColor = presentation.statusTone == .error
+            ? NSColor.systemOrange
+            : currentThemePalette.accent
     }
 
     private func processorShortcutHintText(for shortcut: ActivationShortcut) -> String {
@@ -2470,11 +2639,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshASRSection() {
         let selectedBackend = currentSelectedASRBackend()
         let configuration = currentRemoteASRConfigurationFromFields()
-        let isRemoteBackend = selectedBackend.isRemoteBackend
+        let isRemoteBackend = selectedASRBackendMode == .remote
         let requiresVolcengineAppID = selectedBackend == .remoteVolcengineASR
 
         applyASRPlaceholders(for: selectedBackend)
+        refreshASRBackendChoiceSelection(selectedASRBackendMode)
+        updateASRConnectionDetailsContent(isRemoteBackend: isRemoteBackend)
 
+        asrRemoteProviderPopup.isEnabled = isRemoteBackend
         asrBaseURLField.isEnabled = isRemoteBackend
         asrAPIKeyField.isEnabled = isRemoteBackend
         asrModelField.isEnabled = isRemoteBackend
@@ -2482,6 +2654,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         asrPromptField.isEnabled = isRemoteBackend
         asrTestButton.isEnabled = isRemoteBackend
         asrVolcengineAppIDRow.isHidden = !requiresVolcengineAppID
+        let providerSummary = isRemoteBackend
+            ? " Provider: \(currentSelectedRemoteASRProvider().rawValue)."
+            : ""
+        asrSummaryLabel.stringValue = "Selected backend: \(selectedBackend.title).\(providerSummary) \(selectedBackend.shortDescription) \(isRemoteBackend ? "Remote credentials are required for streaming." : "No remote credentials are required.")"
 
         if !isRemoteBackend {
             setASRFeedback(.neutral("Apple Speech is active. VoicePi will use the built-in streaming recognizer."))
@@ -2493,10 +2669,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func refreshPermissionLabels() {
-        applyPermissionStatus(model.microphoneAuthorization, to: microphoneStatusLabel)
-        applyPermissionStatus(model.speechAuthorization, to: speechStatusLabel)
-        applyPermissionStatus(model.accessibilityAuthorization, to: accessibilityStatusLabel)
-        applyPermissionStatus(model.inputMonitoringAuthorization, to: inputMonitoringStatusLabel)
+        applyPermissionStatus(
+            model.microphoneAuthorization,
+            to: microphoneStatusLabel,
+            iconView: microphoneStatusIconView
+        )
+        applyPermissionStatus(
+            model.speechAuthorization,
+            to: speechStatusLabel,
+            iconView: speechStatusIconView
+        )
+        applyPermissionStatus(
+            model.accessibilityAuthorization,
+            to: accessibilityStatusLabel,
+            iconView: accessibilityStatusIconView
+        )
+        applyPermissionStatus(
+            model.inputMonitoringAuthorization,
+            to: inputMonitoringStatusLabel,
+            iconView: inputMonitoringStatusIconView
+        )
     }
 
     private func refreshLLMSection() {
@@ -2527,19 +2719,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         testButton.isEnabled = usesLLM
         let shouldEnablePromptControls = mode == .refinement && refinementProvider == .llm
         setPromptWorkspaceControlsEnabled(shouldEnablePromptControls)
+        llmSummaryLabel.stringValue = LLMSectionFeedback.message(
+            mode: mode,
+            provider: provider,
+            refinementProvider: refinementProvider,
+            externalProcessor: model.selectedExternalProcessorEntry(),
+            configuration: configuration,
+            selectedLanguage: model.selectedLanguage,
+            targetLanguage: targetLanguage,
+            appleTranslateSupported: appleTranslateSupported
+        )
 
         setLLMFeedback(.neutral(
-            LLMSectionFeedback.message(
-                mode: mode,
-                provider: provider,
-                refinementProvider: refinementProvider,
-                externalProcessor: model.selectedExternalProcessorEntry(),
-                configuration: configuration,
-                selectedLanguage: model.selectedLanguage,
-                targetLanguage: targetLanguage,
-                appleTranslateSupported: appleTranslateSupported
-            )
+            llmSummaryLabel.stringValue
         ))
+        updatePromptRulesSummary()
     }
 
     private func refreshExternalProcessorsSection() {
@@ -2550,6 +2744,63 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
         externalProcessorsSummaryLabel.stringValue = presentation.summaryText
         externalProcessorsDetailLabel.stringValue = presentation.detailText
+        rebuildExternalProcessorRows()
+    }
+
+    private func rebuildExternalProcessorRows() {
+        let entries = model.externalProcessorEntries
+        guard !entries.isEmpty else {
+            replaceArrangedSubviews(
+                in: externalProcessorsRowsStack,
+                with: [makeBodyLabel("No processors configured yet.")]
+            )
+            return
+        }
+
+        let visibleEntries = Array(entries.prefix(5))
+        var rows = visibleEntries.map(makeExternalProcessorOverviewRow(entry:))
+        if entries.count > visibleEntries.count {
+            rows.append(
+                makeSubtleCaption("Showing \(visibleEntries.count) of \(entries.count) processors in this overview.")
+            )
+        }
+
+        replaceArrangedSubviews(
+            in: externalProcessorsRowsStack,
+            with: rows
+        )
+    }
+
+    private func makeExternalProcessorOverviewRow(entry: ExternalProcessorEntry) -> NSView {
+        let nameLabel = makeProcessorColumnLabel(externalProcessorManagerDisplayTitle(for: entry))
+        let commandLabel = makeProcessorColumnLabel((entry.executablePath as NSString).lastPathComponent)
+        let argumentsLabel = makeProcessorColumnLabel(
+            entry.additionalArguments.isEmpty
+                ? "None"
+                : entry.additionalArguments.map(\.value).joined(separator: " ")
+        )
+        let enabledLabel = makeProcessorColumnLabel(entry.isEnabled ? "On" : "Off")
+        if entry.isEnabled {
+            enabledLabel.textColor = NSColor(name: nil) { appearance in
+                SettingsWindowTheme.processorEnabledTextColor(for: appearance)
+            }
+        } else {
+            enabledLabel.textColor = .secondaryLabelColor
+        }
+
+        let rowContent = NSStackView(views: [nameLabel, commandLabel, argumentsLabel, enabledLabel])
+        rowContent.orientation = .horizontal
+        rowContent.spacing = 10
+        rowContent.alignment = .centerY
+        rowContent.distribution = .fill
+
+        NSLayoutConstraint.activate([
+            nameLabel.widthAnchor.constraint(equalToConstant: 160),
+            commandLabel.widthAnchor.constraint(equalToConstant: 180),
+            enabledLabel.widthAnchor.constraint(equalToConstant: 64)
+        ])
+
+        return makeCompactListRow(content: rowContent)
     }
 
     private func refreshDictionarySection() {
@@ -3005,8 +3256,48 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func currentSelectedASRBackend() -> ASRBackend {
-        let index = max(0, asrBackendPopup.indexOfSelectedItem)
-        return ASRBackend.allCases[index]
+        switch selectedASRBackendMode {
+        case .local:
+            return .appleSpeech
+        case .remote:
+            return currentSelectedRemoteASRProvider().backend
+        }
+    }
+
+    private func currentSelectedRemoteASRProvider() -> RemoteASRProvider {
+        let index = max(0, asrRemoteProviderPopup.indexOfSelectedItem)
+        return RemoteASRProvider.allCases[min(index, RemoteASRProvider.allCases.count - 1)]
+    }
+
+    private func makeASRBackendChoiceCard(for mode: ASRBackendMode) -> NSView {
+        let card = ASRBackendModeChoiceView(
+            mode: mode,
+            target: self,
+            action: #selector(selectASRBackendFromCard(_:))
+        )
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        asrBackendCardViews[mode] = card
+        return card
+    }
+
+    private func refreshASRBackendChoiceSelection(_ selectedMode: ASRBackendMode) {
+        for (mode, card) in asrBackendCardViews {
+            card.isSelectedChoice = mode == selectedMode
+        }
+    }
+
+    private func updateASRConnectionDetailsContent(isRemoteBackend: Bool) {
+        guard
+            let remoteConfigurationSection = asrRemoteConfigurationSection,
+            let connectionActionButtons = asrConnectionActionButtons,
+            let localModeHintView = asrLocalModeHintView
+        else { return }
+
+        let targetViews = isRemoteBackend
+            ? [remoteConfigurationSection, connectionActionButtons]
+            : [localModeHintView]
+        replaceArrangedSubviews(in: asrConnectionDetailsContentStack, with: targetViews)
     }
 
     private func applyASRPlaceholders(for backend: ASRBackend) {
@@ -3034,6 +3325,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case .appleSpeech:
             return "configuration fields"
         }
+    }
+
+    private func applySelectedASRBackendChange() {
+        let backend = currentSelectedASRBackend()
+        model.setASRBackend(backend)
+        delegate?.settingsWindowController(self, didSelectASRBackend: backend)
+        refreshHomeSection()
+        refreshASRSection()
+    }
+
+    @objc
+    private func selectASRBackendFromCard(_ sender: ASRBackendModeChoiceView) {
+        selectedASRBackendMode = sender.mode
+        applySelectedASRBackendChange()
     }
 
     private func permissionStatusText(for state: AuthorizationState) -> String {
@@ -3078,6 +3383,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         if section == .history {
             rebuildHistoryRows()
+        }
+
+        if section == .permissions, previousSection != .permissions {
+            refreshPermissions()
         }
 
         syncLibrarySubviewControls(for: section)
@@ -3436,11 +3745,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
-    private func interfaceThemeChanged(_ sender: NSSegmentedControl) {
-        let index = max(0, sender.selectedSegment)
+    private func interfaceThemeChanged(_ sender: NSPopUpButton) {
+        let index = max(0, sender.indexOfSelectedItem)
         model.interfaceTheme = InterfaceTheme.allCases[index]
         applyThemeAppearance()
         refreshPermissionLabels()
+    }
+
+    @objc
+    private func homeLanguageChanged(_ sender: NSPopUpButton) {
+        let index = max(0, sender.indexOfSelectedItem)
+        let language = SupportedLanguage.allCases[index]
+        model.selectedLanguage = language
+        delegate?.settingsWindowController(self, didSelect: language)
+        refreshHomeSection()
+    }
+
+    @objc
+    private func startListeningFromHome() {
+        delegate?.settingsWindowControllerDidRequestStartRecording(self)
     }
 
     @objc
@@ -3459,6 +3782,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
+    private func openRepositoryIssues() {
+        openExternalURL("\(AboutProfile.repositoryURL)/issues")
+    }
+
+    @objc
     private func openInspirationAuthor() {
         openExternalURL(AboutProfile.inspirationAuthorURL)
     }
@@ -3474,12 +3802,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
-    private func asrBackendChanged(_ sender: NSPopUpButton) {
-        let backend = currentSelectedASRBackend()
-        model.setASRBackend(backend)
-        delegate?.settingsWindowController(self, didSelectASRBackend: backend)
-        refreshHomeSection()
-        refreshASRSection()
+    private func remoteASRProviderChanged(_ sender: NSPopUpButton) {
+        guard selectedASRBackendMode == .remote else { return }
+        applySelectedASRBackendChange()
     }
 
     @objc
@@ -3570,8 +3895,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
+    private func openMicrophoneSettingsFromCard(_ sender: NSClickGestureRecognizer) {
+        openMicrophoneSettings()
+    }
+
+    @objc
     private func openSpeechSettings() {
         delegate?.settingsWindowControllerDidRequestOpenSpeechSettings(self)
+    }
+
+    @objc
+    private func openSpeechSettingsFromCard(_ sender: NSClickGestureRecognizer) {
+        openSpeechSettings()
     }
 
     @objc
@@ -3580,8 +3915,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
+    private func openAccessibilitySettingsFromCard(_ sender: NSClickGestureRecognizer) {
+        openAccessibilitySettingsFromSettings()
+    }
+
+    @objc
     private func openInputMonitoringSettings() {
         delegate?.settingsWindowControllerDidRequestOpenInputMonitoringSettings(self)
+    }
+
+    @objc
+    private func openInputMonitoringSettingsFromCard(_ sender: NSClickGestureRecognizer) {
+        openInputMonitoringSettings()
+    }
+
+    @objc
+    private func openSystemSettingsOverview() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     @objc
@@ -3589,16 +3942,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         delegate?.settingsWindowControllerDidRequestPromptAccessibilityPermission(self)
     }
 
-    @objc
-    private func refreshPermissions() {
-        permissionsHintLabel.stringValue = "Refreshing permission status…"
-
+    private func refreshPermissions(showProgressCopy: Bool) {
+        if showProgressCopy {
+            permissionsHintLabel.stringValue = "Refreshing permission status…"
+        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             await delegate?.settingsWindowControllerDidRequestRefreshPermissions(self)
-            self.permissionsHintLabel.stringValue = PermissionsCopy.permissionsHint
+            self.permissionsHintLabel.stringValue = PermissionsCopy.permissionsFooterNote
             self.reloadFromModel()
         }
+    }
+
+    @objc
+    private func refreshPermissions() {
+        refreshPermissions(showProgressCopy: true)
+    }
+
+    @objc
+    private func refreshPermissionsFromFooter() {
+        refreshPermissions()
     }
 
     @objc
@@ -4177,7 +4540,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window?.appearance = model.interfaceTheme.appearance
         window?.backgroundColor = pageBackgroundColor
         window?.contentView?.layer?.backgroundColor = pageBackgroundColor.cgColor
-        asrBackendPopup.syncTheme()
+        asrRemoteProviderPopup.syncTheme()
         postProcessingModePopup.syncTheme()
         refinementProviderPopup.syncTheme()
         thinkingPopup.syncTheme()
@@ -4234,8 +4597,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        if popup === targetLanguagePopup,
+        if popup === targetLanguagePopup || popup === homeLanguagePopup,
            let index = SupportedLanguage.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
+            popup.selectItem(at: index)
+            return
+        }
+
+        if popup === asrRemoteProviderPopup,
+           let index = RemoteASRProvider.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
+            popup.selectItem(at: index)
+            return
+        }
+
+        if popup === interfaceThemePopup,
+           let index = InterfaceTheme.allCases.firstIndex(where: { $0.rawValue == rawValue }) {
             popup.selectItem(at: index)
         }
     }
@@ -4267,45 +4642,52 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func configureAppearanceControl() {
-        interfaceThemeControl.segmentStyle = .capsule
-        interfaceThemeControl.trackingMode = .selectOne
-        interfaceThemeControl.target = self
-        interfaceThemeControl.action = #selector(interfaceThemeChanged(_:))
-        interfaceThemeControl.segmentCount = InterfaceTheme.allCases.count
-        interfaceThemeControl.controlSize = .regular
-
-        for (index, theme) in InterfaceTheme.allCases.enumerated() {
-            interfaceThemeControl.setLabel(theme.title, forSegment: index)
-            interfaceThemeControl.setImage(
-                NSImage(systemSymbolName: theme.symbolName, accessibilityDescription: theme.title),
-                forSegment: index
-            )
-            interfaceThemeControl.setWidth(90, forSegment: index)
-        }
+        interfaceThemePopup.removeAllItems()
+        interfaceThemePopup.addItems(withTitles: InterfaceTheme.allCases.map(\.title))
+        interfaceThemePopup.target = self
+        interfaceThemePopup.action = #selector(interfaceThemeChanged(_:))
+        interfaceThemePopup.controlSize = .regular
     }
 
     private func syncAppearanceControlTheme() {
-        interfaceThemeControl.appearance = window?.effectiveAppearance
+        interfaceThemePopup.appearance = window?.effectiveAppearance
+        homeLanguagePopup.appearance = window?.effectiveAppearance
+        interfaceThemePopup.syncTheme()
+        homeLanguagePopup.syncTheme()
     }
 
-    private func applyPermissionStatus(_ state: AuthorizationState, to label: NSTextField) {
+    private func applyPermissionStatus(
+        _ state: AuthorizationState,
+        to label: NSTextField,
+        iconView: NSImageView? = nil
+    ) {
         let presentation = SettingsPresentation.permissionPresentation(for: state)
         label.stringValue = presentation.title
 
+        let color: NSColor
+        let symbolName: String
+
         switch presentation.tone {
         case .granted:
-            label.textColor = interfaceColor(
+            color = interfaceColor(
                 light: NSColor.systemGreen.darker(),
                 dark: NSColor.systemGreen.lighter()
             )
+            symbolName = "checkmark.circle.fill"
         case .denied, .restricted:
-            label.textColor = interfaceColor(
-                light: NSColor.systemRed.darker(),
-                dark: NSColor.systemRed.lighter()
+            color = interfaceColor(
+                light: NSColor.systemOrange.darker(),
+                dark: NSColor.systemOrange.lighter()
             )
+            symbolName = "exclamationmark.circle.fill"
         case .unknown:
-            label.textColor = .secondaryLabelColor
+            color = .secondaryLabelColor
+            symbolName = "questionmark.circle.fill"
         }
+
+        label.textColor = color
+        iconView?.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: presentation.title)
+        iconView?.contentTintColor = color
     }
 
     private func makeCardView() -> NSView {
@@ -4341,7 +4723,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return stack
     }
 
-    private func installScrollablePage(_ contentStack: NSStackView, in container: NSView) {
+    private func installScrollablePage(
+        _ contentStack: NSStackView,
+        in container: NSView,
+        section: SettingsSection
+    ) {
         addPageSection(makeFlexiblePageSpacer(), to: contentStack)
 
         let scrollView = NSScrollView(frame: .zero)
@@ -4355,6 +4741,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let documentView = FlippedLayoutView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = documentView
+        pageScrollViews[section] = scrollView
 
         container.addSubview(scrollView)
         documentView.addSubview(contentStack)
@@ -4377,6 +4764,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             contentStack.topAnchor.constraint(equalTo: documentView.topAnchor),
             contentStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor)
         ])
+    }
+
+    private func scrollPage(section: SettingsSection, toBottom: Bool) {
+        guard let scrollView = pageScrollViews[section], let documentView = scrollView.documentView else {
+            return
+        }
+
+        scrollView.layoutSubtreeIfNeeded()
+        documentView.layoutSubtreeIfNeeded()
+
+        let targetY: CGFloat
+        if toBottom {
+            targetY = max(0, documentView.bounds.height - scrollView.contentView.bounds.height)
+        } else {
+            targetY = 0
+        }
+
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     private func makeGroupedSection(rows: [NSView] = [], customViews: [NSView] = []) -> NSView {
@@ -4469,6 +4875,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resolvedPromptSummaryLabel.lineBreakMode = .byWordWrapping
         resolvedPromptSummaryLabel.maximumNumberOfLines = 4
         resolvedPromptSummaryLabel.stringValue = "Active prompt: VoicePi Default"
+        resolvedPromptBodyLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        resolvedPromptBodyLabel.textColor = .labelColor
+        resolvedPromptBodyLabel.lineBreakMode = .byWordWrapping
+        resolvedPromptBodyLabel.maximumNumberOfLines = 8
+        resolvedPromptBodyLabel.stringValue = "Built-in default prompt uses the base VoicePi refinement rules."
+        [promptRulesStrictModeLabel, promptRulesBindingCoverageLabel, promptRulesPreviewLabel].forEach { label in
+            label.font = .systemFont(ofSize: 12)
+            label.textColor = .secondaryLabelColor
+            label.lineBreakMode = .byWordWrapping
+            label.maximumNumberOfLines = 2
+        }
+        promptRulesStrictModeLabel.stringValue = Self.strictModeHelpText
+        promptRulesBindingCoverageLabel.stringValue = "No app or website bindings yet."
+        promptRulesPreviewLabel.stringValue = "Using the built-in VoicePi default rules."
         resolvedPromptPreviewButton.isEnabled = false
 
         promptStrictModeSwitch.target = self
@@ -5655,6 +6075,53 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let promptLibraryLoadError {
             resolvedPromptSummaryLabel.stringValue += " (\(promptLibraryLoadError))"
         }
+
+        let promptBody = resolved.middleSection?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if promptBody.isEmpty {
+            resolvedPromptBodyLabel.stringValue =
+                "Built-in default prompt uses the base VoicePi refinement rules."
+        } else {
+            resolvedPromptBodyLabel.stringValue = promptBody
+        }
+
+        updatePromptRulesSummary()
+    }
+
+    private func updatePromptRulesSummary() {
+        promptRulesStrictModeLabel.stringValue = promptWorkspaceDraft.strictModeEnabled
+            ? "Matching app bindings override the active prompt."
+            : "VoicePi always uses the active prompt."
+
+        if let selectedPreset = selectedPromptPresetFromDraft(),
+           let bindingSummary = promptBindingSummary(for: selectedPreset) {
+            promptRulesBindingCoverageLabel.stringValue = "Applies to \(bindingSummary)."
+        } else if promptWorkspaceDraft.strictModeEnabled {
+            let automaticBindingsCount = promptWorkspaceDraft.userPresets.filter {
+                !$0.appBundleIDs.isEmpty || !$0.websiteHosts.isEmpty
+            }.count
+            if automaticBindingsCount > 0 {
+                let noun = automaticBindingsCount == 1 ? "bound prompt" : "bound prompts"
+                promptRulesBindingCoverageLabel.stringValue = "Automatically checks \(automaticBindingsCount) \(noun)."
+            } else {
+                promptRulesBindingCoverageLabel.stringValue = "No app or website bindings yet."
+            }
+        } else {
+            promptRulesBindingCoverageLabel.stringValue = "No app or website bindings yet."
+        }
+
+        let promptBody = resolvedPromptBodyLabel.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if promptBody.isEmpty || promptBody == "Built-in default prompt uses the base VoicePi refinement rules." {
+            promptRulesPreviewLabel.stringValue = "Using the built-in VoicePi default rules."
+        } else {
+            let compactPreview = promptBody
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            promptRulesPreviewLabel.stringValue = compactPreview.count > 120
+                ? String(compactPreview.prefix(117)) + "..."
+                : compactPreview
+        }
     }
 
     static func bindingValues(from text: String) -> [String] {
@@ -5744,14 +6211,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func makeSectionTitle(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .systemFont(ofSize: 12.5, weight: .semibold)
         label.textColor = .labelColor
         return label
     }
 
+    private func settingsBrandIcon() -> NSImage? {
+        if let applicationIconImage = NSApp.applicationIconImage, applicationIconImage.size.width > 0 {
+            return applicationIconImage
+        }
+
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: iconURL) {
+            return image
+        }
+
+        return NSImage(systemSymbolName: "waveform", accessibilityDescription: "VoicePi")
+    }
+
     private func makeBodyLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12.5)
+        label.font = .systemFont(ofSize: 11.5)
         label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
@@ -5760,7 +6240,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func makeValueLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13)
+        label.font = .systemFont(ofSize: 12.5)
         label.textColor = .labelColor
         label.alignment = .right
         return label
@@ -5859,21 +6339,30 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func makeButtonGroup(_ buttons: [NSButton]) -> NSStackView {
         let stack = NSStackView(views: buttons)
         stack.orientation = .horizontal
-        stack.spacing = 8
+        stack.spacing = 6
         stack.alignment = .centerY
+        return stack
+    }
+
+    private func makeButtonRows(_ rows: [[NSButton]]) -> NSStackView {
+        let stack = NSStackView(views: rows.map(makeButtonGroup))
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
         return stack
     }
 
     private func makeSectionHeader(title: String, subtitle: String) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 14.5, weight: .semibold)
+        titleLabel.textColor = currentThemePalette.titleText
         titleLabel.alignment = .left
 
         let subtitleLabel = NSTextField(labelWithString: subtitle)
-        subtitleLabel.font = .systemFont(ofSize: 13)
-        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.font = .systemFont(ofSize: 11)
+        subtitleLabel.textColor = currentThemePalette.subtitleText
         subtitleLabel.lineBreakMode = .byWordWrapping
-        subtitleLabel.maximumNumberOfLines = 3
+        subtitleLabel.maximumNumberOfLines = 2
         subtitleLabel.alignment = .left
 
         let stack = NSStackView(views: [titleLabel, subtitleLabel])
@@ -5885,7 +6374,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func makeSectionHeader(title: String) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 14.5, weight: .semibold)
+        titleLabel.textColor = currentThemePalette.titleText
         titleLabel.alignment = .left
         return titleLabel
     }
@@ -5901,8 +6391,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func makeSectionNavigation() -> NSStackView {
         let stack = NSStackView()
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = 2
         stack.alignment = .centerY
+        stack.distribution = .fillEqually
 
         sectionButtons.removeAll()
 
@@ -5949,7 +6440,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         guard let symbolImage = NSImage(
             systemSymbolName: iconName(for: section),
             accessibilityDescription: section.title
-        )?.withSymbolConfiguration(.init(pointSize: 12.5, weight: .medium)) else {
+        )?.withSymbolConfiguration(.init(pointSize: 10.5, weight: .medium)) else {
             return nil
         }
 
@@ -5975,20 +6466,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let iconView = NSImageView()
         iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        iconView.contentTintColor = currentThemePalette.accent
 
         let eyebrowLabel = NSTextField(labelWithString: eyebrow.uppercased())
-        eyebrowLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        eyebrowLabel.textColor = .secondaryLabelColor
+        eyebrowLabel.font = .systemFont(ofSize: 10.5, weight: .semibold)
+        eyebrowLabel.textColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.featureEyebrowTextColor(for: appearance)
+        }
 
         let titleLabel = NSTextField(wrappingLabelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.textColor = currentThemePalette.titleText
 
         let descriptionLabel = makeBodyLabel(description)
 
         let stack = NSStackView(views: [iconView, eyebrowLabel, titleLabel, descriptionLabel])
         stack.orientation = .vertical
-        stack.spacing = 8
+        stack.spacing = 6
         stack.alignment = .leading
 
         pinCardContent(stack, into: card)
@@ -6001,15 +6496,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let iconView = NSImageView()
         iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+        iconView.contentTintColor = currentThemePalette.accent
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.textColor = currentThemePalette.titleText
 
         let descriptionLabel = makeBodyLabel(description)
 
         let stack = NSStackView(views: [iconView, titleLabel, descriptionLabel])
         stack.orientation = .vertical
-        stack.spacing = 8
+        stack.spacing = 6
         stack.alignment = .leading
 
         pinCardContent(stack, into: card)
@@ -6019,10 +6516,472 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func makeFeatureStrip(_ cards: [NSView]) -> NSView {
         let stack = NSStackView(views: cards)
         stack.orientation = .horizontal
-        stack.spacing = 14
+        stack.spacing = 12
         stack.distribution = .fillEqually
         stack.alignment = .top
         return stack
+    }
+
+    private func makeSimpleSummaryCard(
+        title: String,
+        subtitle: String? = nil,
+        bodyViews: [NSView]
+    ) -> NSView {
+        let card = makeCardView()
+        var views: [NSView] = [makeSectionTitle(title)]
+
+        if let subtitle {
+            let subtitleLabel = makeSubtleCaption(subtitle)
+            subtitleLabel.maximumNumberOfLines = 2
+            views.append(subtitleLabel)
+        }
+
+        views.append(contentsOf: bodyViews)
+
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeFormListCard(
+        title: String,
+        rows: [NSView],
+        footerViews: [NSView] = []
+    ) -> NSView {
+        let card = makeCardView()
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        stack.addArrangedSubview(makeSectionTitle(title))
+
+        for (index, row) in rows.enumerated() {
+            stack.addArrangedSubview(row)
+
+            if index < rows.count - 1 || !footerViews.isEmpty {
+                let separator = NSBox()
+                separator.boxType = .separator
+                separator.alphaValue = 0.35
+                stack.addArrangedSubview(separator)
+            }
+        }
+
+        for (index, view) in footerViews.enumerated() {
+            stack.addArrangedSubview(view)
+            if index < footerViews.count - 1 {
+                let spacer = NSView()
+                spacer.translatesAutoresizingMaskIntoConstraints = false
+                spacer.heightAnchor.constraint(equalToConstant: 2).isActive = true
+                stack.addArrangedSubview(spacer)
+            }
+        }
+
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeSummaryDetailRow(
+        title: String,
+        detailLabel: NSTextField,
+        accessory: NSView? = nil
+    ) -> NSView {
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.textColor = .secondaryLabelColor
+
+        let textStack = NSStackView(views: [titleLabel, detailLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 4
+        textStack.alignment = .leading
+
+        var views: [NSView] = [textStack, NSView()]
+        if let accessory {
+            views.append(accessory)
+        }
+
+        let rowContent = NSStackView(views: views)
+        rowContent.orientation = .horizontal
+        rowContent.alignment = .centerY
+        rowContent.spacing = 12
+        rowContent.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        return rowContent
+    }
+
+    private func makeExternalProcessorsListCard() -> NSView {
+        let card = makeCardView()
+        let subtitleLabel = makeSubtleCaption(
+            "Review configured backends in place, then open the manager to add or edit profiles."
+        )
+        subtitleLabel.maximumNumberOfLines = 2
+
+        let headerRow = NSStackView(views: [makeSectionTitle("External Processors"), NSView(), externalProcessorManagerButton])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 10
+
+        let columnsRow = NSStackView(views: [
+            makeProcessorHeaderLabel("Name", width: 160),
+            makeProcessorHeaderLabel("Command", width: 180),
+            makeProcessorHeaderLabel("Arguments"),
+            makeProcessorHeaderLabel("Enabled", width: 64)
+        ])
+        columnsRow.orientation = .horizontal
+        columnsRow.alignment = .centerY
+        columnsRow.spacing = 10
+
+        let stack = NSStackView(views: [headerRow, subtitleLabel, columnsRow, externalProcessorsRowsStack])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        columnsRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        externalProcessorsRowsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeProcessorHeaderLabel(_ text: String, width: CGFloat? = nil) -> NSTextField {
+        let label = makeSubtleCaption(text)
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        if let width {
+            label.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        return label
+    }
+
+    private func makeProcessorColumnLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12.5)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        return label
+    }
+
+    private func makeHomeShortcutRow(
+        icon: String,
+        title: String,
+        summaryLabel: NSTextField,
+        control: NSView
+    ) -> NSView {
+        let accentColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.palette(for: appearance).accent
+        }
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .semibold)
+        iconView.contentTintColor = accentColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconContainer = NSView()
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        iconContainer.wantsLayer = true
+        iconContainer.layer?.cornerRadius = 14
+        iconContainer.layer?.backgroundColor = accentColor.withAlphaComponent(0.18).cgColor
+        iconContainer.layer?.borderWidth = 1
+        iconContainer.layer?.borderColor = accentColor.withAlphaComponent(0.08).cgColor
+        iconContainer.addSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconContainer.widthAnchor.constraint(equalToConstant: 46),
+            iconContainer.heightAnchor.constraint(equalToConstant: 46),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor)
+        ])
+        iconContainer.setContentHuggingPriority(.required, for: .horizontal)
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.homeShortcutTitleColor(for: appearance)
+        }
+
+        let textStack = NSStackView(views: [titleLabel, summaryLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 4
+        textStack.alignment = .leading
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        control.setContentHuggingPriority(.required, for: .horizontal)
+
+        let rowContent = NSStackView(views: [iconContainer, textStack, NSView(), control])
+        rowContent.orientation = .horizontal
+        rowContent.spacing = 12
+        rowContent.alignment = .centerY
+
+        return makeCompactListRow(content: rowContent)
+    }
+
+    private func makeHomeShortcutsCard() -> NSView {
+        let rows = [
+            makeHomeShortcutRow(
+                icon: "mic.fill",
+                title: "Toggle Listening",
+                summaryLabel: homeShortcutLabel,
+                control: shortcutRecorderField
+            ),
+            makeHomeShortcutRow(
+                icon: "stop.fill",
+                title: "Stop / Cancel",
+                summaryLabel: homeCancelShortcutLabel,
+                control: cancelShortcutRecorderField
+            ),
+            makeHomeShortcutRow(
+                icon: "headphones",
+                title: "Mode Switch",
+                summaryLabel: homeModeShortcutLabel,
+                control: modeShortcutRecorderField
+            ),
+            makeHomeShortcutRow(
+                icon: "arrow.triangle.2.circlepath",
+                title: "Prompt Cycle",
+                summaryLabel: homePromptShortcutLabel,
+                control: promptShortcutRecorderField
+            ),
+            makeHomeShortcutRow(
+                icon: "point.3.connected.trianglepath.dotted",
+                title: "Processor Shortcut",
+                summaryLabel: homeProcessorShortcutLabel,
+                control: processorShortcutRecorderField
+            )
+        ]
+
+        let stack = NSStackView(views: [makeSectionTitle("Shortcuts")] + rows)
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let card = makeCardView()
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func makeHomeReadinessCard() -> NSView {
+        let card = makeCardView()
+
+        let titleLabel = makeSectionTitle("Readiness")
+
+        let readinessRing = NSView()
+        readinessRing.translatesAutoresizingMaskIntoConstraints = false
+        readinessRing.wantsLayer = true
+        readinessRing.layer?.cornerRadius = 92
+        readinessRing.layer?.borderWidth = 10
+        readinessRing.layer?.borderColor = currentThemePalette.accent.withAlphaComponent(0.88).cgColor
+        readinessRing.layer?.backgroundColor = currentThemePalette.accent.withAlphaComponent(0.04).cgColor
+
+        homeReadinessIconView.translatesAutoresizingMaskIntoConstraints = false
+        readinessRing.addSubview(homeReadinessIconView)
+        NSLayoutConstraint.activate([
+            readinessRing.widthAnchor.constraint(equalToConstant: 184),
+            readinessRing.heightAnchor.constraint(equalToConstant: 184),
+            homeReadinessIconView.centerXAnchor.constraint(equalTo: readinessRing.centerXAnchor),
+            homeReadinessIconView.centerYAnchor.constraint(equalTo: readinessRing.centerYAnchor)
+        ])
+
+        let centeredContent = NSStackView(views: [
+            readinessRing,
+            homeReadinessTitleLabel,
+            homeSummaryLabel,
+            homePrimaryActionButton
+        ])
+        centeredContent.orientation = .vertical
+        centeredContent.spacing = 18
+        centeredContent.alignment = .centerX
+        centeredContent.translatesAutoresizingMaskIntoConstraints = false
+        homePrimaryActionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 216).isActive = true
+
+        let centerContainer = NSView()
+        centerContainer.translatesAutoresizingMaskIntoConstraints = false
+        centerContainer.addSubview(centeredContent)
+        NSLayoutConstraint.activate([
+            centeredContent.centerXAnchor.constraint(equalTo: centerContainer.centerXAnchor),
+            centeredContent.centerYAnchor.constraint(equalTo: centerContainer.centerYAnchor),
+            centeredContent.leadingAnchor.constraint(greaterThanOrEqualTo: centerContainer.leadingAnchor),
+            centeredContent.trailingAnchor.constraint(lessThanOrEqualTo: centerContainer.trailingAnchor),
+            centeredContent.topAnchor.constraint(greaterThanOrEqualTo: centerContainer.topAnchor),
+            centeredContent.bottomAnchor.constraint(lessThanOrEqualTo: centerContainer.bottomAnchor)
+        ])
+
+        let stack = NSStackView(views: [titleLabel, centerContainer])
+        stack.orientation = .vertical
+        stack.spacing = 12
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        centerContainer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        pinCardContent(stack, into: card)
+        centerContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 460).isActive = true
+        return card
+    }
+
+    private func makeHomeSelectorCard(
+        sectionTitle: String,
+        icon: String,
+        titleLabel: NSTextField,
+        subtitleLabel: NSTextField,
+        control: NSView
+    ) -> NSView {
+        let accentColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.palette(for: appearance).accent
+        }
+
+        let sectionLabel = makeSectionTitle(sectionTitle)
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: sectionTitle)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .semibold)
+        iconView.contentTintColor = accentColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconContainer = NSView()
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        iconContainer.wantsLayer = true
+        iconContainer.layer?.cornerRadius = 14
+        iconContainer.layer?.backgroundColor = accentColor.withAlphaComponent(0.18).cgColor
+        iconContainer.layer?.borderWidth = 1
+        iconContainer.layer?.borderColor = accentColor.withAlphaComponent(0.08).cgColor
+        iconContainer.addSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconContainer.widthAnchor.constraint(equalToConstant: 46),
+            iconContainer.heightAnchor.constraint(equalToConstant: 46),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor)
+        ])
+
+        subtitleLabel.maximumNumberOfLines = 1
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+
+        control.translatesAutoresizingMaskIntoConstraints = false
+        control.widthAnchor.constraint(equalToConstant: 122).isActive = true
+        control.setContentHuggingPriority(.required, for: .horizontal)
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let textStack = NSStackView(views: [titleLabel, subtitleLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 2
+        textStack.alignment = .leading
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [iconContainer, textStack, NSView(), control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+
+        let stack = NSStackView(views: [sectionLabel, row])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.alignment = .leading
+
+        let card = makeCardView()
+        pinCardContent(stack, into: card, horizontalPadding: 14, verticalPadding: 14)
+        return card
+    }
+
+    private func makeASRLocalModeHintView() -> NSView {
+        let hint = ThemedSurfaceView(style: .row)
+        hint.translatesAutoresizingMaskIntoConstraints = false
+
+        let accentColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.palette(for: appearance).accent
+        }
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "Local mode")
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        iconView.contentTintColor = accentColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: "Local mode active")
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = .labelColor
+
+        let bodyLabel = NSTextField(labelWithString: "Local mode uses Apple Speech and does not need remote configuration.")
+        bodyLabel.font = .systemFont(ofSize: 12.5)
+        bodyLabel.textColor = .secondaryLabelColor
+        bodyLabel.lineBreakMode = .byWordWrapping
+        bodyLabel.maximumNumberOfLines = 2
+
+        let textStack = NSStackView(views: [titleLabel, bodyLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 4
+        textStack.alignment = .leading
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let content = NSStackView(views: [iconView, textStack])
+        content.orientation = .horizontal
+        content.spacing = 10
+        content.alignment = .top
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        pinCardContent(content, into: hint, horizontalPadding: 14, verticalPadding: 12)
+        return hint
+    }
+
+    private func makeAboutBrandCard() -> NSView {
+        let iconView = NSImageView()
+        iconView.image = settingsBrandIcon()
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 72),
+            iconView.heightAnchor.constraint(equalToConstant: 72)
+        ])
+
+        let titleLabel = NSTextField(labelWithString: "VoicePi")
+        titleLabel.font = .systemFont(ofSize: 30, weight: .semibold)
+        titleLabel.textColor = currentThemePalette.titleText
+
+        let versionPrefixLabel = makeSubtleCaption("Version")
+        let buildPrefixLabel = makeSubtleCaption("Build")
+        let versionRow = NSStackView(views: [versionPrefixLabel, aboutVersionLabel, makeSubtleCaption("•"), buildPrefixLabel, aboutBuildLabel])
+        versionRow.orientation = .horizontal
+        versionRow.spacing = 4
+        versionRow.alignment = .firstBaseline
+        let descriptionLabel = makeBodyLabel(
+            "Your voice. Your workflow. VoicePi stays compact, local-first, and ready for fast dictation."
+        )
+
+        let visitButton = makeSecondaryActionButton(title: "Visit Repository", action: #selector(openRepository))
+        let issueButton = makeSecondaryActionButton(title: "Report an Issue", action: #selector(openRepositoryIssues))
+        let buttons = NSStackView(views: [visitButton, issueButton])
+        buttons.orientation = .vertical
+        buttons.spacing = 8
+        buttons.alignment = .leading
+
+        let stack = NSStackView(views: [iconView, titleLabel, versionRow, descriptionLabel, buttons])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.alignment = .centerX
+
+        let card = makeCardView()
+        pinCardContent(stack, into: card, horizontalPadding: 24, verticalPadding: 22)
+        return card
+    }
+
+    private func makeAboutCreditsCard() -> NSView {
+        let builtByLabel = makeBodyLabel("Built with care by \(AboutProfile.author).")
+        let communityLabel = makeBodyLabel(
+            "Special thanks to contributors and the open-source community around VoicePi."
+        )
+
+        let links = makeVerticalStack([
+            makeSubtleLinkRow(prefix: "Website", linkTitle: AboutProfile.websiteDisplay, action: #selector(openPersonalWebsite)),
+            makeSubtleLinkRow(prefix: "GitHub", linkTitle: AboutProfile.githubDisplay, action: #selector(openGitHubProfile)),
+            makeSubtleLinkRow(prefix: "X", linkTitle: AboutProfile.xDisplay, action: #selector(openXProfile))
+        ], spacing: 6)
+
+        return makeSimpleSummaryCard(
+            title: "Credits",
+            subtitle: "Project links and authorship",
+            bodyViews: [builtByLabel, communityLabel, links]
+        )
     }
 
     private func makeActionCard(title: String, description: String, actions: [NSButton], verticalActions: Bool = false) -> NSView {
@@ -6564,6 +7523,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.orientation = .vertical
         stack.spacing = spacing
         stack.alignment = .leading
+        stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }
@@ -6598,6 +7558,131 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.spacing = SettingsLayoutMetrics.pageSpacing
         stack.alignment = .leading
         return stack
+    }
+
+    private func makeCompactPermissionRow(
+        icon: String,
+        title: String,
+        description: String,
+        statusLabel: NSTextField,
+        actionButton: NSButton
+    ) -> NSView {
+        let accentColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.palette(for: appearance).accent
+        }
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+        iconView.contentTintColor = accentColor
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = .labelColor
+
+        let descriptionLabel = makeBodyLabel(description)
+        descriptionLabel.maximumNumberOfLines = 2
+
+        let textStack = NSStackView(views: [titleLabel, descriptionLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 4
+        textStack.alignment = .leading
+
+        let statusStack = NSStackView(views: [makeStatusPill(label: statusLabel), actionButton])
+        statusStack.orientation = .horizontal
+        statusStack.spacing = 10
+        statusStack.alignment = .centerY
+        statusStack.setContentHuggingPriority(.required, for: .horizontal)
+        statusStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let rowContent = NSStackView(views: [iconView, textStack, NSView(), statusStack])
+        rowContent.orientation = .horizontal
+        rowContent.alignment = .centerY
+        rowContent.spacing = 12
+
+        return makeCompactListRow(content: rowContent)
+    }
+
+    private func makePermissionOverviewCard(
+        icon: String,
+        title: String,
+        description: String,
+        statusLabel: NSTextField,
+        statusIconView: NSImageView,
+        action: Selector
+    ) -> NSView {
+        let accentColor = NSColor(name: nil) { appearance in
+            SettingsWindowTheme.palette(for: appearance).accent
+        }
+
+        let card = ThemedSurfaceView(style: .row)
+        card.toolTip = "Open \(title) settings"
+        card.translatesAutoresizingMaskIntoConstraints = false
+
+        let tapGesture = NSClickGestureRecognizer(target: self, action: action)
+        card.addGestureRecognizer(tapGesture)
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .semibold)
+        iconView.contentTintColor = accentColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconContainer = NSView()
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        iconContainer.wantsLayer = true
+        iconContainer.layer?.cornerRadius = 14
+        iconContainer.layer?.backgroundColor = accentColor.withAlphaComponent(0.18).cgColor
+        iconContainer.layer?.borderWidth = 1
+        iconContainer.layer?.borderColor = accentColor.withAlphaComponent(0.08).cgColor
+        iconContainer.addSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconContainer.widthAnchor.constraint(equalToConstant: 46),
+            iconContainer.heightAnchor.constraint(equalToConstant: 46),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor)
+        ])
+        iconContainer.setContentHuggingPriority(.required, for: .horizontal)
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.textColor = .labelColor
+
+        let descriptionLabel = NSTextField(labelWithString: description)
+        descriptionLabel.font = .systemFont(ofSize: 12.5)
+        descriptionLabel.textColor = .secondaryLabelColor
+        descriptionLabel.lineBreakMode = .byWordWrapping
+        descriptionLabel.maximumNumberOfLines = 2
+
+        let textStack = NSStackView(views: [titleLabel, descriptionLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 3
+        textStack.alignment = .leading
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 76).isActive = true
+
+        let statusStack = NSStackView(views: [statusLabel, statusIconView])
+        statusStack.orientation = .horizontal
+        statusStack.spacing = 12
+        statusStack.alignment = .centerY
+        statusStack.setContentHuggingPriority(.required, for: .horizontal)
+        statusStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let rowContent = NSStackView(views: [iconContainer, textStack, NSView(), statusStack])
+        rowContent.orientation = .horizontal
+        rowContent.alignment = .centerY
+        rowContent.spacing = 14
+
+        pinCardContent(
+            rowContent,
+            into: card,
+            horizontalPadding: 18,
+            verticalPadding: 14
+        )
+        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 84).isActive = true
+        return card
     }
 
     private func makePermissionCard(
@@ -6649,55 +7734,46 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pill.addSubview(label)
 
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: pill.topAnchor, constant: 4),
-            label.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -4)
+            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 9),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -9),
+            label.topAnchor.constraint(equalTo: pill.topAnchor, constant: 3),
+            label.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -3)
         ])
 
         return pill
     }
 
     private var isDarkTheme: Bool {
-        let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
-        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        SettingsWindowTheme.isDark(currentThemeAppearance)
+    }
+
+    private var pageBackgroundColor: NSColor {
+        currentThemePalette.pageBackground
+    }
+
+    private var cardBorderColor: NSColor {
+        SettingsWindowTheme.surfaceChrome(for: currentThemeAppearance, style: .card).border
+    }
+
+    private var currentThemeAppearance: NSAppearance? {
+        window?.effectiveAppearance ?? window?.appearance ?? NSApp.effectiveAppearance
+    }
+
+    private var currentThemePalette: SettingsWindowThemePalette {
+        SettingsWindowTheme.palette(for: currentThemeAppearance)
     }
 
     private func interfaceColor(light: NSColor, dark: NSColor) -> NSColor {
         isDarkTheme ? dark : light
     }
-
-    private var pageBackgroundColor: NSColor {
-        interfaceColor(
-            light: NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 1),
-            dark: NSColor(calibratedWhite: 0.16, alpha: 1)
-        )
-    }
-
-    private var cardSurfaceColor: NSColor {
-        interfaceColor(
-            light: NSColor(calibratedWhite: 1.0, alpha: 0.84),
-            dark: NSColor(calibratedWhite: 0.215, alpha: 1)
-        )
-    }
-
-    private var cardBorderColor: NSColor {
-        interfaceColor(
-            light: NSColor(calibratedWhite: 0.0, alpha: 0.06),
-            dark: NSColor(calibratedWhite: 1.0, alpha: 0.06)
-        )
-    }
-
-    private var statusPillColor: NSColor {
-        interfaceColor(
-            light: NSColor(calibratedWhite: 0.95, alpha: 1),
-            dark: NSColor(calibratedWhite: 0.29, alpha: 1)
-        )
-    }
 }
 
 @MainActor
 extension StatusBarController: SettingsWindowControllerDelegate {
+    func settingsWindowControllerDidRequestStartRecording(_ controller: SettingsWindowController) {
+        delegate?.statusBarControllerDidRequestStartRecording(self)
+    }
+
     func settingsWindowController(
         _ controller: SettingsWindowController,
         didSave configuration: LLMConfiguration
@@ -6762,6 +7838,14 @@ extension StatusBarController: SettingsWindowControllerDelegate {
     ) {
         refreshAll()
         delegate?.statusBarController(self, didSelectASRBackend: backend)
+    }
+
+    func settingsWindowController(
+        _ controller: SettingsWindowController,
+        didSelect language: SupportedLanguage
+    ) {
+        refreshAll()
+        delegate?.statusBarController(self, didSelect: language)
     }
 
     func settingsWindowController(
@@ -7185,8 +8269,9 @@ final class StyledSettingsButton: NSButton {
     }
 
     private let role: Role
-    private let navigationHorizontalPadding: CGFloat = 12
+    private let navigationHorizontalPadding: CGFloat = 16
     private let navigationVerticalPadding: CGFloat = 8
+    private let navigationIndicatorLayer = CALayer()
     private var hoverTrackingArea: NSTrackingArea?
     private var isHovered = false
 
@@ -7201,14 +8286,17 @@ final class StyledSettingsButton: NSButton {
         controlSize = .regular
         wantsLayer = true
         focusRingType = .none
-        font = .systemFont(ofSize: role == .navigation ? 11.5 : 13.5, weight: role == .navigation ? .medium : .semibold)
+        font = .systemFont(ofSize: role == .navigation ? 12 : 13, weight: role == .navigation ? .medium : .semibold)
         imagePosition = role == .navigation ? .imageAbove : .imageLeading
         layer?.masksToBounds = false
-        layer?.cornerRadius = role == .navigation ? 11 : 10
+        layer?.cornerRadius = role == .navigation ? 0 : 12
         setButtonType(role == .navigation ? .toggle : .momentaryPushIn)
         if role == .navigation {
             imageScaling = .scaleProportionallyDown
             imageHugsTitle = true
+            navigationIndicatorLayer.cornerRadius = 1.5
+            navigationIndicatorLayer.opacity = 0
+            layer?.addSublayer(navigationIndicatorLayer)
         }
         applyAppearance(isSelected: false)
     }
@@ -7266,6 +8354,14 @@ final class StyledSettingsButton: NSButton {
             cornerHeight: layer?.cornerRadius ?? 0,
             transform: nil
         )
+
+        let indicatorWidth = min(max(52, bounds.width * 0.52), bounds.width - 26)
+        navigationIndicatorLayer.frame = CGRect(
+            x: floor((bounds.width - indicatorWidth) / 2),
+            y: bounds.height - 6,
+            width: floor(indicatorWidth),
+            height: 3
+        )
     }
 
     override var isHighlighted: Bool {
@@ -7275,74 +8371,41 @@ final class StyledSettingsButton: NSButton {
     }
 
     func applyAppearance(isSelected: Bool) {
-        let isDarkTheme = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-
-        let fillColor: NSColor
-        let borderColor: NSColor
-        let textColor: NSColor
-        let shadowColor: NSColor
-        let shadowOpacity: Float
-        let shadowRadius: CGFloat
-        let shadowOffset: CGSize
-
+        let themeRole: SettingsWindowButtonRole
         switch role {
         case .primary:
-            fillColor = isDarkTheme
-                ? NSColor(calibratedWhite: isHighlighted ? 0.35 : 0.315, alpha: 1)
-                : NSColor(calibratedWhite: isHighlighted ? 0.86 : 0.91, alpha: 1)
-            borderColor = isDarkTheme
-                ? NSColor(calibratedWhite: 1, alpha: 0.08)
-                : NSColor(calibratedWhite: 0, alpha: 0.08)
-            textColor = isDarkTheme ? NSColor(calibratedWhite: 0.96, alpha: 1) : NSColor(calibratedWhite: 0.15, alpha: 1)
-            shadowColor = .clear
-            shadowOpacity = 0
-            shadowRadius = 0
-            shadowOffset = .zero
+            themeRole = .primary
         case .secondary:
-            fillColor = isDarkTheme
-                ? NSColor(calibratedWhite: isHighlighted ? 0.27 : 0.235, alpha: 1)
-                : NSColor(calibratedWhite: isHighlighted ? 0.91 : 0.95, alpha: 1)
-            borderColor = isDarkTheme
-                ? NSColor(calibratedWhite: 1, alpha: 0.08)
-                : NSColor(calibratedWhite: 0, alpha: 0.06)
-            textColor = isDarkTheme ? NSColor(calibratedWhite: 0.93, alpha: 1) : NSColor(calibratedWhite: 0.22, alpha: 1)
-            shadowColor = .clear
-            shadowOpacity = 0
-            shadowRadius = 0
-            shadowOffset = .zero
+            themeRole = .secondary
         case .navigation:
-            let showsHoverChrome = isHovered || isHighlighted
-            fillColor = isSelected
-                ? (isDarkTheme ? NSColor(calibratedWhite: 0.285, alpha: 0.92) : NSColor(calibratedWhite: 0.945, alpha: 1))
-                : (showsHoverChrome
-                    ? (isDarkTheme ? NSColor(calibratedWhite: 1, alpha: 0.055) : NSColor(calibratedWhite: 1, alpha: 0.74))
-                    : .clear)
-            borderColor = isSelected
-                ? (isDarkTheme ? NSColor(calibratedWhite: 1, alpha: 0.07) : NSColor(calibratedWhite: 0, alpha: 0.05))
-                : (showsHoverChrome
-                    ? (isDarkTheme ? NSColor(calibratedWhite: 1, alpha: 0.04) : NSColor(calibratedWhite: 0, alpha: 0.04))
-                    : .clear)
-            textColor = isSelected || showsHoverChrome
-                ? (isDarkTheme ? NSColor(calibratedWhite: 0.97, alpha: 1) : NSColor(calibratedWhite: 0.16, alpha: 1))
-                : (isDarkTheme ? NSColor(calibratedWhite: 0.72, alpha: 1) : NSColor(calibratedWhite: 0.48, alpha: 1))
-            shadowColor = isDarkTheme
-                ? NSColor.black.withAlphaComponent(isSelected ? 0.18 : 0.22)
-                : NSColor.black.withAlphaComponent(isSelected ? 0.10 : 0.12)
-            shadowOpacity = isSelected ? 0.28 : (showsHoverChrome ? 0.55 : 0)
-            shadowRadius = isSelected ? 5 : 7
-            shadowOffset = CGSize(width: 0, height: -1)
+            themeRole = .navigation
         }
 
+        let chrome = SettingsWindowTheme.buttonChrome(
+            for: effectiveAppearance,
+            role: themeRole,
+            isSelected: isSelected,
+            isHovered: isHovered,
+            isHighlighted: isHighlighted
+        )
+        let borderAlpha = chrome.border.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0
+        let accentColor = SettingsWindowTheme.palette(for: effectiveAppearance).accent
+
         CATransaction.begin()
-        CATransaction.setAnimationDuration(role == .navigation ? 0.14 : 0.0)
+        CATransaction.setAnimationDuration(role == .navigation ? 0.12 : 0.0)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        layer?.backgroundColor = fillColor.cgColor
-        layer?.borderWidth = role == .navigation ? (borderColor == .clear ? 0 : 1) : 1
-        layer?.borderColor = borderColor.cgColor
-        layer?.shadowColor = shadowColor.cgColor
-        layer?.shadowOpacity = shadowOpacity
-        layer?.shadowRadius = shadowRadius
-        layer?.shadowOffset = shadowOffset
+        layer?.backgroundColor = chrome.fill.cgColor
+        layer?.borderWidth = borderAlpha > 0 ? 1 : 0
+        layer?.borderColor = chrome.border.cgColor
+        layer?.shadowColor = chrome.shadowColor.cgColor
+        layer?.shadowOpacity = chrome.shadowOpacity
+        layer?.shadowRadius = chrome.shadowRadius
+        layer?.shadowOffset = chrome.shadowOffset
+        layer?.cornerRadius = chrome.cornerRadius
+        if role == .navigation {
+            navigationIndicatorLayer.backgroundColor = accentColor.cgColor
+            navigationIndicatorLayer.opacity = isSelected ? 1 : 0
+        }
         CATransaction.commit()
 
         let paragraph = NSMutableParagraphStyle()
@@ -7351,12 +8414,12 @@ final class StyledSettingsButton: NSButton {
         attributedTitle = NSAttributedString(
             string: title,
             attributes: [
-                .foregroundColor: textColor,
+                .foregroundColor: chrome.text,
                 .font: font ?? NSFont.systemFont(ofSize: role == .navigation ? 12 : 13, weight: .semibold),
                 .paragraphStyle: paragraph
             ]
         )
-        contentTintColor = textColor
+        contentTintColor = chrome.text
         image?.isTemplate = true
         invalidateIntrinsicContentSize()
     }
@@ -7366,8 +8429,8 @@ final class StyledSettingsButton: NSButton {
         switch role {
         case .primary, .secondary:
             return NSSize(
-                width: base.width + 20,
-                height: max(SettingsLayoutMetrics.actionButtonHeight, base.height + 10)
+                width: base.width + 22,
+                height: max(SettingsLayoutMetrics.actionButtonHeight, base.height + 8)
             )
         case .navigation:
             let titleWidth = ceil((attributedTitle.length > 0 ? attributedTitle : NSAttributedString(string: title)).size().width)
@@ -7857,9 +8920,192 @@ final class HistoryUsageHeatmapView: NSView, NSViewToolTipOwner {
 }
 
 @MainActor
+fileprivate final class ASRBackendModeChoiceView: NSControl {
+    fileprivate let mode: ASRBackendMode
+
+    var isSelectedChoice = false {
+        didSet {
+            syncTheme()
+        }
+    }
+
+    private let iconContainer = NSView()
+    private let iconView = NSImageView()
+    private let badgeLabel = NSTextField(labelWithString: "")
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let descriptionLabel = NSTextField(labelWithString: "")
+    private let checkmarkView = NSImageView()
+    private var trackingAreaRef: NSTrackingArea?
+    private var isHovered = false
+
+    fileprivate init(mode: ASRBackendMode, target: AnyObject?, action: Selector) {
+        self.mode = mode
+        super.init(frame: .zero)
+        self.target = target
+        self.action = action
+        wantsLayer = true
+        focusRingType = .none
+        setupUI()
+        syncTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        syncTheme()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        trackingAreaRef = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        isHovered = true
+        syncTheme()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        isHovered = false
+        syncTheme()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        sendAction(action, to: target)
+    }
+
+    private func setupUI() {
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.masksToBounds = false
+
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        iconContainer.wantsLayer = true
+        iconContainer.layer?.cornerRadius = 14
+
+        let iconSymbol = mode.iconSymbolName
+        iconView.image = NSImage(systemSymbolName: iconSymbol, accessibilityDescription: mode.title)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .semibold)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
+        iconContainer.addSubview(iconView)
+
+        badgeLabel.stringValue = mode.subtitle
+        badgeLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        badgeLabel.lineBreakMode = .byTruncatingTail
+        badgeLabel.maximumNumberOfLines = 1
+
+        titleLabel.stringValue = mode.title
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.maximumNumberOfLines = 2
+
+        descriptionLabel.stringValue = mode.description
+        descriptionLabel.font = .systemFont(ofSize: 11.5)
+        descriptionLabel.lineBreakMode = .byWordWrapping
+        descriptionLabel.maximumNumberOfLines = 3
+
+        checkmarkView.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Selected")
+        checkmarkView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        checkmarkView.translatesAutoresizingMaskIntoConstraints = false
+        checkmarkView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        checkmarkView.setContentHuggingPriority(.required, for: .horizontal)
+
+        let headerRow = NSStackView(views: [iconContainer, NSView(), checkmarkView])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .top
+        headerRow.spacing = 10
+
+        let textStack = NSStackView(views: [badgeLabel, titleLabel, descriptionLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+
+        let stack = NSStackView(views: [headerRow, textStack])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+
+            iconContainer.widthAnchor.constraint(equalToConstant: 52),
+            iconContainer.heightAnchor.constraint(equalToConstant: 52),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor)
+        ])
+    }
+
+    private func syncTheme() {
+        let palette = SettingsWindowTheme.palette(for: effectiveAppearance)
+        let baseChrome = SettingsWindowTheme.surfaceChrome(for: effectiveAppearance, style: .row)
+        let darkMode = SettingsWindowTheme.isDark(effectiveAppearance)
+
+        let backgroundColor: NSColor
+        let borderColor: NSColor
+        if isSelectedChoice {
+            backgroundColor = palette.accent.withAlphaComponent(darkMode ? 0.13 : 0.10)
+            borderColor = palette.accent
+        } else if isHovered {
+            backgroundColor = darkMode
+                ? NSColor.white.withAlphaComponent(0.060)
+                : NSColor.black.withAlphaComponent(0.035)
+            borderColor = palette.accent.withAlphaComponent(darkMode ? 0.30 : 0.18)
+        } else {
+            backgroundColor = baseChrome.background
+            borderColor = baseChrome.border
+        }
+
+        layer?.backgroundColor = backgroundColor.cgColor
+        layer?.borderColor = borderColor.cgColor
+        layer?.borderWidth = isSelectedChoice ? 1.5 : 1
+        layer?.cornerRadius = 16
+        layer?.shadowColor = baseChrome.shadowColor.cgColor
+        layer?.shadowOpacity = baseChrome.shadowOpacity
+        layer?.shadowRadius = baseChrome.shadowRadius
+        layer?.shadowOffset = baseChrome.shadowOffset
+
+        iconContainer.layer?.backgroundColor = palette.accent.withAlphaComponent(darkMode ? 0.16 : 0.10).cgColor
+        titleLabel.textColor = isSelectedChoice ? palette.titleText : .labelColor
+        descriptionLabel.textColor = darkMode
+            ? NSColor(calibratedWhite: 1, alpha: 0.70)
+            : .secondaryLabelColor
+        badgeLabel.textColor = isSelectedChoice ? palette.accent : palette.subtitleText
+        iconView.contentTintColor = isSelectedChoice ? palette.accent : palette.subtitleText
+        checkmarkView.isHidden = !isSelectedChoice
+        checkmarkView.contentTintColor = palette.accent
+    }
+}
+
+@MainActor
 final class ThemedSurfaceView: NSView {
     enum Style {
         case card
+        case header
         case pill
         case row
     }
@@ -7870,15 +9116,7 @@ final class ThemedSurfaceView: NSView {
         self.style = style
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.masksToBounds = true
-        switch style {
-        case .card:
-            layer?.cornerRadius = 11
-        case .pill:
-            layer?.cornerRadius = 11
-        case .row:
-            layer?.cornerRadius = 10
-        }
+        layer?.masksToBounds = false
         syncTheme()
     }
 
@@ -7893,26 +9131,31 @@ final class ThemedSurfaceView: NSView {
     }
 
     func syncTheme() {
-        let isDarkTheme = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        switch style {
-        case .card:
-            layer?.backgroundColor = (isDarkTheme
-                ? NSColor(calibratedWhite: 0.215, alpha: 1)
-                : NSColor(calibratedWhite: 1.0, alpha: 0.84)).cgColor
-        case .pill:
-            layer?.backgroundColor = (isDarkTheme
-                ? NSColor(calibratedWhite: 0.29, alpha: 1)
-                : NSColor(calibratedWhite: 0.95, alpha: 1)).cgColor
-        case .row:
-            layer?.backgroundColor = (isDarkTheme
-                ? NSColor(calibratedWhite: 0.245, alpha: 1)
-                : NSColor(calibratedWhite: 1.0, alpha: 0.62)).cgColor
-        }
+        let chrome = SettingsWindowTheme.surfaceChrome(
+            for: effectiveAppearance,
+            style: {
+                switch style {
+                case .card:
+                    return .card
+                case .header:
+                    return .header
+                case .pill:
+                    return .pill
+                case .row:
+                    return .row
+                }
+            }()
+        )
 
+        layer?.backgroundColor = chrome.background.cgColor
         layer?.borderWidth = 1
-        layer?.borderColor = (isDarkTheme
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.06)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.06)).cgColor
+        layer?.borderColor = chrome.border.cgColor
+        layer?.shadowColor = chrome.shadowColor.cgColor
+        layer?.shadowOpacity = chrome.shadowOpacity
+        layer?.shadowRadius = chrome.shadowRadius
+        layer?.shadowOffset = chrome.shadowOffset
+        layer?.cornerRadius = chrome.cornerRadius
+        layer?.masksToBounds = false
     }
 }
 
@@ -7937,6 +9180,11 @@ final class ThemedPopUpButton: NSPopUpButton {
         syncTheme()
     }
 
+    override var intrinsicContentSize: NSSize {
+        let base = super.intrinsicContentSize
+        return NSSize(width: max(88, base.width + 20), height: max(34, base.height + 10))
+    }
+
     override func addItem(withTitle title: String) {
         super.addItem(withTitle: title)
         applyAttributedTitles()
@@ -7958,9 +9206,17 @@ final class ThemedPopUpButton: NSPopUpButton {
     }
 
     private func configure() {
+        if !(cell is ThemedPopUpButtonCell) {
+            let themedCell = ThemedPopUpButtonCell(textCell: "", pullsDown: pullsDown)
+            themedCell.arrowPosition = .arrowAtCenter
+            self.cell = themedCell
+        }
         font = .systemFont(ofSize: 13, weight: .medium)
         controlSize = .regular
-        bezelStyle = .rounded
+        bezelStyle = .regularSquare
+        isBordered = false
+        wantsLayer = true
+        focusRingType = .none
         setContentHuggingPriority(.defaultLow, for: .horizontal)
         syncTheme()
     }
@@ -7968,21 +9224,38 @@ final class ThemedPopUpButton: NSPopUpButton {
     func syncTheme() {
         let resolvedAppearance = resolvedAppearance()
         let foregroundColor = resolvedForegroundColor()
+        let backgroundColor = resolvedBackgroundColor()
+        let borderColor = resolvedBorderColor()
         appearance = resolvedAppearance
         menu?.appearance = resolvedAppearance
         contentTintColor = foregroundColor
+        layer?.backgroundColor = backgroundColor.cgColor
+        layer?.borderColor = borderColor.cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 11
         applyAttributedTitles(foregroundColor: foregroundColor)
     }
 
     private func applyAttributedTitles(foregroundColor: NSColor? = nil) {
         let color = foregroundColor ?? resolvedForegroundColor()
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        paragraphStyle.lineBreakMode = .byTruncatingTail
+
         let attributes: [NSAttributedString.Key: Any] = [
             .foregroundColor: color,
-            .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .paragraphStyle: paragraphStyle
         ]
 
         for item in itemArray {
             item.attributedTitle = NSAttributedString(string: item.title, attributes: attributes)
+        }
+
+        if let selectedItem, let selectedTitle = selectedItem.attributedTitle {
+            attributedTitle = selectedTitle
+        } else {
+            attributedTitle = NSAttributedString(string: "")
         }
 
         needsDisplay = true
@@ -7995,10 +9268,78 @@ final class ThemedPopUpButton: NSPopUpButton {
             : NSColor(calibratedWhite: 0.22, alpha: 1)
     }
 
+    private func resolvedBackgroundColor() -> NSColor {
+        let isDarkTheme = resolvedAppearance().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDarkTheme
+            ? NSColor(
+                calibratedRed: 0x33 / 255.0,
+                green: 0x38 / 255.0,
+                blue: 0x3B / 255.0,
+                alpha: 0.96
+            )
+            : NSColor(
+                calibratedRed: 0xF3 / 255.0,
+                green: 0xEE / 255.0,
+                blue: 0xE6 / 255.0,
+                alpha: 0.98
+            )
+    }
+
+    private func resolvedBorderColor() -> NSColor {
+        let isDarkTheme = resolvedAppearance().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDarkTheme
+            ? NSColor(calibratedWhite: 1, alpha: 0.055)
+            : NSColor(calibratedWhite: 0, alpha: 0.05)
+    }
+
     private func resolvedAppearance() -> NSAppearance {
         window?.appearance
             ?? superview?.effectiveAppearance
-            ?? NSApp.effectiveAppearance
+            ?? appearance
+            ?? NSApp?.effectiveAppearance
+            ?? NSAppearance(named: .aqua)!
+    }
+}
+
+private final class ThemedPopUpButtonCell: NSPopUpButtonCell {
+    private let horizontalInset: CGFloat = 12
+    private let trailingArrowInset: CGFloat = 14
+    private let centeredContentInset: CGFloat = 18
+
+    override func drawBorderAndBackground(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // The control view draws its own rounded container.
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        let contentInset = max(horizontalInset, centeredContentInset)
+        return NSRect(
+            x: rect.minX + contentInset,
+            y: rect.minY,
+            width: max(0, rect.width - contentInset - max(contentInset, trailingArrowInset + 8)),
+            height: rect.height
+        )
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        let textRect = titleRect(forBounds: cellFrame)
+        let title = attributedTitle
+        let titleSize = title.size()
+        let drawRect = NSRect(
+            x: textRect.midX - min(textRect.width, titleSize.width) / 2,
+            y: textRect.midY - titleSize.height / 2,
+            width: min(textRect.width, titleSize.width),
+            height: titleSize.height
+        )
+
+        title.draw(in: drawRect.integral)
+    }
+
+    override func cellSize(forBounds aRect: NSRect) -> NSSize {
+        let baseSize = super.cellSize(forBounds: aRect)
+        return NSSize(
+            width: baseSize.width + horizontalInset,
+            height: baseSize.height
+        )
     }
 }
 
@@ -8021,8 +9362,8 @@ final class ShortcutRecorderField: NSButton {
         super.init(frame: frameRect)
         setButtonType(.momentaryPushIn)
         bezelStyle = .rounded
-        controlSize = .large
-        font = .systemFont(ofSize: 13, weight: .semibold)
+        controlSize = .regular
+        font = .systemFont(ofSize: 12.5, weight: .semibold)
         wantsLayer = true
         focusRingType = .default
         updateAppearance()

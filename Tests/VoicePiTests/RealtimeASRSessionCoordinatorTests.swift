@@ -24,11 +24,12 @@ struct RealtimeASRSessionCoordinatorTests {
 
         await waitUntilConnectSuspended(client)
         client.resumeConnectSuccess()
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        await waitUntilStreamingReady(coordinator)
+        await waitUntilSentFrameCount(in: client, expectedCount: 2)
         client.emit(.partial(text: "hello"))
         await waitUntilPartialCount(in: sink, expectedCount: 1)
 
-        #expect(sink.partialTexts == ["hello"])
+        #expect(sink.partialTextsSnapshot() == ["hello"])
         #expect(client.sentFrames == [Data([1, 2, 3]), Data([4, 5, 6])])
     }
 
@@ -49,7 +50,7 @@ struct RealtimeASRSessionCoordinatorTests {
         try? await Task.sleep(nanoseconds: 20_000_000)
         await coordinator.cancelConnecting()
 
-        #expect(sink.errors.isEmpty)
+        #expect(sink.errorsSnapshot().isEmpty)
         #expect(client.closeCalls == 1)
     }
 
@@ -94,7 +95,7 @@ struct RealtimeASRSessionCoordinatorTests {
 
         let status = await coordinator.statusSnapshot()
         #expect(status.degradedToBatchFallback)
-        #expect(sink.errors.isEmpty)
+        #expect(sink.errorsSnapshot().isEmpty)
     }
 
     @Test
@@ -116,7 +117,7 @@ struct RealtimeASRSessionCoordinatorTests {
             _ = try await coordinator.stopAndResolveFinal()
         }
 
-        #expect(sink.errors.contains("Realtime ASR final timeout."))
+        #expect(sink.errorsSnapshot().contains("Realtime ASR final timeout."))
     }
 
     @Test
@@ -139,7 +140,7 @@ struct RealtimeASRSessionCoordinatorTests {
 
         let status = await coordinator.statusSnapshot()
         #expect(status.degradedToBatchFallback)
-        #expect(sink.errors.isEmpty)
+        #expect(sink.errorsSnapshot().isEmpty)
         #expect(client.closeCalls == 1)
     }
 
@@ -166,8 +167,20 @@ struct RealtimeASRSessionCoordinatorTests {
         in sink: CallbackSink,
         expectedCount: Int
     ) async {
+        for _ in 0..<300 {
+            if sink.partialTextsSnapshot().count >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    private func waitUntilSentFrameCount(
+        in client: StreamingClientStub,
+        expectedCount: Int
+    ) async {
         for _ in 0..<50 {
-            if sink.partialTexts.count >= expectedCount {
+            if client.sentFrameCount >= expectedCount {
                 return
             }
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -187,9 +200,9 @@ private extension RemoteASRConfiguration {
 
 private final class CallbackSink: @unchecked Sendable {
     private let lock = NSLock()
-    private(set) var partialTexts: [String] = []
-    private(set) var finals: [String] = []
-    private(set) var errors: [String] = []
+    private var partialTexts: [String] = []
+    private var finals: [String] = []
+    private var errors: [String] = []
 
     var callbacks: RealtimeASRSessionCoordinator.Callbacks {
         RealtimeASRSessionCoordinator.Callbacks(
@@ -222,6 +235,24 @@ private final class CallbackSink: @unchecked Sendable {
         errors.append(value)
         lock.unlock()
     }
+
+    func partialTextsSnapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return partialTexts
+    }
+
+    func finalsSnapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return finals
+    }
+
+    func errorsSnapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return errors
+    }
 }
 
 private final class StreamingClientStub: RemoteASRStreamingClient, @unchecked Sendable {
@@ -242,6 +273,10 @@ private final class StreamingClientStub: RemoteASRStreamingClient, @unchecked Se
 
     var isConnectSuspended: Bool {
         connectContinuation != nil
+    }
+
+    var sentFrameCount: Int {
+        sentFrames.count
     }
 
     init() {

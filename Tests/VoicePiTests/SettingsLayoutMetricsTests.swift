@@ -6,14 +6,15 @@ struct SettingsLayoutMetricsTests {
     @MainActor
     func settingsLayoutMetricsMatchUnifiedContentRhythm() {
         #expect(SettingsLayoutMetrics.pageSpacing == 12)
-        #expect(SettingsLayoutMetrics.cardPaddingHorizontal == 18)
-        #expect(SettingsLayoutMetrics.cardPaddingVertical == 16)
-        #expect(SettingsLayoutMetrics.sectionHeaderSpacing == 4)
-        #expect(SettingsLayoutMetrics.formRowVerticalInset == 9)
+        #expect(SettingsLayoutMetrics.cardPaddingHorizontal == 16)
+        #expect(SettingsLayoutMetrics.cardPaddingVertical == 14)
+        #expect(SettingsLayoutMetrics.sectionHeaderSpacing == 3)
+        #expect(SettingsLayoutMetrics.formRowVerticalInset == 8)
         #expect(SettingsLayoutMetrics.twoColumnSpacing == 12)
         #expect(SettingsLayoutMetrics.actionButtonHeight == 32)
-        #expect(SettingsLayoutMetrics.navigationButtonHeight == 52)
-        #expect(SettingsLayoutMetrics.navigationButtonMinWidth == 72)
+        #expect(SettingsLayoutMetrics.headerHeight == 64)
+        #expect(SettingsLayoutMetrics.navigationButtonHeight == 64)
+        #expect(SettingsLayoutMetrics.navigationButtonMinWidth == 88)
         #expect(SettingsLayoutMetrics.contentMinHeight == 300)
     }
 

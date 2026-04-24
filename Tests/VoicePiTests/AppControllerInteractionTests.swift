@@ -5,6 +5,54 @@ import AppKit
 struct AppControllerInteractionTests {
     @Test
     @MainActor
+    func debugSettingsCaptureConfigurationParsesSectionAliasesAndThemeOverride() {
+        #expect(
+            AppController.debugSettingsCaptureConfiguration(from: [
+                "VOICEPI_DEBUG_SETTINGS_SECTION": "text",
+                "VOICEPI_DEBUG_INTERFACE_THEME": "dark"
+            ]) == AppController.DebugSettingsCaptureConfiguration(
+                section: .llm,
+                interfaceTheme: .dark,
+                scrollPosition: .top
+            )
+        )
+        #expect(
+            AppController.debugSettingsCaptureConfiguration(from: [
+                "VOICEPI_DEBUG_SETTINGS_SECTION": "processors",
+                "VOICEPI_DEBUG_INTERFACE_THEME": "light",
+                "VOICEPI_DEBUG_SETTINGS_SCROLL": "bottom"
+            ]) == AppController.DebugSettingsCaptureConfiguration(
+                section: .externalProcessors,
+                interfaceTheme: .light,
+                scrollPosition: .bottom
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func debugSettingsCaptureConfigurationReturnsNilWithoutRecognizedSection() {
+        #expect(AppController.debugSettingsCaptureConfiguration(from: [:]) == nil)
+        #expect(
+            AppController.debugSettingsCaptureConfiguration(from: [
+                "VOICEPI_DEBUG_SETTINGS_SECTION": "unknown",
+                "VOICEPI_DEBUG_INTERFACE_THEME": "dark"
+            ]) == nil
+        )
+        #expect(
+            AppController.debugSettingsCaptureConfiguration(from: [
+                "VOICEPI_DEBUG_SETTINGS_SECTION": "text",
+                "VOICEPI_DEBUG_SETTINGS_SCROLL": "invalid"
+            ]) == AppController.DebugSettingsCaptureConfiguration(
+                section: .llm,
+                interfaceTheme: nil,
+                scrollPosition: .top
+            )
+        )
+    }
+
+    @Test
+    @MainActor
     func hotkeyMonitorPlanUsesSingleCombinedMonitorWhenBothPermissionsAreGranted() {
         #expect(
             AppController.hotkeyMonitorPlan(
