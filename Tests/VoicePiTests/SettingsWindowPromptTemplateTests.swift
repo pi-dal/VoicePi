@@ -5,6 +5,177 @@ import Testing
 struct SettingsWindowPromptTemplateTests {
     @Test
     @MainActor
+    func livePreviewLLMConfigurationUsesResolvedPromptForLLMRefinement() {
+        let configuration = LLMConfiguration(
+            baseURL: "https://api.example.com/v1",
+            apiKey: "test-key",
+            model: "gpt-4.1-mini",
+            refinementPrompt: ""
+        )
+
+        let resolved = SettingsWindowController.livePreviewLLMConfiguration(
+            from: configuration,
+            mode: .refinement,
+            refinementProvider: .llm,
+            resolvedPromptText: "Keep the response concise."
+        )
+
+        #expect(resolved.refinementPrompt == "Keep the response concise.")
+    }
+
+    @Test
+    @MainActor
+    func livePreviewLLMConfigurationClearsPromptOutsideLLMRefinement() {
+        let configuration = LLMConfiguration(
+            baseURL: "https://api.example.com/v1",
+            apiKey: "test-key",
+            model: "gpt-4.1-mini",
+            refinementPrompt: "Old prompt"
+        )
+
+        let translation = SettingsWindowController.livePreviewLLMConfiguration(
+            from: configuration,
+            mode: .translation,
+            refinementProvider: .llm,
+            resolvedPromptText: "Keep the response concise."
+        )
+        let externalProcessor = SettingsWindowController.livePreviewLLMConfiguration(
+            from: configuration,
+            mode: .refinement,
+            refinementProvider: .externalProcessor,
+            resolvedPromptText: "Keep the response concise."
+        )
+
+        #expect(translation.refinementPrompt.isEmpty)
+        #expect(externalProcessor.refinementPrompt.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func textPromptRulesPresentationShowsNoCoverageWhenNoBindingsExist() {
+        let presentation = SettingsWindowSupport.textPromptRulesPresentation(
+            workspace: PromptWorkspaceSettings(
+                activeSelection: .builtInDefault,
+                strictModeEnabled: false
+            ),
+            selectedPreset: PromptPreset.builtInDefault,
+            resolvedPromptBody: "Built-in default prompt uses the base VoicePi refinement rules."
+        )
+
+        #expect(presentation.bindingCoverage.symbolName == "square")
+        #expect(presentation.strictModeDetailText == "VoicePi always uses the active prompt.")
+        #expect(presentation.bindingCoverage.detailText == "No app or website bindings configured.")
+    }
+
+    @Test
+    @MainActor
+    func textPromptRulesPresentationShowsSavedCoverageWithoutAutomaticMatchingWhenStrictModeIsOff() {
+        let preset = PromptPreset(
+            id: "user.reply",
+            title: "Reply",
+            body: "Keep the answer concise and direct.",
+            source: .user,
+            websiteHosts: ["mail.google.com"]
+        )
+
+        let presentation = SettingsWindowSupport.textPromptRulesPresentation(
+            workspace: PromptWorkspaceSettings(
+                activeSelection: .preset(preset.id),
+                strictModeEnabled: false,
+                userPresets: [preset]
+            ),
+            selectedPreset: preset,
+            resolvedPromptBody: preset.body
+        )
+
+        #expect(presentation.bindingCoverage.symbolName == "square")
+        #expect(presentation.bindingCoverage.detailText == "Saved coverage: 1 site. Turn on Strict Mode to apply it automatically.")
+    }
+
+    @Test
+    @MainActor
+    func textPromptRulesPresentationDoesNotBorrowCoverageFromOtherPrompts() {
+        let selected = PromptPreset(
+            id: "user.reply",
+            title: "Reply",
+            body: "Keep the answer concise and direct.",
+            source: .user
+        )
+        let otherBoundPrompt = PromptPreset(
+            id: "user.mail",
+            title: "Mail",
+            body: "Draft a polished reply.",
+            source: .user,
+            websiteHosts: ["mail.google.com"]
+        )
+
+        let presentation = SettingsWindowSupport.textPromptRulesPresentation(
+            workspace: PromptWorkspaceSettings(
+                activeSelection: .preset(selected.id),
+                strictModeEnabled: true,
+                userPresets: [selected, otherBoundPrompt]
+            ),
+            selectedPreset: selected,
+            resolvedPromptBody: selected.body
+        )
+
+        #expect(presentation.bindingCoverage.symbolName == "square")
+        #expect(presentation.strictModeDetailText == "Matching app bindings override the active prompt.")
+        #expect(presentation.bindingCoverage.detailText == "This prompt has no app or website bindings.")
+    }
+
+    @Test
+    @MainActor
+    func textPromptRulesPresentationShowsAutomaticCoverageForBuiltInDefault() {
+        let mailPrompt = PromptPreset(
+            id: "user.mail",
+            title: "Mail",
+            body: "Draft a polished reply.",
+            source: .user,
+            websiteHosts: ["mail.google.com"]
+        )
+        let figmaPrompt = PromptPreset(
+            id: "user.figma",
+            title: "Figma",
+            body: "Turn this into a terse product spec.",
+            source: .user,
+            appBundleIDs: ["com.figma.Desktop"]
+        )
+
+        let presentation = SettingsWindowSupport.textPromptRulesPresentation(
+            workspace: PromptWorkspaceSettings(
+                activeSelection: .builtInDefault,
+                strictModeEnabled: true,
+                userPresets: [mailPrompt, figmaPrompt]
+            ),
+            selectedPreset: PromptPreset.builtInDefault,
+            resolvedPromptBody: "Built-in default prompt uses the base VoicePi refinement rules."
+        )
+
+        #expect(presentation.bindingCoverage.symbolName == "checkmark.square.fill")
+        #expect(presentation.bindingCoverage.detailText == "Automatic matching can override the default for 1 app • 1 site.")
+    }
+
+    @Test
+    @MainActor
+    func readOnlyPromptPreviewScrollViewUsesScrollableTextView() throws {
+        let scrollView = SettingsWindowController.makeReadOnlyPromptPreviewScrollView(
+            text: Array(repeating: "Line", count: 64).joined(separator: "\n")
+        )
+
+        let textView = try #require(scrollView.documentView)
+        #expect(scrollView.hasVerticalScroller)
+        #expect(scrollView.hasHorizontalScroller == false)
+        #expect(String(describing: type(of: textView)) == "NSTextView")
+        #expect((textView.value(forKey: "isEditable") as? Bool) == false)
+        #expect((textView.value(forKey: "isSelectable") as? Bool) == true)
+        #expect((textView.value(forKey: "isVerticallyResizable") as? Bool) == true)
+        let textContainer = try #require(textView.value(forKey: "textContainer") as AnyObject?)
+        #expect((textContainer.value(forKey: "widthTracksTextView") as? Bool) == true)
+    }
+
+    @Test
+    @MainActor
     func promptEditorCopyAdaptsForNewPromptDraft() {
         let draft = SettingsWindowController.makeNewUserPromptDraft()
 

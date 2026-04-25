@@ -304,8 +304,12 @@ struct SettingsWindowLayoutTests {
         let entry = ExternalProcessorEntry(
             name: "Alma CLI",
             kind: .almaCLI,
-            executablePath: "alma",
-            isEnabled: false
+            executablePath: "/usr/local/bin/alma",
+            additionalArguments: [
+                ExternalProcessorArgument(value: "--format"),
+                ExternalProcessorArgument(value: "markdown")
+            ],
+            isEnabled: true
         )
 
         let emptyPresentation = SettingsWindowSupport.externalProcessorsSectionPresentation(
@@ -317,18 +321,18 @@ struct SettingsWindowLayoutTests {
             selectedEntry: entry
         )
 
-        #expect(emptyPresentation.summaryText == "No processors configured yet.")
+        #expect(emptyPresentation.summaryText == "No processor selected yet.")
         #expect(
             emptyPresentation.detailText
-                == "Open the Processors tab to add your first backend, set its executable, and add any command-line arguments."
+                == "Add a processor to configure an external command and arguments."
         )
         #expect(
             selectedPresentation.summaryText
-                == "Active processor: Alma CLI • Alma CLI • Disabled"
+                == "Alma CLI"
         )
         #expect(
             selectedPresentation.detailText
-                == "Manage the processors used by refinement. Each entry can be tested before VoicePi uses it."
+                == "/usr/local/bin/alma --format markdown"
         )
     }
 
@@ -453,6 +457,123 @@ struct SettingsWindowLayoutTests {
     }
 
     @Test
+    func aboutSectionUsesLegacyCreditsCopyAndOpenSourceFooter() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.aboutSectionUsesLegacyCreditsCopyAndOpenSourceFooter.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        controller.show(section: .about)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let labels = Set(findLabels(in: contentView) { _ in true }.map(\.stringValue))
+
+        #expect(labels.contains(
+            "VoicePi is a lightweight macOS dictation utility that lives in the menu bar, captures speech with a shortcut, optionally refines or translates transcripts, and pastes the final text into the active app."
+        ))
+        #expect(labels.contains("Built With Love By"))
+        #expect(labels.contains("Inspired by"))
+        #expect(findButton(in: contentView, title: "pi-dal") != nil)
+        #expect(findButton(in: contentView, title: "yetone") != nil)
+        #expect(findButton(in: contentView, title: "this tweet") != nil)
+        #expect(findButton(in: contentView, title: "License (MIT)") != nil)
+        #expect(findButton(in: contentView, title: "Repository") != nil)
+    }
+
+    @Test
+    func aboutSectionUsesLargerBrandTreatment() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.aboutSectionUsesLargerBrandTreatment.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        controller.show(section: .about)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let brandCard = try #require(findCard(in: contentView) { card in
+            let labels = Set(stackDescendantLabels(in: card))
+            return labels.contains("Visit Repository")
+                && labels.contains("Report an Issue")
+                && labels.contains("VoicePi")
+        })
+        let titleLabel = try #require(findLabels(in: brandCard) { $0.stringValue == "VoicePi" }.first)
+        let brandIcon = try #require(findImageViews(in: brandCard).max(by: { $0.frame.width < $1.frame.width }))
+
+        #expect((titleLabel.font?.pointSize ?? 0) >= 34)
+        #expect(brandIcon.frame.width >= 88)
+        #expect(brandIcon.frame.height >= 88)
+    }
+
+    @Test
+    func aboutSectionUsesFullWidthActionRowsForPrimaryLinks() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.aboutSectionUsesFullWidthActionRowsForPrimaryLinks.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        controller.show(section: .about)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let brandCard = try #require(findCard(in: contentView) { card in
+            let labels = Set(stackDescendantLabels(in: card))
+            return labels.contains("Visit Repository")
+                && labels.contains("Report an Issue")
+                && labels.contains("VoicePi")
+        })
+        let visitButton = try #require(findButton(in: brandCard, title: "Visit Repository"))
+        let issueButton = try #require(findButton(in: brandCard, title: "Report an Issue"))
+
+        for button in [visitButton, issueButton] {
+            let iconViews = findImageViews(in: button)
+            #expect(iconViews.count >= 2)
+            #expect(iconViews.first?.image != nil)
+            #expect(iconViews.last?.image != nil)
+            #expect(button.frame.width >= brandCard.frame.width * 0.78)
+            #expect(button.frame.height >= 52)
+        }
+    }
+
+    @Test
+    func aboutSectionUsesAirierBrandComposition() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.aboutSectionUsesAirierBrandComposition.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        controller.show(section: .about)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let brandCard = try #require(findCard(in: contentView) { card in
+            let labels = Set(stackDescendantLabels(in: card))
+            return labels.contains("Visit Repository")
+                && labels.contains("Report an Issue")
+                && labels.contains("VoicePi")
+        })
+        let topRow = try #require(findStack(in: contentView) { stack in
+            guard stack.orientation == .horizontal else { return false }
+            let labels = Set(stackDescendantLabels(in: stack))
+            return labels.contains("Visit Repository")
+                && labels.contains("Report an Issue")
+                && labels.contains("Updates")
+                && labels.contains("Credits")
+        })
+        let brandIcon = try #require(findImageViews(in: brandCard).max(by: { $0.frame.width < $1.frame.width }))
+        let visitButton = try #require(findButton(in: brandCard, title: "Visit Repository"))
+        let issueButton = try #require(findButton(in: brandCard, title: "Report an Issue"))
+        let rightColumn = topRow.arrangedSubviews[1]
+
+        #expect(brandIcon.frame.width >= 112)
+        #expect(brandIcon.frame.height >= 112)
+        #expect(visitButton.frame.height >= 64)
+        #expect(issueButton.frame.height >= 64)
+        #expect(abs(brandCard.frame.height - rightColumn.frame.height) <= 8)
+    }
+
+    @Test
     func advancedSectionsUseNamedCardsInsteadOfSingleBareFormBlocks() throws {
         let defaults = UserDefaults(
             suiteName: "VoicePiTests.advancedSectionsUseNamedCardsInsteadOfSingleBareFormBlocks.\(UUID().uuidString)"
@@ -469,7 +590,8 @@ struct SettingsWindowLayoutTests {
         #expect(labels.contains("Refinement & Translation"))
         #expect(labels.contains("System Prompt"))
         #expect(labels.contains("Processing Rules"))
-        #expect(labels.contains("Provider Connection"))
+        #expect(labels.contains("Preview"))
+        #expect(!labels.contains("Provider Connection"))
         #expect(labels.contains("External Processors"))
         #expect(labels.contains("Selected Processor"))
     }
@@ -526,25 +648,277 @@ struct SettingsWindowLayoutTests {
     }
 
     @Test
-    func processorsSectionShowsInlineListHeadersAndPrimaryAddAction() throws {
+    func processorsSectionMatchesRedesignedManagementLayout() throws {
         let defaults = UserDefaults(
-            suiteName: "VoicePiTests.processorsSectionShowsInlineListHeadersAndPrimaryAddAction.\(UUID().uuidString)"
+            suiteName: "VoicePiTests.processorsSectionMatchesRedesignedManagementLayout.\(UUID().uuidString)"
         )!
-        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "OpenAI Summarizer",
+            kind: .almaCLI,
+            executablePath: "/usr/local/bin/ai-summarize",
+            additionalArguments: [
+                ExternalProcessorArgument(value: "--model"),
+                ExternalProcessorArgument(value: "gpt-4o-mini")
+            ],
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
         let contentView = try #require(controller.window?.contentView)
+        controller.show(section: .externalProcessors)
 
         contentView.layoutSubtreeIfNeeded()
 
         let labels = Set(findLabels(in: contentView) { _ in true }.map(\.stringValue))
+        let topRow = try #require(findStack(in: contentView) { stack in
+            guard stack.orientation == .horizontal else { return false }
+            let labels = Set(stackDescendantLabels(in: stack))
+            return labels.contains("External Processors")
+                && labels.contains("Processors Help")
+                && labels.contains("Selected Processor")
+        })
+        let leftColumn = try #require(findStack(in: contentView) { stack in
+            guard stack.orientation == .vertical else { return false }
+            let labels = Set(stackDescendantLabels(in: stack))
+            return labels.contains("External Processors")
+                && labels.contains("Selected Processor")
+                && !labels.contains("Processors Help")
+        })
 
+        #expect(labels.contains("External Processors"))
+        #expect(labels.contains("Processors Help"))
         #expect(labels.contains("Name"))
         #expect(labels.contains("Command"))
         #expect(labels.contains("Arguments"))
         #expect(labels.contains("Enabled"))
         #expect(labels.contains("Selected Processor"))
+        #expect(labels.contains("Reorder"))
+        #expect(labels.contains("Toggle"))
+        #expect(labels.contains("Output"))
+        #expect(labels.contains("Examples"))
+        #expect(labels.contains("OpenAI Summarizer"))
 
-        let addProcessorButton = findButton(in: contentView, title: "Add Processor")
+        let addProcessorButton = findButton(in: topRow, title: "+ Add Processor")
         #expect(addProcessorButton != nil)
+        #expect(findButton(in: leftColumn, title: "Test Run") != nil)
+        #expect(findButton(in: topRow, title: "Edit") == nil)
+        #expect(findButton(in: leftColumn, title: "Edit") == nil)
+        #expect(findButton(in: topRow, title: "Remove") == nil)
+        #expect(findButton(in: leftColumn, title: "Remove") == nil)
+    }
+
+    @Test
+    func processorsSectionUsesBalancedTopRowWidthsAndReadableHeaders() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.processorsSectionUsesBalancedTopRowWidthsAndReadableHeaders.\(UUID().uuidString)"
+        )!
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "OpenAI Summarizer",
+            kind: .almaCLI,
+            executablePath: "/usr/local/bin/ai-summarize",
+            additionalArguments: [
+                ExternalProcessorArgument(value: "--model"),
+                ExternalProcessorArgument(value: "gpt-4o-mini")
+            ],
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        controller.show(section: .externalProcessors)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let topRow = try #require(findStack(in: contentView) { stack in
+            guard stack.orientation == .horizontal else { return false }
+            let labels = Set(stackDescendantLabels(in: stack))
+            return labels.contains("External Processors")
+                && labels.contains("Processors Help")
+                && labels.contains("Selected Processor")
+        })
+
+        #expect(topRow.arrangedSubviews.count == 2)
+        let leftWidth = topRow.arrangedSubviews[0].frame.width
+        let rightWidth = topRow.arrangedSubviews[1].frame.width
+        #expect(rightWidth >= topRow.frame.width * 0.30)
+        #expect(rightWidth <= topRow.frame.width * 0.44)
+        #expect(leftWidth > rightWidth)
+
+        let argumentsHeader = try #require(findLabels(in: topRow) { $0.stringValue == "Arguments" }.first)
+        let enabledHeader = try #require(findLabels(in: topRow) { $0.stringValue == "Enabled" }.first)
+        #expect(argumentsHeader.frame.width >= 72)
+        #expect(enabledHeader.frame.width >= 72)
+    }
+
+    @Test
+    func processorsOverviewRowShowsExplicitCommandPathAndImageOnlyEditAction() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.processorsOverviewRowShowsExplicitCommandPathAndImageOnlyEditAction.\(UUID().uuidString)"
+        )!
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/usr/local/bin/alma",
+            additionalArguments: [ExternalProcessorArgument(value: "--short")],
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        controller.show(section: .externalProcessors)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let labels = Set(findLabels(in: contentView) { _ in true }.map(\.stringValue))
+        #expect(labels.contains("/usr/local/bin/alma"))
+
+        let editButton = try #require(findButton(in: contentView) { button in
+            button.accessibilityLabel() == "Edit processor Alma CLI"
+        })
+        #expect(editButton.title.isEmpty)
+        #expect(editButton.imagePosition == .imageOnly)
+        #expect(editButton.image != nil)
+    }
+
+    @Test
+    func processorsOverviewRowUsesPathFriendlyCommandLabelStyling() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.processorsOverviewRowUsesPathFriendlyCommandLabelStyling.\(UUID().uuidString)"
+        )!
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/usr/local/bin/alma",
+            additionalArguments: [ExternalProcessorArgument(value: "--short")],
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        controller.show(section: .externalProcessors)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let commandLabel = try #require(findLabels(in: contentView) { label in
+            label.stringValue == "/usr/local/bin/alma"
+        }.first)
+        let commandFont = try #require(commandLabel.font)
+
+        #expect(commandLabel.lineBreakMode == .byTruncatingMiddle)
+        #expect(commandFont.fontDescriptor.symbolicTraits.contains(.monoSpace))
+    }
+
+    @Test
+    func externalProcessorManagerSheetShowsExpandedEntryFields() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.externalProcessorManagerSheetShowsExpandedEntryFields.\(UUID().uuidString)"
+        )!
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "alma",
+            additionalArguments: [ExternalProcessorArgument(value: "--short")],
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        controller.openExternalProcessorManagerSheetFromShortcut()
+
+        let sheetContentView = try #require(controller.window?.attachedSheet?.contentView)
+        sheetContentView.layoutSubtreeIfNeeded()
+
+        let labels = Set(findLabels(in: sheetContentView) { _ in true }.map(\.stringValue))
+        #expect(labels.contains("Active Processor"))
+        #expect(labels.contains("Name"))
+        #expect(labels.contains("Kind"))
+        #expect(labels.contains("Executable"))
+        #expect(labels.contains("Enabled"))
+        #expect(labels.contains("Arguments"))
+        #expect(findButton(in: sheetContentView, title: "Test") != nil)
+        #expect(findButton(in: sheetContentView, title: "Remove") != nil)
+
+        let entryCard = try #require(findCard(in: sheetContentView) { card in
+            let labels = Set(stackDescendantLabels(in: card))
+            return labels.contains("Alma CLI")
+                && labels.contains("Executable")
+                && labels.contains("Arguments")
+        })
+        #expect(entryCard.frame.height >= 250)
+    }
+
+    @Test
+    func externalProcessorManagerSheetUsesCompactControlsCard() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.externalProcessorManagerSheetUsesCompactControlsCard.\(UUID().uuidString)"
+        )!
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/usr/local/bin/alma",
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        controller.openExternalProcessorManagerSheetFromShortcut()
+
+        let sheetContentView = try #require(controller.window?.attachedSheet?.contentView)
+        sheetContentView.layoutSubtreeIfNeeded()
+
+        let controlsCard = try #require(findCard(in: sheetContentView) { card in
+            let labels = Set(stackDescendantLabels(in: card))
+            return labels.contains("Active Processor")
+                && labels.contains("Done")
+                && labels.contains("Selected: Alma CLI")
+        })
+        #expect(controlsCard.frame.height <= 170)
+    }
+
+    @Test
+    func externalProcessorManagerSheetShowsDedicatedCommandPreviewSection() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.externalProcessorManagerSheetShowsDedicatedCommandPreviewSection.\(UUID().uuidString)"
+        )!
+        let model = AppModel(defaults: defaults)
+        let entry = ExternalProcessorEntry(
+            name: "Alma CLI",
+            kind: .almaCLI,
+            executablePath: "/usr/local/bin/alma",
+            additionalArguments: [
+                ExternalProcessorArgument(value: "--text"),
+                ExternalProcessorArgument(value: "{input}")
+            ],
+            isEnabled: true
+        )
+        model.setExternalProcessorEntries([entry])
+        model.setSelectedExternalProcessorEntryID(entry.id)
+
+        let controller = SettingsWindowController(model: model, delegate: nil)
+        controller.openExternalProcessorManagerSheetFromShortcut()
+
+        let sheetContentView = try #require(controller.window?.attachedSheet?.contentView)
+        sheetContentView.layoutSubtreeIfNeeded()
+
+        let labels = Set(findLabels(in: sheetContentView) { _ in true }.map(\.stringValue))
+        #expect(labels.contains("Command Preview"))
+        #expect(labels.contains("/usr/local/bin/alma --text {input}"))
     }
 
     @Test
@@ -578,24 +952,25 @@ struct SettingsWindowLayoutTests {
             let labels = stackDescendantLabels(in: stack)
             return labels.contains("System Prompt")
                 && labels.contains("Active Prompt")
-                && labels.contains("Edit")
-                && labels.contains("New")
-                && labels.contains("Bindings")
-                && labels.contains("Delete")
-                && labels.contains("Preview")
         }
 
         let processingRulesCard = findStack(in: contentView) { stack in
             guard stack.orientation == .vertical else { return false }
             let labels = stackDescendantLabels(in: stack)
             return labels.contains("Processing Rules")
-                && labels.contains(SettingsWindowController.strictModeToggleLabel)
                 && labels.contains("Binding Coverage")
-                && labels.contains("Prompt Preview")
+                && !labels.contains("Prompt Preview")
         }
 
         #expect(systemPromptCard != nil)
         #expect(processingRulesCard != nil)
+        if let systemPromptCard {
+            #expect(findButton(in: systemPromptCard, title: "Edit") != nil)
+            #expect(findButton(in: systemPromptCard, title: "New") != nil)
+            #expect(findButton(in: systemPromptCard, title: "Bindings") != nil)
+            #expect(findButton(in: systemPromptCard, title: "Delete") != nil)
+            #expect(findButton(in: systemPromptCard, title: "Preview") == nil)
+        }
     }
 
     @Test
@@ -754,6 +1129,24 @@ private func findStack(
 }
 
 @MainActor
+private func findCard(
+    in view: NSView,
+    matching predicate: (ThemedSurfaceView) -> Bool
+) -> ThemedSurfaceView? {
+    if let card = view as? ThemedSurfaceView, predicate(card) {
+        return card
+    }
+
+    for subview in view.subviews {
+        if let match = findCard(in: subview, matching: predicate) {
+            return match
+        }
+    }
+
+    return nil
+}
+
+@MainActor
 private func stackDescendantLabels(in view: NSView) -> [String] {
     var labels: [String] = []
 
@@ -784,6 +1177,39 @@ private func findButton(
     }
 
     return nil
+}
+
+@MainActor
+private func findButton(
+    in view: NSView,
+    matching predicate: (NSButton) -> Bool
+) -> NSButton? {
+    if let button = view as? NSButton, predicate(button) {
+        return button
+    }
+
+    for subview in view.subviews {
+        if let match = findButton(in: subview, matching: predicate) {
+            return match
+        }
+    }
+
+    return nil
+}
+
+@MainActor
+private func findImageViews(in view: NSView) -> [NSImageView] {
+    var matches: [NSImageView] = []
+
+    if let imageView = view as? NSImageView {
+        matches.append(imageView)
+    }
+
+    for subview in view.subviews {
+        matches.append(contentsOf: findImageViews(in: subview))
+    }
+
+    return matches
 }
 
 @MainActor

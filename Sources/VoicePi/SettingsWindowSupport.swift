@@ -458,6 +458,22 @@ struct ExternalProcessorsSectionPresentation: Equatable {
     let detailText: String
 }
 
+struct ExternalProcessorHelpItemPresentation: Equatable {
+    let title: String
+    let detailText: String
+}
+
+struct TextPromptRulePresentation: Equatable {
+    let detailText: String
+    let symbolName: String
+    let isActive: Bool
+}
+
+struct TextPromptRulesPresentation: Equatable {
+    let strictModeDetailText: String
+    let bindingCoverage: TextPromptRulePresentation
+}
+
 enum HistoryUsageMetric: Int, CaseIterable, Equatable {
     case sessions
     case characters
@@ -949,22 +965,138 @@ enum SettingsWindowSupport {
     ) -> ExternalProcessorsSectionPresentation {
         if entries.isEmpty {
             return ExternalProcessorsSectionPresentation(
-                summaryText: "No processors configured yet.",
-                detailText: "Open the Processors tab to add your first backend, set its executable, and add any command-line arguments."
+                summaryText: "No processor selected yet.",
+                detailText: "Add a processor to configure an external command and arguments."
             )
         }
 
         if let selectedEntry {
-            let stateText = selectedEntry.isEnabled ? "Enabled" : "Disabled"
             return ExternalProcessorsSectionPresentation(
-                summaryText: "Active processor: \(selectedEntry.name) • \(selectedEntry.kind.title) • \(stateText)",
-                detailText: "Manage the processors used by refinement. Each entry can be tested before VoicePi uses it."
+                summaryText: ExternalProcessorManagerPresentation.displayTitle(for: selectedEntry),
+                detailText: externalProcessorCommandPreview(for: selectedEntry)
             )
         }
 
         return ExternalProcessorsSectionPresentation(
-            summaryText: "Choose a processor to make it active.",
-            detailText: "Manage the processors used by refinement. Each entry can be tested before VoicePi uses it."
+            summaryText: "No processor selected yet.",
+            detailText: "Enable a processor to make it available for refinement."
         )
+    }
+
+    static func externalProcessorCommandPreview(for entry: ExternalProcessorEntry) -> String {
+        let parts = [entry.executablePath] + entry.additionalArguments.map(\.value)
+        let trimmedParts = parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if trimmedParts.isEmpty {
+            return "No command configured yet."
+        }
+
+        return trimmedParts.joined(separator: " ")
+    }
+
+    static func externalProcessorArgumentsPreview(for entry: ExternalProcessorEntry) -> String {
+        let arguments = entry.additionalArguments
+            .map(\.value)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if arguments.isEmpty {
+            return "None"
+        }
+
+        return arguments.joined(separator: " ")
+    }
+
+    static let externalProcessorHelpItems: [ExternalProcessorHelpItemPresentation] = [
+        ExternalProcessorHelpItemPresentation(
+            title: "Reorder",
+            detailText: "Arrange processors in the order you want them to appear."
+        ),
+        ExternalProcessorHelpItemPresentation(
+            title: "Toggle",
+            detailText: "Disable a processor without removing it."
+        ),
+        ExternalProcessorHelpItemPresentation(
+            title: "Arguments",
+            detailText: "Use {input} to pass the recognized text to your command."
+        ),
+        ExternalProcessorHelpItemPresentation(
+            title: "Output",
+            detailText: "The last line of command output is used as the result."
+        )
+    ]
+
+    static let externalProcessorHelpExamples: [String] = [
+        "/usr/local/bin/summarize {input} --short",
+        "/usr/bin/python3 script.py --text \"{input}\""
+    ]
+
+    static func textPromptRulesPresentation(
+        workspace: PromptWorkspaceSettings,
+        selectedPreset: PromptPreset?,
+        resolvedPromptBody _: String
+    ) -> TextPromptRulesPresentation {
+        let strictModeEnabled = workspace.strictModeEnabled
+        let strictModeDetailText = strictModeEnabled
+            ? "Matching app bindings override the active prompt."
+            : "VoicePi always uses the active prompt."
+
+        let bindingCoverage: TextPromptRulePresentation
+        if let selectedPreset,
+           let coverageSummary = bindingCoverageSummary(
+               appCount: selectedPreset.appBundleIDs.count,
+               siteCount: selectedPreset.websiteHosts.count
+           ) {
+            let detailText = strictModeEnabled
+                ? "This prompt matches \(coverageSummary)."
+                : "Saved coverage: \(coverageSummary). Turn on Strict Mode to apply it automatically."
+            bindingCoverage = TextPromptRulePresentation(
+                detailText: detailText,
+                symbolName: strictModeEnabled ? "checkmark.square.fill" : "square",
+                isActive: strictModeEnabled
+            )
+        } else if
+            strictModeEnabled,
+            workspace.activeSelection == .builtInDefault,
+            let coverageSummary = bindingCoverageSummary(
+                appCount: Set(workspace.userPresets.flatMap(\.appBundleIDs)).count,
+                siteCount: Set(workspace.userPresets.flatMap(\.websiteHosts)).count
+            ) {
+            bindingCoverage = TextPromptRulePresentation(
+                detailText: "Automatic matching can override the default for \(coverageSummary).",
+                symbolName: "checkmark.square.fill",
+                isActive: true
+            )
+        } else {
+            bindingCoverage = TextPromptRulePresentation(
+                detailText: selectedPreset == nil || selectedPreset == .builtInDefault
+                    ? "No app or website bindings configured."
+                    : "This prompt has no app or website bindings.",
+                symbolName: "square",
+                isActive: false
+            )
+        }
+
+        return TextPromptRulesPresentation(
+            strictModeDetailText: strictModeDetailText,
+            bindingCoverage: bindingCoverage
+        )
+    }
+
+    private static func bindingCoverageSummary(appCount: Int, siteCount: Int) -> String? {
+        var parts: [String] = []
+
+        if appCount > 0 {
+            let noun = appCount == 1 ? "app" : "apps"
+            parts.append("\(appCount) \(noun)")
+        }
+
+        if siteCount > 0 {
+            let noun = siteCount == 1 ? "site" : "sites"
+            parts.append("\(siteCount) \(noun)")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 }

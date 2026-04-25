@@ -6,6 +6,8 @@
 ## Build, Test, and Development Commands
 Use the checked-in scripts instead of ad hoc commands when possible.
 
+- Swift toolchain: use the repo's mise-managed Swift 6.3 toolchain, not the system `swift`/`swiftc`. Prefer `./Scripts/swiftw`, `./Scripts/swiftcw`, or `mise exec -- swift ...` / `mise exec -- swiftc ...` when running direct Swift commands.
+
 - `./Scripts/test.sh` or `make test`: run Swift tests and shell script tests.
 - `./Scripts/verify.sh` or `make verify`: run tests, build the debug target, and assemble `dist/debug/VoicePi.app`.
 - `./Scripts/benchmark.sh`: print the current performance benchmark snapshot, including deterministic legacy-vs-current budgets and lightweight microbenchmark samples for pure performance helpers.
