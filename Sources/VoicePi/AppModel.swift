@@ -2225,8 +2225,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func addDictionaryTerm(canonical: String, aliases: [String]) {
-        let candidate = DictionaryEntry(canonical: canonical, aliases: aliases)
+    func addDictionaryTerm(canonical: String, aliases: [String], tag: String? = nil) {
+        let candidate = DictionaryEntry(canonical: canonical, aliases: aliases, tag: tag)
         guard !candidate.canonical.isEmpty else { return }
 
         withDictionaryDocument { dictionaryDocument in
@@ -2238,6 +2238,7 @@ final class AppModel: ObservableObject {
                     existing.aliases + candidate.aliases,
                     excluding: existing.canonical
                 )
+                existing.tag = candidate.tag ?? existing.tag
                 existing.updatedAt = Date()
                 dictionaryDocument.entries[index] = existing
             } else {
@@ -2246,7 +2247,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func editDictionaryTerm(id: UUID, canonical: String, aliases: [String]) {
+    func editDictionaryTerm(id: UUID, canonical: String, aliases: [String], tag: String?) {
         withDictionaryDocument { dictionaryDocument in
             guard let index = dictionaryDocument.entries.firstIndex(where: { $0.id == id }) else {
                 return
@@ -2260,6 +2261,7 @@ final class AppModel: ObservableObject {
                 id: existing.id,
                 canonical: normalizedCanonical,
                 aliases: aliases,
+                tag: tag,
                 isEnabled: existing.isEnabled,
                 createdAt: existing.createdAt,
                 updatedAt: Date()

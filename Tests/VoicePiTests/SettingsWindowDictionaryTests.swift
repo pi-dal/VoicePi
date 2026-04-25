@@ -80,13 +80,15 @@ struct SettingsWindowDictionaryTests {
         let entry = DictionaryEntry(
             canonical: "Cloudflare",
             aliases: ["cloud flare", "cloudflair"],
+            tag: "Infra",
             isEnabled: false
         )
 
         let presentation = SettingsPresentation.dictionaryRowPresentation(entry: entry)
 
         #expect(presentation.canonical == "Cloudflare")
-        #expect(presentation.aliasSummary == "cloud flare, cloudflair")
+        #expect(presentation.bindingSummary == "cloud flare, cloudflair")
+        #expect(presentation.tagLabel == "Infra")
         #expect(presentation.enabledStateText == "Disabled")
     }
 
@@ -119,7 +121,8 @@ struct SettingsWindowDictionaryTests {
 
         let presentation = SettingsPresentation.dictionaryRowPresentation(entry: entry)
 
-        #expect(presentation.aliasSummary == "No aliases")
+        #expect(presentation.bindingSummary == "No bindings")
+        #expect(presentation.tagLabel == "No tag")
     }
 
     @Test
@@ -127,5 +130,53 @@ struct SettingsWindowDictionaryTests {
         #expect(SettingsWindowSupport.dictionaryTermsRowsHeight(forVisibleRowCount: 1) == 56)
         #expect(SettingsWindowSupport.dictionaryTermsRowsHeight(forVisibleRowCount: 2) == 122)
         #expect(SettingsWindowSupport.dictionaryTermsRowsHeight(forVisibleRowCount: 10) == 254)
+    }
+
+    @Test
+    func dictionaryCollectionsGroupEntriesByTagAndIncludeSuggestions() {
+        let entries = [
+            DictionaryEntry(canonical: "Cloudflare", aliases: ["cloud flare"], tag: "Infra"),
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre"], tag: "Infra"),
+            DictionaryEntry(canonical: "Python", aliases: ["py"], tag: "Languages"),
+            DictionaryEntry(canonical: "VoicePi", aliases: [])
+        ]
+        let suggestions = [
+            DictionarySuggestion(
+                originalFragment: "tensor flow",
+                correctedFragment: "TensorFlow",
+                proposedCanonical: "TensorFlow"
+            )
+        ]
+
+        let collections = SettingsWindowSupport.dictionaryCollections(
+            entries: entries,
+            suggestions: suggestions
+        )
+
+        #expect(collections.map(\.title) == ["All Terms", "Infra", "Languages", "Suggestions"])
+        #expect(collections.map(\.count) == [4, 2, 1, 1])
+        #expect(collections.map(\.selection) == [
+            .allTerms,
+            .tag("Infra"),
+            .tag("Languages"),
+            .suggestions
+        ])
+    }
+
+    @Test
+    func dictionaryFilteringCombinesCollectionAndSearchQuery() {
+        let entries = [
+            DictionaryEntry(canonical: "Cloudflare", aliases: ["cloud flare"], tag: "Infra"),
+            DictionaryEntry(canonical: "PostgreSQL", aliases: ["postgre"], tag: "Infra"),
+            DictionaryEntry(canonical: "Python", aliases: ["py"], tag: "Languages")
+        ]
+
+        let filtered = SettingsWindowSupport.filteredDictionaryEntries(
+            entries,
+            query: "py",
+            selection: .tag("Languages")
+        )
+
+        #expect(filtered.map(\.canonical) == ["Python"])
     }
 }

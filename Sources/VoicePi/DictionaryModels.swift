@@ -8,6 +8,7 @@ struct DictionaryEntry: Codable, Equatable, Identifiable {
     let id: UUID
     var canonical: String
     var aliases: [String]
+    var tag: String?
     var isEnabled: Bool
     let createdAt: Date
     var updatedAt: Date
@@ -16,6 +17,7 @@ struct DictionaryEntry: Codable, Equatable, Identifiable {
         id: UUID = UUID(),
         canonical: String,
         aliases: [String] = [],
+        tag: String? = nil,
         isEnabled: Bool = true,
         createdAt: Date = Date(),
         updatedAt: Date? = nil
@@ -23,6 +25,7 @@ struct DictionaryEntry: Codable, Equatable, Identifiable {
         self.id = id
         self.canonical = DictionaryNormalization.trimmed(canonical)
         self.aliases = DictionaryNormalization.uniqueAliases(aliases, excluding: self.canonical)
+        self.tag = DictionaryNormalization.optionalTrimmed(tag)
         self.isEnabled = isEnabled
         self.createdAt = createdAt
         self.updatedAt = updatedAt ?? createdAt
@@ -103,6 +106,12 @@ enum DictionaryNormalization {
                 options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
                 locale: .current
             )
+    }
+
+    static func optionalTrimmed(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmedValue = trimmed(value)
+        return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
     static func uniqueAliases(_ aliases: [String], excluding canonical: String) -> [String] {

@@ -200,12 +200,68 @@ struct AppModelDictionaryTests {
         model.editDictionaryTerm(
             id: entry.id,
             canonical: "Python",
-            aliases: ["python"]
+            aliases: ["python"],
+            tag: nil
         )
 
         let updated = model.dictionaryEntries.first { $0.id == entry.id }
         #expect(updated != nil)
         #expect(updated?.aliases == ["python"])
+    }
+
+    @Test
+    @MainActor
+    func addDictionaryTermPersistsTag() throws {
+        let fixture = try DictionaryModelStoreFixture()
+        defer { fixture.cleanup() }
+
+        try fixture.store.saveDictionary(.init(entries: []))
+        try fixture.store.saveSuggestions(.init(suggestions: []))
+
+        let model = AppModel(
+            defaults: fixture.defaults,
+            dictionaryStore: fixture.store
+        )
+
+        model.addDictionaryTerm(
+            canonical: "TensorFlow",
+            aliases: ["tensor flow"],
+            tag: "ML"
+        )
+
+        #expect(model.dictionaryEntries.count == 1)
+        #expect(model.dictionaryEntries[0].tag == "ML")
+    }
+
+    @Test
+    @MainActor
+    func editingTermUpdatesTag() throws {
+        let fixture = try DictionaryModelStoreFixture()
+        defer { fixture.cleanup() }
+
+        let entry = DictionaryEntry(
+            canonical: "Python",
+            aliases: ["py"],
+            tag: "Languages"
+        )
+        try fixture.store.saveDictionary(.init(entries: [entry]))
+        try fixture.store.saveSuggestions(.init(suggestions: []))
+
+        let model = AppModel(
+            defaults: fixture.defaults,
+            dictionaryStore: fixture.store
+        )
+
+        model.editDictionaryTerm(
+            id: entry.id,
+            canonical: "Python",
+            aliases: ["py", "python"],
+            tag: "Runtime"
+        )
+
+        let updated = try #require(model.dictionaryEntries.first { $0.id == entry.id })
+        #expect(updated.aliases == ["py", "python"])
+        #expect(updated.tag == "Runtime")
     }
 }
 

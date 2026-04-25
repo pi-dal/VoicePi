@@ -43,7 +43,8 @@ struct DictionarySectionPresentation: Equatable {
 
 struct DictionaryTermRowPresentation: Equatable {
     let canonical: String
-    let aliasSummary: String
+    let bindingSummary: String
+    let tagLabel: String
     let enabledStateText: String
 }
 
@@ -256,16 +257,17 @@ enum SettingsPresentation {
     }
 
     static func dictionaryRowPresentation(entry: DictionaryEntry) -> DictionaryTermRowPresentation {
-        let aliasSummary: String
+        let bindingSummary: String
         if entry.aliases.isEmpty {
-            aliasSummary = "No aliases"
+            bindingSummary = "No bindings"
         } else {
-            aliasSummary = entry.aliases.joined(separator: ", ")
+            bindingSummary = entry.aliases.joined(separator: ", ")
         }
 
         return DictionaryTermRowPresentation(
             canonical: entry.canonical,
-            aliasSummary: aliasSummary,
+            bindingSummary: bindingSummary,
+            tagLabel: entry.tag ?? "No tag",
             enabledStateText: entry.isEnabled ? "Enabled" : "Disabled"
         )
     }

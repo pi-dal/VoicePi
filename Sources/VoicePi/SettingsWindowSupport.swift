@@ -506,6 +506,32 @@ enum HistoryUsageMetric: Int, CaseIterable, Equatable {
         }
     }
 
+    var subtitle: String {
+        switch self {
+        case .sessions:
+            return "Sessions"
+        case .characters:
+            return "Characters"
+        case .words:
+            return "Words"
+        case .recordingDuration:
+            return "Recording time"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .sessions:
+            return "waveform"
+        case .characters:
+            return "character.textbox"
+        case .words:
+            return "text.alignleft"
+        case .recordingDuration:
+            return "clock"
+        }
+    }
+
     func cardValueText(stats: HistoryUsageStats) -> String {
         switch self {
         case .sessions:
@@ -539,6 +565,7 @@ struct HistoryUsageMetricCardPresentation: Equatable {
     let metric: HistoryUsageMetric
     let title: String
     let valueText: String
+    let subtitleText: String
 }
 
 enum HistoryUsageTimeRange: Int, CaseIterable, Equatable {
@@ -646,7 +673,98 @@ struct HistoryUsageVisualization: Equatable {
     let granularity: HistoryUsageTimelineGranularity
 }
 
+enum HistoryListDateFilter: Int, CaseIterable, Equatable {
+    case allDates
+    case today
+    case last7Days
+    case last30Days
+
+    var title: String {
+        switch self {
+        case .allDates:
+            return "All Dates"
+        case .today:
+            return "Today"
+        case .last7Days:
+            return "Last 7 Days"
+        case .last30Days:
+            return "Last 30 Days"
+        }
+    }
+
+    func includes(_ date: Date, now: Date, calendar: Calendar) -> Bool {
+        switch self {
+        case .allDates:
+            return true
+        case .today:
+            return calendar.isDate(date, inSameDayAs: now)
+        case .last7Days:
+            guard let start = calendar.date(
+                byAdding: .day,
+                value: -6,
+                to: calendar.startOfDay(for: now)
+            ) else {
+                return true
+            }
+            return date >= start && date <= now
+        case .last30Days:
+            guard let start = calendar.date(
+                byAdding: .day,
+                value: -29,
+                to: calendar.startOfDay(for: now)
+            ) else {
+                return true
+            }
+            return date >= start && date <= now
+        }
+    }
+}
+
+enum HistoryListSortOrder: Int, CaseIterable, Equatable {
+    case newestFirst
+    case oldestFirst
+    case longestRecording
+    case mostWords
+
+    var title: String {
+        switch self {
+        case .newestFirst:
+            return "Newest First"
+        case .oldestFirst:
+            return "Oldest First"
+        case .longestRecording:
+            return "Longest Recording"
+        case .mostWords:
+            return "Most Words"
+        }
+    }
+}
+
+struct HistoryListRowPresentation: Equatable {
+    let timestampText: String
+    let titleText: String
+    let excerptText: String
+    let fileTypeText: String
+    let durationText: String
+    let charactersText: String
+    let wordsText: String
+}
+
+enum DictionaryCollectionSelection: Equatable, Hashable {
+    case allTerms
+    case tag(String)
+    case suggestions
+}
+
+struct DictionaryCollectionPresentation: Equatable {
+    let title: String
+    let count: Int
+    let selection: DictionaryCollectionSelection
+}
+
 enum SettingsWindowSupport {
+    static let historySearchPlaceholderText = "Search history..."
+
     static func cancelShortcutHintText(for shortcut: ActivationShortcut) -> String {
         let format: String
 
@@ -673,6 +791,93 @@ enum SettingsWindowSupport {
         let targetHeight = (CGFloat(visibleRows) * rowHeight)
             + (CGFloat(max(0, visibleRows - 1)) * rowSpacing)
         return min(maximumHeight, max(minimumHeight, targetHeight))
+    }
+
+    static func dictionaryCollections(
+        entries: [DictionaryEntry],
+        suggestions: [DictionarySuggestion]
+    ) -> [DictionaryCollectionPresentation] {
+        var collections: [DictionaryCollectionPresentation] = [
+            .init(
+                title: "All Terms",
+                count: entries.count,
+                selection: .allTerms
+            )
+        ]
+
+        let groupedTags = Dictionary(grouping: entries) { entry in
+            DictionaryNormalization.optionalTrimmed(entry.tag)
+        }
+
+        let tagCollections = groupedTags
+            .compactMap { tag, taggedEntries -> DictionaryCollectionPresentation? in
+                guard let tag else { return nil }
+                return .init(
+                    title: tag,
+                    count: taggedEntries.count,
+                    selection: .tag(tag)
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.title != rhs.title {
+                    return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                }
+                return lhs.count > rhs.count
+            }
+
+        collections.append(contentsOf: tagCollections)
+        collections.append(
+            .init(
+                title: "Suggestions",
+                count: suggestions.count,
+                selection: .suggestions
+            )
+        )
+        return collections
+    }
+
+    static func filteredDictionaryEntries(
+        _ entries: [DictionaryEntry],
+        query: String,
+        selection: DictionaryCollectionSelection
+    ) -> [DictionaryEntry] {
+        let normalizedQuery = DictionaryNormalization.normalized(query)
+        let trimmedSelectionTag: String? = {
+            if case let .tag(tag) = selection {
+                return DictionaryNormalization.optionalTrimmed(tag)
+            }
+            return nil
+        }()
+
+        return entries.filter { entry in
+            switch selection {
+            case .allTerms:
+                break
+            case .tag:
+                guard DictionaryNormalization.optionalTrimmed(entry.tag) == trimmedSelectionTag else {
+                    return false
+                }
+            case .suggestions:
+                return false
+            }
+
+            guard !normalizedQuery.isEmpty else {
+                return true
+            }
+
+            if DictionaryNormalization.normalized(entry.canonical).contains(normalizedQuery) {
+                return true
+            }
+
+            if let tag = entry.tag,
+               DictionaryNormalization.normalized(tag).contains(normalizedQuery) {
+                return true
+            }
+
+            return entry.aliases.contains { alias in
+                DictionaryNormalization.normalized(alias).contains(normalizedQuery)
+            }
+        }
     }
 
     static func processorShortcutHintText(for shortcut: ActivationShortcut) -> String {
@@ -767,12 +972,119 @@ enum SettingsWindowSupport {
         return "\(seconds)s"
     }
 
+    static func historySessionCountText(filteredCount: Int, totalCount: Int) -> String {
+        let total = max(0, totalCount)
+        let filtered = max(0, min(filteredCount, total))
+
+        if filtered == total {
+            let noun = total == 1 ? "session" : "sessions"
+            return "\(total) \(noun)"
+        }
+
+        return "\(filtered) of \(total) sessions"
+    }
+
+    static func historyEmptyStateText(
+        totalEntryCount: Int,
+        filteredEntryCount: Int,
+        query: String
+    ) -> String {
+        if totalEntryCount == 0 {
+            return historySummaryText(forEntryCount: 0)
+        }
+
+        if filteredEntryCount > 0 {
+            return ""
+        }
+
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedQuery.isEmpty {
+            return "No history matches \"\(trimmedQuery)\"."
+        }
+
+        return "No history matches the current filters."
+    }
+
+    static func historyListRowPresentation(for entry: HistoryEntry) -> HistoryListRowPresentation {
+        let summary = historyListHeadlineAndExcerpt(for: entry.text)
+        return HistoryListRowPresentation(
+            timestampText: DateFormatter.localizedString(
+                from: entry.createdAt,
+                dateStyle: .short,
+                timeStyle: .short
+            ),
+            titleText: summary.title,
+            excerptText: summary.excerpt,
+            fileTypeText: "txt",
+            durationText: historyRecordingDurationText(
+                milliseconds: entry.recordingDurationMilliseconds
+            ),
+            charactersText: "\(entry.characterCount) chars",
+            wordsText: "\(entry.wordCount) words"
+        )
+    }
+
+    static func filteredHistoryEntries(
+        _ entries: [HistoryEntry],
+        query: String,
+        dateFilter: HistoryListDateFilter,
+        sortOrder: HistoryListSortOrder,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [HistoryEntry] {
+        let normalizedQuery = DictionaryNormalization.normalized(query)
+
+        let filtered = entries.filter { entry in
+            guard dateFilter.includes(entry.createdAt, now: now, calendar: calendar) else {
+                return false
+            }
+
+            guard !normalizedQuery.isEmpty else {
+                return true
+            }
+
+            return DictionaryNormalization.normalized(entry.text).contains(normalizedQuery)
+        }
+
+        switch sortOrder {
+        case .newestFirst:
+            return filtered.sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt {
+                    return lhs.createdAt > rhs.createdAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+        case .oldestFirst:
+            return filtered.sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt {
+                    return lhs.createdAt < rhs.createdAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+        case .longestRecording:
+            return filtered.sorted { lhs, rhs in
+                if lhs.recordingDurationMilliseconds != rhs.recordingDurationMilliseconds {
+                    return lhs.recordingDurationMilliseconds > rhs.recordingDurationMilliseconds
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+        case .mostWords:
+            return filtered.sorted { lhs, rhs in
+                if lhs.wordCount != rhs.wordCount {
+                    return lhs.wordCount > rhs.wordCount
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+        }
+    }
+
     static func historyUsageMetricCards(for stats: HistoryUsageStats) -> [HistoryUsageMetricCardPresentation] {
         HistoryUsageMetric.allCases.map { metric in
             HistoryUsageMetricCardPresentation(
                 metric: metric,
                 title: metric.title,
-                valueText: metric.cardValueText(stats: stats)
+                valueText: metric.cardValueText(stats: stats),
+                subtitleText: metric.subtitle
             )
         }
     }
@@ -888,6 +1200,35 @@ enum SettingsWindowSupport {
         let sundayBased = weekday - 1
         let mondayBased = (sundayBased + 6) % 7
         return max(0, min(6, mondayBased))
+    }
+
+    private static func historyListHeadlineAndExcerpt(
+        for text: String
+    ) -> (title: String, excerpt: String) {
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if let firstLine = lines.first {
+            let remainder = lines.dropFirst().joined(separator: " ")
+            if !remainder.isEmpty {
+                return (
+                    title: historyCollapsedText(firstLine),
+                    excerpt: historyCollapsedText(remainder)
+                )
+            }
+        }
+
+        let collapsed = historyCollapsedText(text)
+        return (title: collapsed, excerpt: "")
+    }
+
+    private static func historyCollapsedText(_ text: String) -> String {
+        text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private static func automaticHistoryTimelineGranularity(

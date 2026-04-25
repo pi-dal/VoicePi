@@ -26,6 +26,7 @@ struct DictionaryStoreTests {
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
             canonical: "PostgreSQL",
             aliases: ["postgre", "postgres"],
+            tag: "Databases",
             isEnabled: false,
             createdAt: createdAt,
             updatedAt: updatedAt
@@ -36,6 +37,37 @@ struct DictionaryStoreTests {
 
         let loaded = try store.loadDictionary()
         #expect(loaded.entries == [entry])
+    }
+
+    @Test
+    func loadDictionaryBackfillsMissingTagFieldAsNil() throws {
+        let fixture = try DictionaryStoreFixture()
+        defer { fixture.cleanup() }
+
+        let legacyJSON = """
+        {
+          "entries" : [
+            {
+              "aliases" : [
+                "postgre"
+              ],
+              "canonical" : "PostgreSQL",
+              "createdAt" : 1700000000,
+              "id" : "11111111-1111-1111-1111-111111111111",
+              "isEnabled" : true,
+              "updatedAt" : 1700000000
+            }
+          ],
+          "version" : 1
+        }
+        """
+
+        try legacyJSON.write(to: fixture.dictionaryURL, atomically: true, encoding: .utf8)
+
+        let loaded = try fixture.makeStore().loadDictionary()
+
+        #expect(loaded.entries.count == 1)
+        #expect(loaded.entries[0].tag == nil)
     }
 
     @Test

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 protocol StatusBarControllerDelegate: AnyObject {
@@ -1162,6 +1163,8 @@ enum SettingsLayoutMetrics {
     static let contentMinWidth: CGFloat = 660
     static let contentMaxWidth: CGFloat = 792
     static let contentMinHeight: CGFloat = 300
+    static let dictionarySidebarWidth: CGFloat = 360
+    static let dictionarySearchMinWidth: CGFloat = 220
     static let updatePanelWidth: CGFloat = 436
     static let updatePanelMinHeight: CGFloat = 408
     static let updatePanelNotesHeight: CGFloat = 120
@@ -1458,20 +1461,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let dictionarySummaryLabel = NSTextField(labelWithString: "")
     private let dictionaryPendingReviewLabel = NSTextField(labelWithString: "")
     private let dictionarySearchField = NSSearchField()
+    private let dictionaryCollectionsStack = NSStackView()
+    private let dictionaryCollectionsFooterLabel = NSTextField(labelWithString: "")
+    private let dictionaryContentTitleLabel = NSTextField(labelWithString: "")
+    private let dictionaryContentSubtitleLabel = NSTextField(labelWithString: "")
+    private let dictionaryTermHeaderRow = NSStackView()
     private let dictionaryTermRowsStack = NSStackView()
     private let dictionarySuggestionRowsStack = NSStackView()
+    private var dictionaryTermsRowsScrollView: NSScrollView?
+    private var dictionarySuggestionRowsScrollView: NSScrollView?
     private var dictionaryTermsRowsHeightConstraint: NSLayoutConstraint?
     private var dictionarySuggestionRowsHeightConstraint: NSLayoutConstraint?
+    private var dictionarySelectedCollection: DictionaryCollectionSelection = .allTerms
+    private var dictionaryCollectionRowViews: [DictionaryCollectionSelection: ThemedSurfaceView] = [:]
+    private var dictionaryCollectionLookup: [ObjectIdentifier: DictionaryCollectionSelection] = [:]
     private let historySummaryLabel = NSTextField(labelWithString: "")
     private let historyUsageStatsLabel = NSTextField(labelWithString: "")
     private let historyUsageCardsStack = NSView()
     private let historyUsageDetailCard = ThemedSurfaceView(style: .card)
     private let historyUsageDetailTitleLabel = NSTextField(labelWithString: "")
     private let historyUsageDetailSubtitleLabel = NSTextField(labelWithString: "")
+    private let historyUsageHeatmapTitleLabel = NSTextField(labelWithString: "")
     private let historyUsageLineChartView = HistoryUsageLineChartView()
     private let historyUsageHeatmapView = HistoryUsageHeatmapView()
     private let historyUsageTimeRangePopup = ThemedPopUpButton()
     private let historyRowsStack = NSStackView()
+    private let historySessionCountLabel = NSTextField(labelWithString: "")
+    private let historySearchField = NSSearchField()
+    private let historyDateFilterPopup = ThemedPopUpButton()
+    private let historyPaginationStack = NSStackView()
 
     private let shortcutRecorderField = ShortcutRecorderField()
     private let shortcutHintLabel = NSTextField(labelWithString: "")
@@ -1631,6 +1649,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var promptWorkspaceDraft = PromptWorkspaceSettings()
     private var promptDestinationInspector = PromptDestinationInspector()
     private var promptEditorDraft: PromptPreset?
+    private var promptEditorSheetWindow: PreviewSheetWindow?
     private weak var promptEditorNameField: NSTextField?
     private weak var promptEditorAppBindingsField: NSTextField?
     private weak var promptEditorWebsiteHostsField: NSTextField?
@@ -1638,13 +1657,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private weak var promptEditorBodyTextView: NSTextView?
     private var externalProcessorManagerState = ExternalProcessorManagerState()
     private var externalProcessorManagerSheetWindow: PreviewSheetWindow?
-    private var librarySubviewControls: [NSSegmentedControl] = []
+    private var librarySubviewControls: [LibrarySubviewTabControl] = []
     private var historyEntryByIdentifier: [String: HistoryEntry] = [:]
     private var historyUsageMetricCardViews: [HistoryUsageMetric: ThemedSurfaceView] = [:]
     private var historyUsageMetricValueLabels: [HistoryUsageMetric: NSTextField] = [:]
     private var historyUsageMetricLookup: [ObjectIdentifier: HistoryUsageMetric] = [:]
     private var historyUsageSelectedMetric: HistoryUsageMetric?
     private var historyUsageTimeRange: HistoryUsageTimeRange = .oneWeek
+    private var historyDateFilter: HistoryListDateFilter = .allDates
+    private var historySortOrder: HistoryListSortOrder = .newestFirst
+    private var historyCurrentPage = 0
     private weak var historyDocumentContainerView: NSView?
     private weak var externalProcessorManagerSelectedEntryPopup: NSPopUpButton?
     private weak var externalProcessorManagerFeedbackLabel: NSTextField?
@@ -1661,7 +1683,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     var isPromptEditorSheetPresented: Bool {
-        promptEditorDraft != nil || window?.attachedSheet != nil
+        promptEditorDraft != nil || promptEditorSheetWindow != nil || window?.attachedSheet != nil
+    }
+
+    var promptEditorSheetContentViewForTesting: NSView? {
+        promptEditorSheetWindow?.contentView
+    }
+
+    var externalProcessorManagerSheetContentViewForTesting: NSView? {
+        externalProcessorManagerSheetWindow?.contentView
     }
 
     init(model: AppModel, delegate: SettingsWindowControllerDelegate?) {
@@ -1703,6 +1733,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func show(section: SettingsSection, scrollToBottom: Bool = false) {
+        if RuntimeEnvironment.isRunningTests {
+            reloadFromModel()
+            selectSection(section)
+            if scrollToBottom {
+                scrollPage(section: section, toBottom: true)
+            }
+            window?.orderOut(nil)
+            return
+        }
         showWindow(nil)
         selectSection(section)
         if scrollToBottom {
@@ -2800,11 +2839,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         dictionaryPendingReviewLabel.lineBreakMode = .byWordWrapping
         dictionaryPendingReviewLabel.maximumNumberOfLines = 0
 
-        dictionarySearchField.placeholderString = "Search terms"
+        dictionarySearchField.placeholderString = "Search terms..."
         dictionarySearchField.target = self
         dictionarySearchField.action = #selector(dictionarySearchChanged(_:))
         dictionarySearchField.sendsSearchStringImmediately = true
         dictionarySearchField.sendsWholeSearchString = false
+
+        dictionaryCollectionsStack.orientation = .vertical
+        dictionaryCollectionsStack.spacing = 8
+        dictionaryCollectionsStack.alignment = .leading
+
+        dictionaryCollectionsFooterLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        dictionaryCollectionsFooterLabel.textColor = currentThemePalette.accent
+        dictionaryCollectionsFooterLabel.alignment = .left
+        dictionaryCollectionsFooterLabel.maximumNumberOfLines = 1
+
+        dictionaryContentTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        dictionaryContentTitleLabel.textColor = .labelColor
+        dictionaryContentTitleLabel.maximumNumberOfLines = 1
+
+        dictionaryContentSubtitleLabel.font = .systemFont(ofSize: 12.5)
+        dictionaryContentSubtitleLabel.textColor = .secondaryLabelColor
+        dictionaryContentSubtitleLabel.lineBreakMode = .byWordWrapping
+        dictionaryContentSubtitleLabel.maximumNumberOfLines = 2
+
+        configureDictionaryTermHeaderRow()
 
         dictionaryTermRowsStack.orientation = .vertical
         dictionaryTermRowsStack.spacing = 10
@@ -2814,7 +2873,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         dictionarySuggestionRowsStack.spacing = 10
         dictionarySuggestionRowsStack.alignment = .leading
 
-        let termActionButton = makePrimaryActionButton(title: "Add", action: #selector(addDictionaryTermFromSettings))
+        let termActionButton = makePrimaryActionButton(title: "Add Term", action: #selector(addDictionaryTermFromSettings))
         termActionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         termActionButton.setContentHuggingPriority(.required, for: .horizontal)
         let dictionaryActionsButton = makeOverflowActionButton(
@@ -2822,31 +2881,38 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             action: #selector(showDictionaryCollectionActions(_:))
         )
 
-        let termsHeader = NSStackView(views: [dictionarySearchField, NSView(), termActionButton, dictionaryActionsButton])
+        let termsHeader = NSStackView(views: [dictionarySearchField, termActionButton, dictionaryActionsButton])
         termsHeader.orientation = .horizontal
         termsHeader.alignment = .centerY
         termsHeader.spacing = 8
-        dictionarySearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+        termsHeader.distribution = .fill
+        dictionarySearchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        dictionarySearchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        dictionarySearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayoutMetrics.dictionarySearchMinWidth).isActive = true
 
         let termsRowsScrollView = makeDictionaryRowsScrollView(contentStack: dictionaryTermRowsStack)
-
+        dictionaryTermsRowsScrollView = termsRowsScrollView
         let suggestionRowsScrollView = makeDictionaryRowsScrollView(contentStack: dictionarySuggestionRowsStack)
+        dictionarySuggestionRowsScrollView = suggestionRowsScrollView
 
         let librarySubviewControlRow = makeLibrarySubviewControl(selectedSection: .dictionary)
-        let summaryCard = makeDictionarySummaryCard()
-        let termsCard = makeDictionaryTermsCard(
-            headerSupplementaryView: termsHeader,
-            rowsScrollView: termsRowsScrollView
+        let dictionarySidebarHeader = makeDictionarySidebarHeader(searchToolbar: termsHeader)
+        let collectionsCard = makeDictionaryCollectionsCard()
+        let contentCard = makeDictionaryContentCard(
+            termsRowsScrollView: termsRowsScrollView,
+            suggestionRowsScrollView: suggestionRowsScrollView
         )
-        let suggestionsCard = makeDictionaryCollectionCard(
-            title: "Suggestions",
-            listContainerView: suggestionRowsScrollView
+        let leftColumn = makeDictionarySidebarColumn(
+            headerView: dictionarySidebarHeader,
+            collectionsCard: collectionsCard
+        )
+        let libraryContentRow = makeDictionaryContentSection(
+            left: leftColumn,
+            right: contentCard
         )
 
         addPageSection(librarySubviewControlRow, to: contentStack)
-        addPageSection(summaryCard, to: contentStack)
-        addPageSection(termsCard, to: contentStack)
-        addPageSection(suggestionsCard, to: contentStack)
+        addPageSection(libraryContentRow, to: contentStack)
         addPageSection(makeFlexiblePageSpacer(), to: contentStack)
 
         dictionaryView.drawsBackground = false
@@ -2878,36 +2944,47 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildHistoryView() {
         let contentStack = makePageStack()
 
-        historySummaryLabel.font = .systemFont(ofSize: 12.5)
-        historySummaryLabel.textColor = .secondaryLabelColor
-        historySummaryLabel.alignment = .left
-        historySummaryLabel.lineBreakMode = .byWordWrapping
-        historySummaryLabel.maximumNumberOfLines = 0
-
-        historyUsageStatsLabel.font = .systemFont(ofSize: 12.5)
-        historyUsageStatsLabel.textColor = .secondaryLabelColor
-        historyUsageStatsLabel.alignment = .left
-        historyUsageStatsLabel.lineBreakMode = .byWordWrapping
-        historyUsageStatsLabel.maximumNumberOfLines = 0
-
         historyUsageCardsStack.translatesAutoresizingMaskIntoConstraints = false
         historyUsageCardsStack.setContentHuggingPriority(.required, for: .vertical)
         historyUsageCardsStack.setContentCompressionResistancePriority(.required, for: .vertical)
-        let historyUsageMetricRowCount = Int(ceil(Double(HistoryUsageMetric.allCases.count) / 2.0))
-        let historyUsageMetricMinimumHeight = CGFloat(historyUsageMetricRowCount * 69 + max(0, historyUsageMetricRowCount - 1) * 8)
+        let historyUsageMetricMinimumHeight: CGFloat = 154
         historyUsageCardsStack.heightAnchor.constraint(equalToConstant: historyUsageMetricMinimumHeight).isActive = true
         configureHistoryUsageMetricCards()
         historyUsageDetailCard.translatesAutoresizingMaskIntoConstraints = false
         configureHistoryUsageDetailCard()
 
         historyRowsStack.orientation = .vertical
-        historyRowsStack.spacing = 10
+        historyRowsStack.spacing = 8
         historyRowsStack.alignment = .leading
+
+        historySessionCountLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        historySessionCountLabel.textColor = .secondaryLabelColor
+        historySessionCountLabel.alignment = .right
+
+        historySearchField.placeholderString = SettingsWindowSupport.historySearchPlaceholderText
+        historySearchField.target = self
+        historySearchField.action = #selector(historySearchChanged(_:))
+        historySearchField.sendsSearchStringImmediately = true
+        historySearchField.sendsWholeSearchString = false
+
+        historyDateFilterPopup.removeAllItems()
+        historyDateFilterPopup.addItems(withTitles: HistoryListDateFilter.allCases.map(\.title))
+        historyDateFilterPopup.target = self
+        historyDateFilterPopup.action = #selector(historyDateFilterChanged(_:))
+        historyDateFilterPopup.leadingSymbolName = "calendar.badge.clock"
+        historyDateFilterPopup.selectItem(at: historyDateFilter.rawValue)
+
+        historyPaginationStack.orientation = .horizontal
+        historyPaginationStack.spacing = 6
+        historyPaginationStack.alignment = .centerY
 
         let librarySubviewControlRow = makeLibrarySubviewControl(selectedSection: .history)
         addPageSection(librarySubviewControlRow, to: contentStack)
-        addPageSection(makeHistorySummaryCard(), to: contentStack)
+        addPageSection(makeHistoryOverviewCard(), to: contentStack)
+        addPageSection(makeHistorySessionHeaderView(), to: contentStack)
+        addPageSection(makeHistoryToolbarView(), to: contentStack)
         addPageSection(makeHistoryEntriesCard(), to: contentStack)
+        addPageSection(makeHistoryPaginationView(), to: contentStack)
         addPageSection(makeFlexiblePageSpacer(), to: contentStack)
 
         historyView.drawsBackground = false
@@ -2917,6 +2994,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         historyView.autohidesScrollers = true
 
         let historyDocumentView = FlippedLayoutView()
+        historyDocumentView.identifier = NSUserInterfaceItemIdentifier("history.document")
         historyDocumentView.translatesAutoresizingMaskIntoConstraints = false
         historyView.documentView = historyDocumentView
         historyDocumentView.addSubview(contentStack)
@@ -3370,8 +3448,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         dictionarySummaryLabel.stringValue = presentation.summaryText
         dictionaryPendingReviewLabel.stringValue = presentation.pendingReviewText
 
+        rebuildDictionaryCollections()
         rebuildDictionaryTermRows()
         rebuildDictionarySuggestionRows()
+        syncDictionaryContentPresentation()
     }
 
     private func configureHistoryUsageMetricCards() {
@@ -3389,23 +3469,58 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func makeHistoryUsageMetricCard(for metric: HistoryUsageMetric) -> NSView {
         let card = ThemedSurfaceView(style: .row)
         card.identifier = NSUserInterfaceItemIdentifier("history.usage.metric.\(metric.rawValue)")
+        card.translatesAutoresizingMaskIntoConstraints = false
 
-        let titleLabel = makeSubtleCaption(metric.title)
+        let accentColor = historyUsageMetricAccentColor(for: metric)
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(
+            systemSymbolName: metric.symbolName,
+            accessibilityDescription: metric.title
+        )?.withSymbolConfiguration(.init(pointSize: 17, weight: .semibold))
+        iconView.contentTintColor = accentColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconContainer = NSView()
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        iconContainer.wantsLayer = true
+        iconContainer.layer?.cornerRadius = 21
+        iconContainer.layer?.borderWidth = 2
+        iconContainer.layer?.borderColor = accentColor.withAlphaComponent(0.9).cgColor
+        iconContainer.layer?.backgroundColor = accentColor.withAlphaComponent(0.06).cgColor
+        iconContainer.addSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconContainer.widthAnchor.constraint(equalToConstant: 42),
+            iconContainer.heightAnchor.constraint(equalToConstant: 42),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor)
+        ])
+
+        let titleLabel = NSTextField(labelWithString: metric.title)
+        titleLabel.font = .systemFont(ofSize: 13.5, weight: .medium)
+        titleLabel.textColor = .secondaryLabelColor
         titleLabel.maximumNumberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
 
         let valueLabel = NSTextField(labelWithString: "0")
-        valueLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        valueLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        valueLabel.textColor = .labelColor
         valueLabel.maximumNumberOfLines = 1
         valueLabel.lineBreakMode = .byTruncatingTail
         valueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [titleLabel, valueLabel])
+        let subtitleLabel = NSTextField(labelWithString: metric.subtitle)
+        subtitleLabel.font = .systemFont(ofSize: 12.5)
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.maximumNumberOfLines = 1
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+
+        let stack = NSStackView(views: [iconContainer, titleLabel, valueLabel, subtitleLabel])
         stack.orientation = .vertical
-        stack.spacing = 4
+        stack.spacing = 8
         stack.alignment = .leading
-        pinCardContent(stack, into: card)
-        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        pinCardContent(stack, into: card, horizontalPadding: 18, verticalPadding: 18)
+        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
         card.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         card.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -3426,51 +3541,40 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             subview.removeFromSuperview()
         }
 
-        let visibleMetrics = HistoryUsageMetric.allCases
-        let columns = 2
-        var previousRow: NSView?
-
-        for index in stride(from: 0, to: visibleMetrics.count, by: columns) {
-            let rowMetrics = Array(visibleMetrics[index..<min(index + columns, visibleMetrics.count)])
-            let rowCards = rowMetrics.compactMap { historyUsageMetricCardViews[$0] }
-            let row = NSStackView(views: rowCards)
-            row.orientation = .horizontal
-            row.spacing = 8
-            row.alignment = .top
-            row.distribution = .fillEqually
-            row.translatesAutoresizingMaskIntoConstraints = false
-            row.setContentHuggingPriority(.required, for: .vertical)
-            row.setContentCompressionResistancePriority(.required, for: .vertical)
-            historyUsageCardsStack.addSubview(row)
-            NSLayoutConstraint.activate([
-                row.leadingAnchor.constraint(equalTo: historyUsageCardsStack.leadingAnchor),
-                row.trailingAnchor.constraint(equalTo: historyUsageCardsStack.trailingAnchor),
-                row.heightAnchor.constraint(equalToConstant: 69)
-            ])
-
-            if let previousRow {
-                row.topAnchor.constraint(equalTo: previousRow.bottomAnchor, constant: 8).isActive = true
-            } else {
-                row.topAnchor.constraint(equalTo: historyUsageCardsStack.topAnchor).isActive = true
-            }
-
-            previousRow = row
-        }
-
-        previousRow?.bottomAnchor.constraint(equalTo: historyUsageCardsStack.bottomAnchor).isActive = true
+        let rowCards = HistoryUsageMetric.allCases.compactMap { historyUsageMetricCardViews[$0] }
+        let row = NSStackView(views: rowCards)
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.setContentHuggingPriority(.required, for: .vertical)
+        row.setContentCompressionResistancePriority(.required, for: .vertical)
+        historyUsageCardsStack.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: historyUsageCardsStack.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: historyUsageCardsStack.trailingAnchor),
+            row.topAnchor.constraint(equalTo: historyUsageCardsStack.topAnchor),
+            row.bottomAnchor.constraint(equalTo: historyUsageCardsStack.bottomAnchor)
+        ])
     }
 
     private func configureHistoryUsageDetailCard() {
+        historyUsageDetailCard.identifier = NSUserInterfaceItemIdentifier("history.usage.detail")
         historyUsageDetailTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         historyUsageDetailSubtitleLabel.font = .systemFont(ofSize: 12)
         historyUsageDetailSubtitleLabel.textColor = .secondaryLabelColor
         historyUsageDetailSubtitleLabel.maximumNumberOfLines = 0
         historyUsageDetailSubtitleLabel.lineBreakMode = .byWordWrapping
+        historyUsageHeatmapTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
 
         historyUsageTimeRangePopup.removeAllItems()
         historyUsageTimeRangePopup.addItems(withTitles: HistoryUsageTimeRange.allCases.map(\.title))
         historyUsageTimeRangePopup.target = self
         historyUsageTimeRangePopup.action = #selector(historyUsageTimeRangeChanged(_:))
+        historyUsageTimeRangePopup.leadingSymbolName = "calendar"
+        historyUsageTimeRangePopup.setContentHuggingPriority(.required, for: .horizontal)
+        historyUsageTimeRangePopup.setContentCompressionResistancePriority(.required, for: .horizontal)
         syncHistoryUsageTimeRangePopupSelection()
 
         historyUsageLineChartView.translatesAutoresizingMaskIntoConstraints = false
@@ -3479,19 +3583,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         historyUsageHeatmapView.translatesAutoresizingMaskIntoConstraints = false
         historyUsageHeatmapView.heightAnchor.constraint(equalToConstant: 170).isActive = true
 
-        let headerRow = NSStackView(views: [
-            historyUsageDetailTitleLabel,
-            NSView(),
-            historyUsageTimeRangePopup
-        ])
-        headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
-        headerRow.spacing = 10
-
         let stack = NSStackView(views: [
-            headerRow,
+            historyUsageDetailTitleLabel,
             historyUsageDetailSubtitleLabel,
             historyUsageLineChartView,
+            historyUsageHeatmapTitleLabel,
             historyUsageHeatmapView
         ])
         stack.orientation = .vertical
@@ -3509,12 +3605,38 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    private func historyUsageMetricAccentColor(for metric: HistoryUsageMetric) -> NSColor {
+        switch metric {
+        case .sessions:
+            return interfaceColor(
+                light: NSColor.systemBlue.darker(),
+                dark: NSColor.systemBlue.lighter()
+            )
+        case .characters:
+            return interfaceColor(
+                light: NSColor.systemGreen.darker(),
+                dark: NSColor.systemGreen.lighter()
+            )
+        case .words:
+            return interfaceColor(
+                light: NSColor.systemPurple.darker(),
+                dark: NSColor.systemPurple.lighter()
+            )
+        case .recordingDuration:
+            return interfaceColor(
+                light: NSColor.systemOrange.darker(),
+                dark: NSColor.systemOrange.lighter()
+            )
+        }
+    }
+
     private func refreshHistoryUsageDetail(entries: [HistoryEntry]) {
         guard let selectedMetric = historyUsageSelectedMetric else {
             historyUsageDetailCard.isHidden = true
             return
         }
 
+        let accentColor = historyUsageMetricAccentColor(for: selectedMetric)
         let visualization = SettingsWindowSupport.historyUsageVisualization(
             entries: entries,
             metric: selectedMetric,
@@ -3522,13 +3644,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
         historyUsageDetailTitleLabel.stringValue = "\(selectedMetric.title) Trend"
         historyUsageDetailSubtitleLabel.stringValue =
-            "Range: \(historyUsageTimeRange.title) • \(visualization.granularity.title) (\(selectedMetric.lineChartUnit)) • Heatmap: Monday–Sunday × hour"
+            "Range: \(historyUsageTimeRange.title) • \(visualization.granularity.title) (\(selectedMetric.lineChartUnit))"
+        historyUsageHeatmapTitleLabel.stringValue = "\(selectedMetric.title) Heatmap"
         historyUsageLineChartView.metricTitle = selectedMetric.title
+        historyUsageLineChartView.accentColor = accentColor
         historyUsageLineChartView.points = visualization.timeline.map { point in
             .init(date: point.date, value: point.value)
         }
         historyUsageLineChartView.granularity = visualization.granularity
         historyUsageHeatmapView.metricTitle = selectedMetric.title
+        historyUsageHeatmapView.accentColor = accentColor
         historyUsageHeatmapView.values = visualization.heatmap
         historyUsageDetailCard.isHidden = false
     }
@@ -3540,10 +3665,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let isSelected = selectedMetric == metric
             card.layer?.borderWidth = isSelected ? 1.8 : 1
             card.layer?.borderColor = (isSelected
-                ? interfaceColor(
-                    light: NSColor.systemBlue.darker(),
-                    dark: NSColor.systemBlue.lighter()
-                )
+                ? historyUsageMetricAccentColor(for: metric)
                 : cardBorderColor).cgColor
         }
     }
@@ -3591,6 +3713,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if pointInHistoryUsageDetailCard(location, container: container) {
             return
         }
+        if pointInHistoryUsageTimeRangePopup(location, container: container) {
+            return
+        }
 
         historyUsageSelectedMetric = nil
         applyHistoryUsageMetricSelectionState()
@@ -3611,6 +3736,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func pointInHistoryUsageDetailCard(_ point: NSPoint, container: NSView) -> Bool {
         guard !historyUsageDetailCard.isHidden else { return false }
         let frame = historyUsageDetailCard.convert(historyUsageDetailCard.bounds, to: container)
+        return frame.contains(point)
+    }
+
+    private func pointInHistoryUsageTimeRangePopup(_ point: NSPoint, container: NSView) -> Bool {
+        guard !historyUsageTimeRangePopup.isHidden else { return false }
+        let frame = historyUsageTimeRangePopup.convert(historyUsageTimeRangePopup.bounds, to: container)
         return frame.contains(point)
     }
 
@@ -3636,18 +3767,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func filteredDictionaryEntries() -> [DictionaryEntry] {
-        let query = DictionaryNormalization.normalized(dictionarySearchField.stringValue)
-        guard !query.isEmpty else { return model.dictionaryEntries }
-
-        return model.dictionaryEntries.filter { entry in
-            if DictionaryNormalization.normalized(entry.canonical).contains(query) {
-                return true
-            }
-
-            return entry.aliases.contains { alias in
-                DictionaryNormalization.normalized(alias).contains(query)
-            }
-        }
+        SettingsWindowSupport.filteredDictionaryEntries(
+            model.dictionaryEntries,
+            query: dictionarySearchField.stringValue,
+            selection: dictionarySelectedCollection
+        )
     }
 
     private func rebuildDictionaryTermRows() {
@@ -3655,7 +3779,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         guard !entries.isEmpty else {
             updateDictionaryTermsRowsHeight(forVisibleRowCount: 1)
             let message = dictionarySearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "No dictionary terms yet."
+                ? dictionaryEmptyStateText()
                 : "No terms match your search."
             let messageLabel = makeBodyLabel(message)
             replaceArrangedSubviews(
@@ -3694,17 +3818,73 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
     }
 
+    private func syncDictionaryContentPresentation() {
+        let filteredCount = filteredDictionaryEntries().count
+        let totalTermCount = model.dictionaryEntries.count
+        let suggestionCount = model.dictionarySuggestions.count
+        dictionaryCollectionsFooterLabel.textColor = currentThemePalette.accent
+
+        switch dictionarySelectedCollection {
+        case .allTerms:
+            dictionaryContentTitleLabel.stringValue = "All Terms"
+            dictionaryContentSubtitleLabel.stringValue =
+                filteredCount == totalTermCount
+                    ? "\(totalTermCount) term\(totalTermCount == 1 ? "" : "s") in your library."
+                    : "\(filteredCount) matching term\(filteredCount == 1 ? "" : "s") from \(totalTermCount)."
+            dictionaryCollectionsFooterLabel.stringValue = "\(totalTermCount) terms"
+        case let .tag(tag):
+            dictionaryContentTitleLabel.stringValue = tag
+            dictionaryContentSubtitleLabel.stringValue =
+                filteredCount == 0
+                    ? "No terms currently use this tag."
+                    : "\(filteredCount) tagged term\(filteredCount == 1 ? "" : "s")."
+            dictionaryCollectionsFooterLabel.stringValue = "\(filteredCount) tagged"
+        case .suggestions:
+            dictionaryContentTitleLabel.stringValue = "Suggestions"
+            dictionaryContentSubtitleLabel.stringValue =
+                suggestionCount == 0
+                    ? "No pending suggestions."
+                    : "\(suggestionCount) suggestion\(suggestionCount == 1 ? "" : "s") awaiting review."
+            dictionaryCollectionsFooterLabel.stringValue = "\(suggestionCount) pending"
+        }
+
+        let showsSuggestions = dictionarySelectedCollection == .suggestions
+        dictionarySearchField.isEnabled = !showsSuggestions
+        dictionaryTermHeaderRow.isHidden = showsSuggestions
+        dictionaryTermsRowsScrollView?.isHidden = showsSuggestions
+        dictionarySuggestionRowsScrollView?.isHidden = !showsSuggestions
+    }
+
+    private func dictionaryEmptyStateText() -> String {
+        switch dictionarySelectedCollection {
+        case .allTerms:
+            return "No dictionary terms yet."
+        case let .tag(tag):
+            return "No terms tagged “\(tag)” yet."
+        case .suggestions:
+            return "No pending suggestions."
+        }
+    }
+
     private func makeDictionaryTermRow(entry: DictionaryEntry) -> NSView {
         let presentation = SettingsPresentation.dictionaryRowPresentation(entry: entry)
 
         let canonicalLabel = NSTextField(labelWithString: presentation.canonical)
         canonicalLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        canonicalLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         canonicalLabel.lineBreakMode = .byTruncatingTail
         canonicalLabel.maximumNumberOfLines = 1
+        canonicalLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
 
-        let aliasLabel = makeSubtleCaption(presentation.aliasSummary)
-        aliasLabel.maximumNumberOfLines = 1
-        aliasLabel.lineBreakMode = .byTruncatingTail
+        let bindingLabel = makeSubtleCaption(presentation.bindingSummary)
+        bindingLabel.maximumNumberOfLines = 2
+        bindingLabel.lineBreakMode = .byTruncatingTail
+        bindingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        bindingLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+
+        let tagBadge = makeDictionaryTagBadge(text: presentation.tagLabel, isActive: entry.tag != nil)
+        tagBadge.setContentHuggingPriority(.required, for: .horizontal)
+        tagBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let stateLabel = NSTextField(labelWithString: presentation.enabledStateText)
         stateLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
@@ -3716,12 +3896,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         stateLabel.maximumNumberOfLines = 1
         stateLabel.lineBreakMode = .byTruncatingTail
-
-        let textStack = NSStackView(views: [canonicalLabel, aliasLabel])
-        textStack.orientation = .vertical
-        textStack.spacing = 2
-        textStack.alignment = .leading
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stateLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
 
         let actionsButton = makeOverflowActionButton(
             accessibilityLabel: "Term actions",
@@ -3729,7 +3904,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
         actionsButton.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
 
-        let row = NSStackView(views: [textStack, NSView(), stateLabel, actionsButton])
+        let row = NSStackView(views: [
+            canonicalLabel,
+            bindingLabel,
+            tagBadge,
+            NSView(),
+            stateLabel,
+            actionsButton
+        ])
         row.orientation = .horizontal
         row.spacing = 10
         row.alignment = .centerY
@@ -3987,32 +4169,138 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc
+    private func openHistorySection() {
+        selectSection(.history)
+    }
+
+    @objc
     private func openDictionarySection() {
         selectSection(.dictionary)
     }
 
     @objc
-    private func librarySubviewChanged(_ sender: NSSegmentedControl) {
-        let selectedSection: SettingsSection = sender.selectedSegment == 0 ? .history : .dictionary
-        selectSection(selectedSection)
+    private func dictionarySearchChanged(_ sender: NSSearchField) {
+        rebuildDictionaryTermRows()
+        syncDictionaryContentPresentation()
     }
 
     @objc
-    private func dictionarySearchChanged(_ sender: NSSearchField) {
-        rebuildDictionaryTermRows()
+    private func historySearchChanged(_ sender: NSSearchField) {
+        historyCurrentPage = 0
+        rebuildHistoryRows()
+    }
+
+    @objc
+    private func historyDateFilterChanged(_ sender: NSPopUpButton) {
+        guard
+            sender.indexOfSelectedItem >= 0,
+            let selectedFilter = HistoryListDateFilter(rawValue: sender.indexOfSelectedItem)
+        else {
+            return
+        }
+
+        historyDateFilter = selectedFilter
+        historyCurrentPage = 0
+        rebuildHistoryRows()
+    }
+
+    @objc
+    private func showHistorySortMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+
+        for sortOrder in HistoryListSortOrder.allCases {
+            let item = NSMenuItem(
+                title: sortOrder.title,
+                action: #selector(selectHistorySortOrder(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.state = historySortOrder == sortOrder ? .on : .off
+            item.representedObject = sortOrder.rawValue
+            menu.addItem(item)
+        }
+
+        showMenu(menu, anchoredTo: sender)
+    }
+
+    @objc
+    private func selectHistorySortOrder(_ sender: NSMenuItem) {
+        guard
+            let rawValue = sender.representedObject as? Int,
+            let selectedSortOrder = HistoryListSortOrder(rawValue: rawValue)
+        else {
+            return
+        }
+
+        historySortOrder = selectedSortOrder
+        historyCurrentPage = 0
+        rebuildHistoryRows()
+    }
+
+    @objc
+    private func exportHistoryEntries(_ sender: NSButton) {
+        let entries = currentFilteredHistoryEntries()
+        guard !entries.isEmpty else { return }
+
+        let savePanel = NSSavePanel()
+        savePanel.canCreateDirectories = true
+        savePanel.nameFieldStringValue = "VoicePi-History.txt"
+        savePanel.allowedContentTypes = [.plainText]
+
+        guard savePanel.runModal() == .OK, let destinationURL = savePanel.url else {
+            return
+        }
+
+        let exportedText = entries
+            .map { entry in
+                let presentation = SettingsWindowSupport.historyListRowPresentation(for: entry)
+                return [
+                    presentation.timestampText,
+                    entry.text
+                ].joined(separator: "\n")
+            }
+            .joined(separator: "\n\n---\n\n")
+
+        do {
+            try exportedText.write(to: destinationURL, atomically: true, encoding: .utf8)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    @objc
+    private func selectHistoryPage(_ sender: NSButton) {
+        historyCurrentPage = sender.tag
+        rebuildHistoryRows()
+    }
+
+    @objc
+    private func goToPreviousHistoryPage() {
+        guard historyCurrentPage > 0 else { return }
+        historyCurrentPage -= 1
+        rebuildHistoryRows()
+    }
+
+    @objc
+    private func goToNextHistoryPage() {
+        let totalEntries = currentFilteredHistoryEntries().count
+        let totalPages = max(1, Int(ceil(Double(max(1, totalEntries)) / 6.0)))
+        guard historyCurrentPage < totalPages - 1 else { return }
+        historyCurrentPage += 1
+        rebuildHistoryRows()
     }
 
     @objc
     private func addDictionaryTermFromSettings() {
-        guard let importedText = presentDictionaryImportEditor(
-            title: "Add Dictionary Terms",
-            confirmTitle: "Add",
-            informativeText: "One entry per line. Optional aliases: Canonical | alias one, alias two."
+        guard let term = presentDictionaryTermEditor(
+            title: "Add Dictionary Term",
+            confirmTitle: "Add"
         ) else {
             return
         }
 
-        model.importDictionaryTerms(fromPlainText: importedText)
+        model.addDictionaryTerm(canonical: term.canonical, aliases: term.aliases, tag: term.tag)
+        dictionarySelectedCollection = term.tag.map(DictionaryCollectionSelection.tag) ?? .allTerms
         reloadFromModel()
     }
 
@@ -4029,6 +4317,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc
     private func showDictionaryCollectionActions(_ sender: NSButton) {
         let menu = NSMenu()
+
+        let importTextItem = NSMenuItem(
+            title: "Import Text",
+            action: #selector(importDictionaryTermsFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        importTextItem.target = self
+        menu.addItem(importTextItem)
+
+        menu.addItem(.separator())
 
         let exportTextItem = NSMenuItem(
             title: "Export Text",
@@ -4047,6 +4345,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         menu.addItem(exportJSONItem)
 
         showMenu(menu, anchoredTo: sender)
+    }
+
+    @objc
+    private func importDictionaryTermsFromMenu(_ sender: NSMenuItem) {
+        guard let importedText = presentDictionaryImportEditor(
+            title: "Import Dictionary Terms",
+            confirmTitle: "Import",
+            informativeText: "One entry per line. Optional aliases: Canonical | alias one, alias two."
+        ) else {
+            return
+        }
+
+        model.importDictionaryTerms(fromPlainText: importedText)
+        dictionarySelectedCollection = .allTerms
+        reloadFromModel()
     }
 
     @objc
@@ -4245,12 +4558,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             title: "Edit Dictionary Term",
             confirmTitle: "Save",
             canonical: entry.canonical,
-            aliases: entry.aliases
+            aliases: entry.aliases,
+            tag: entry.tag
         ) else {
             return
         }
 
-        model.editDictionaryTerm(id: id, canonical: term.canonical, aliases: term.aliases)
+        model.editDictionaryTerm(id: id, canonical: term.canonical, aliases: term.aliases, tag: term.tag)
+        dictionarySelectedCollection = term.tag.map(DictionaryCollectionSelection.tag) ?? .allTerms
         reloadFromModel()
     }
 
@@ -4291,9 +4606,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        selectSection(.dictionary)
-        dictionarySearchField.stringValue = suggestion.proposedCanonical
-        rebuildDictionaryTermRows()
+        guard let term = presentDictionaryTermEditor(
+            title: "Review Suggestion",
+            confirmTitle: "Save Term",
+            canonical: suggestion.proposedCanonical,
+            aliases: suggestion.proposedAliases,
+            tag: nil
+        ) else {
+            return
+        }
+
+        model.addDictionaryTerm(canonical: term.canonical, aliases: term.aliases, tag: term.tag)
+        model.dismissDictionarySuggestion(id: id)
+        dictionarySelectedCollection = term.tag.map(DictionaryCollectionSelection.tag) ?? .allTerms
+        reloadFromModel()
     }
 
     @objc
@@ -4308,7 +4634,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let index = max(0, sender.indexOfSelectedItem)
         model.interfaceTheme = InterfaceTheme.allCases[index]
         applyThemeAppearance()
-        refreshPermissionLabels()
+        reloadFromModel()
     }
 
     @objc
@@ -4917,27 +5243,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         title: String,
         confirmTitle: String,
         canonical: String = "",
-        aliases: [String] = []
-    ) -> (canonical: String, aliases: [String])? {
+        aliases: [String] = [],
+        tag: String? = nil
+    ) -> (canonical: String, aliases: [String], tag: String?)? {
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = "Edit this term only. Aliases are comma-separated."
+        alert.informativeText = "Edit one term at a time. Aliases are comma-separated. Tags can be created or rebound here."
 
         let canonicalField = NSTextField(string: canonical)
         canonicalField.placeholderString = "Canonical term"
         let aliasesField = NSTextField(string: aliases.joined(separator: ", "))
         aliasesField.placeholderString = "alias one, alias two"
+        let tagField = NSTextField(string: tag ?? "")
+        tagField.placeholderString = "Tag (optional)"
 
         let accessoryStack = NSStackView(views: [
             makeDictionaryEditorRow(title: "Canonical", field: canonicalField),
-            makeDictionaryEditorRow(title: "Aliases", field: aliasesField)
+            makeDictionaryEditorRow(title: "Aliases", field: aliasesField),
+            makeDictionaryEditorRow(title: "Tag", field: tagField)
         ])
         accessoryStack.orientation = .vertical
         accessoryStack.spacing = 10
         accessoryStack.alignment = .leading
         accessoryStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let accessoryContainer = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 84))
+        let accessoryContainer = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 124))
         accessoryContainer.addSubview(accessoryStack)
         NSLayoutConstraint.activate([
             accessoryStack.leadingAnchor.constraint(equalTo: accessoryContainer.leadingAnchor),
@@ -4958,8 +5288,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             Self.bindingValues(from: aliasesField.stringValue),
             excluding: normalizedCanonical
         )
+        let normalizedTag = DictionaryNormalization.optionalTrimmed(tagField.stringValue)
 
-        return (normalizedCanonical, normalizedAliases)
+        return (normalizedCanonical, normalizedAliases, normalizedTag)
     }
 
     private func makeDictionaryEditorRow(title: String, field: NSTextField) -> NSView {
@@ -5069,8 +5400,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         targetLanguagePopup.syncTheme()
         activePromptPopup.syncTheme()
         historyUsageTimeRangePopup.syncTheme()
+        historyDateFilterPopup.syncTheme()
         syncAppearanceControlTheme()
         refreshNavigationAppearance()
+        applyDictionaryCollectionSelectionState()
         applyHistoryUsageMetricSelectionState()
     }
 
@@ -5793,9 +6126,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         promptEditorWebsiteHostsField = websiteBindingsField
         promptEditorBindingStatusLabel = bindingStatusLabel
         promptEditorBodyTextView = textView
+        promptEditorSheetWindow = sheet
 
         if let attachedSheet = window?.attachedSheet {
             window?.endSheet(attachedSheet)
+        }
+        if RuntimeEnvironment.isRunningTests {
+            sheet.orderOut(nil)
+            sheet.initialFirstResponder = textView
+            sheet.makeFirstResponder(textView)
+            return
         }
         window?.beginSheet(sheet)
         sheet.initialFirstResponder = textView
@@ -5899,9 +6239,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         promptEditorWebsiteHostsField = nil
         promptEditorBindingStatusLabel = nil
         promptEditorBodyTextView = nil
-        if let sheet = window?.attachedSheet {
+        if let sheet = promptEditorSheetWindow, window?.attachedSheet == sheet {
             window?.endSheet(sheet)
         }
+        promptEditorSheetWindow?.orderOut(nil)
+        promptEditorSheetWindow = nil
     }
 
     private func presentExternalProcessorManagerSheet() {
@@ -5934,11 +6276,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
             externalProcessorManagerSheetWindow = sheet
             reloadExternalProcessorManagerSheet()
-            window?.beginSheet(sheet)
-            sheet.makeKeyAndOrderFront(nil)
+            if RuntimeEnvironment.isRunningTests {
+                sheet.orderOut(nil)
+            } else {
+                window?.beginSheet(sheet)
+                sheet.makeKeyAndOrderFront(nil)
+            }
         } else {
             reloadExternalProcessorManagerSheet()
-            externalProcessorManagerSheetWindow?.makeKeyAndOrderFront(nil)
+            if RuntimeEnvironment.isRunningTests {
+                externalProcessorManagerSheetWindow?.orderOut(nil)
+            } else {
+                externalProcessorManagerSheetWindow?.makeKeyAndOrderFront(nil)
+            }
         }
     }
 
@@ -5972,9 +6322,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         externalProcessorManagerEnabledSwitches = [:]
         externalProcessorManagerArgumentFields = [:]
 
-        if let sheet = externalProcessorManagerSheetWindow {
+        if let sheet = externalProcessorManagerSheetWindow, window?.attachedSheet == sheet {
             window?.endSheet(sheet)
         }
+        externalProcessorManagerSheetWindow?.orderOut(nil)
         externalProcessorManagerSheetWindow = nil
     }
 
@@ -6751,17 +7102,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func makeLibrarySubviewControl(selectedSection: SettingsSection) -> NSView {
-        let control = NSSegmentedControl(
-            labels: ["History", "Dictionary"],
-            trackingMode: .selectOne,
+        let control = LibrarySubviewTabControl(
+            selectedSection: selectedSection,
             target: self,
-            action: #selector(librarySubviewChanged(_:))
+            historyAction: #selector(openHistorySection),
+            dictionaryAction: #selector(openDictionarySection)
         )
-        control.segmentStyle = .capsule
-        control.controlSize = .regular
-        control.setWidth(112, forSegment: 0)
-        control.setWidth(118, forSegment: 1)
-        control.selectedSegment = selectedSection == .dictionary ? 1 : 0
         librarySubviewControls.append(control)
 
         let row = NSStackView(views: [control, NSView()])
@@ -6773,9 +7119,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func syncLibrarySubviewControls(for section: SettingsSection) {
         guard section == .history || section == .dictionary else { return }
-        let selectedSegment = section == .history ? 0 : 1
         for control in librarySubviewControls {
-            control.selectedSegment = selectedSegment
+            control.selectedSection = section
         }
     }
 
@@ -7642,107 +7987,385 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return card
     }
 
-    private func makeHistorySummaryCard() -> NSView {
+    private func makeHistorySessionHeaderView() -> NSView {
+        let row = NSStackView(views: [NSView(), historySessionCountLabel])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        return row
+    }
+
+    private func makeHistoryOverviewCard() -> NSView {
         let card = makeCardView()
-        let privacyTitle = makeSectionTitle("Your data stays private")
-        let privacyDescription = makeBodyLabel(
-            "VoicePi stores history only on this device, and does not upload transcript history."
-        )
+        historyUsageTimeRangePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 104).isActive = true
+
+        let headerRow = NSStackView(views: [
+            makeSectionTitle("Overview"),
+            NSView(),
+            historyUsageTimeRangePopup
+        ])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 10
+
         let stack = NSStackView(views: [
-            historySummaryLabel,
-            historyUsageStatsLabel,
+            headerRow,
             historyUsageCardsStack,
-            historyUsageDetailCard,
-            makeDictionaryListSeparator(),
-            privacyTitle,
-            privacyDescription
+            historyUsageDetailCard
         ])
         stack.orientation = .vertical
-        stack.spacing = 8
+        stack.spacing = 12
         stack.alignment = .leading
+
         historyUsageCardsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         historyUsageDetailCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
         pinCardContent(stack, into: card)
         return card
+    }
+
+    private func makeHistoryToolbarView() -> NSView {
+        let filterButton = makeSecondaryActionButton(
+            title: "Filter",
+            action: #selector(showHistorySortMenu(_:))
+        )
+        filterButton.image = NSImage(
+            systemSymbolName: "line.3.horizontal.decrease.circle",
+            accessibilityDescription: "Filter"
+        )
+        filterButton.imagePosition = .imageLeading
+        filterButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        let exportButton = makeSecondaryActionButton(
+            title: "Export",
+            action: #selector(exportHistoryEntries(_:))
+        )
+        exportButton.image = NSImage(
+            systemSymbolName: "square.and.arrow.down",
+            accessibilityDescription: "Export"
+        )
+        exportButton.imagePosition = .imageLeading
+        exportButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        historySearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        historyDateFilterPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 126).isActive = true
+
+        let row = NSStackView(views: [
+            historySearchField,
+            historyDateFilterPopup,
+            filterButton,
+            exportButton
+        ])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.distribution = .fillProportionally
+        return row
     }
 
     private func makeHistoryEntriesCard() -> NSView {
         let card = makeCardView()
-        let rowsScrollView = makeHistoryRowsScrollView()
-        let stack = NSStackView(views: [rowsScrollView])
+        let stack = NSStackView(views: [historyRowsStack])
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
-        rowsScrollView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        historyRowsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         pinCardContent(stack, into: card)
         return card
     }
 
-    private func makeDictionarySummaryCard() -> NSView {
+    private func makeHistoryPaginationView() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        historyPaginationStack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(historyPaginationStack)
+        NSLayoutConstraint.activate([
+            historyPaginationStack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            historyPaginationStack.topAnchor.constraint(equalTo: container.topAnchor),
+            historyPaginationStack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            historyPaginationStack.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor),
+            historyPaginationStack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor)
+        ])
+        return container
+    }
+
+    private func configureDictionaryTermHeaderRow() {
+        for arrangedSubview in dictionaryTermHeaderRow.arrangedSubviews {
+            dictionaryTermHeaderRow.removeArrangedSubview(arrangedSubview)
+            arrangedSubview.removeFromSuperview()
+        }
+
+        let termLabel = makeDictionaryHeaderLabel("Term")
+        termLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+        let bindingsLabel = makeDictionaryHeaderLabel("Bindings")
+        bindingsLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        let tagLabel = makeDictionaryHeaderLabel("Tag")
+        tagLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+        let stateLabel = makeDictionaryHeaderLabel("State")
+        stateLabel.alignment = .right
+        stateLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        let spacer = NSView()
+        spacer.widthAnchor.constraint(equalToConstant: SettingsLayoutMetrics.actionButtonHeight).isActive = true
+
+        [termLabel, bindingsLabel, tagLabel, NSView(), stateLabel, spacer].forEach {
+            dictionaryTermHeaderRow.addArrangedSubview($0)
+        }
+        dictionaryTermHeaderRow.orientation = .horizontal
+        dictionaryTermHeaderRow.spacing = 10
+        dictionaryTermHeaderRow.alignment = .centerY
+    }
+
+    private func makeDictionaryHeaderLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text.uppercased())
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .tertiaryLabelColor
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        return label
+    }
+
+    private func makeDictionarySidebarHeader(searchToolbar: NSView) -> NSView {
+        let statusStack = NSStackView(views: [dictionarySummaryLabel, dictionaryPendingReviewLabel])
+        statusStack.orientation = .vertical
+        statusStack.spacing = 4
+        statusStack.alignment = .leading
+        statusStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [searchToolbar, statusStack])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        searchToolbar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        statusStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func makeDictionarySidebarColumn(headerView: NSView, collectionsCard: NSView) -> NSView {
+        let stack = makeVerticalStack([headerView, collectionsCard], spacing: 12)
+        headerView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        collectionsCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: SettingsLayoutMetrics.dictionarySidebarWidth).isActive = true
+        return stack
+    }
+
+    private func makeDictionaryCollectionsCard() -> NSView {
         let card = makeCardView()
-        let hintLabel = makeSubtleCaption("Keep your common terms here to stabilize recognition output.")
-        hintLabel.maximumNumberOfLines = 2
         let stack = NSStackView(views: [
-            dictionarySummaryLabel,
-            dictionaryPendingReviewLabel,
-            hintLabel
+            makeSectionHeader(title: "Collections", subtitle: "Browse all terms, tag buckets, or pending suggestions."),
+            dictionaryCollectionsStack,
+            NSView(),
+            dictionaryCollectionsFooterLabel
         ])
         stack.orientation = .vertical
-        stack.spacing = 4
+        stack.spacing = 10
         stack.alignment = .leading
+        dictionaryCollectionsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        dictionaryCollectionsFooterLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         pinCardContent(stack, into: card)
         return card
+    }
+
+    private func makeDictionaryContentCard(
+        termsRowsScrollView: NSScrollView,
+        suggestionRowsScrollView: NSScrollView
+    ) -> NSView {
+        let card = makeCardView()
+        let stack = NSStackView(views: [
+            dictionaryContentTitleLabel,
+            dictionaryContentSubtitleLabel,
+            dictionaryTermHeaderRow,
+            termsRowsScrollView,
+            suggestionRowsScrollView
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        dictionaryContentTitleLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        dictionaryContentSubtitleLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        dictionaryTermHeaderRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        termsRowsScrollView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        suggestionRowsScrollView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        pinCardContent(stack, into: card)
+        return card
+    }
+
+    private func rebuildDictionaryCollections() {
+        let collections = SettingsWindowSupport.dictionaryCollections(
+            entries: model.dictionaryEntries,
+            suggestions: model.dictionarySuggestions
+        )
+        let availableSelections = Set(collections.map(\.selection))
+        if !availableSelections.contains(dictionarySelectedCollection) {
+            dictionarySelectedCollection = .allTerms
+        }
+
+        dictionaryCollectionRowViews = [:]
+        dictionaryCollectionLookup = [:]
+
+        let views = collections.map(makeDictionaryCollectionRow(collection:))
+        replaceArrangedSubviews(in: dictionaryCollectionsStack, with: views)
+        applyDictionaryCollectionSelectionState()
+    }
+
+    private func makeDictionaryCollectionRow(collection: DictionaryCollectionPresentation) -> NSView {
+        let row = ThemedSurfaceView(style: .row)
+        row.identifier = NSUserInterfaceItemIdentifier("dictionary.collection.\(collection.title)")
+
+        let titleLabel = NSTextField(labelWithString: collection.title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.textColor = .labelColor
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.toolTip = collection.title
+
+        let countLabel = NSTextField(labelWithString: "\(collection.count)")
+        countLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        countLabel.textColor = .secondaryLabelColor
+        countLabel.alignment = .center
+
+        let countBadge = ThemedSurfaceView(style: .pill)
+        countBadge.translatesAutoresizingMaskIntoConstraints = false
+        countBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        countBadge.setContentHuggingPriority(.required, for: .horizontal)
+        pinCardContent(countLabel, into: countBadge, horizontalPadding: 10, verticalPadding: 5)
+
+        let content = NSStackView(views: [titleLabel, NSView(), countBadge])
+        content.orientation = .horizontal
+        content.spacing = 10
+        content.alignment = .centerY
+        content.distribution = .fill
+
+        pinCardContent(content, into: row, horizontalPadding: 12, verticalPadding: 10)
+        row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+
+        let tapGesture = NSClickGestureRecognizer(
+            target: self,
+            action: #selector(selectDictionaryCollectionFromCard(_:))
+        )
+        row.addGestureRecognizer(tapGesture)
+
+        dictionaryCollectionRowViews[collection.selection] = row
+        dictionaryCollectionLookup[ObjectIdentifier(row)] = collection.selection
+        return row
+    }
+
+    private func applyDictionaryCollectionSelectionState() {
+        for (selection, row) in dictionaryCollectionRowViews {
+            let isSelected = selection == dictionarySelectedCollection
+            row.layer?.borderWidth = isSelected ? 1.5 : 1
+            row.layer?.borderColor = (isSelected ? currentThemePalette.accent : cardBorderColor).cgColor
+            row.layer?.backgroundColor = isSelected
+                ? currentThemePalette.accent.withAlphaComponent(0.12).cgColor
+                : SettingsWindowTheme.surfaceChrome(for: currentThemeAppearance, style: .row).background.cgColor
+        }
+    }
+
+    @objc
+    private func selectDictionaryCollectionFromCard(_ sender: NSClickGestureRecognizer) {
+        guard
+            let view = sender.view,
+            let selection = dictionaryCollectionLookup[ObjectIdentifier(view)]
+        else {
+            return
+        }
+
+        dictionarySelectedCollection = selection
+        refreshDictionarySection()
+    }
+
+    private func makeDictionaryTagBadge(text: String, isActive: Bool) -> NSView {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11.5, weight: .medium)
+        label.textColor = isActive ? currentThemePalette.accent : .secondaryLabelColor
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+
+        let badge = ThemedSurfaceView(style: .pill)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.wantsLayer = true
+        badge.layer?.backgroundColor = isActive
+            ? currentThemePalette.accent.withAlphaComponent(0.12).cgColor
+            : SettingsWindowTheme.surfaceChrome(for: currentThemeAppearance, style: .pill).background.cgColor
+        pinCardContent(label, into: badge, horizontalPadding: 10, verticalPadding: 6)
+        return badge
     }
 
     private func rebuildHistoryRows() {
         historyEntryByIdentifier = [:]
 
-        let entries = model.historyEntries.sorted { lhs, rhs in
-            lhs.createdAt > rhs.createdAt
-        }
-        if entries.isEmpty {
+        let filteredEntries = currentFilteredHistoryEntries()
+        historySessionCountLabel.stringValue = SettingsWindowSupport.historySessionCountText(
+            filteredCount: filteredEntries.count,
+            totalCount: model.historyEntries.count
+        )
+
+        let pageSize = 6
+        let totalPages = max(1, Int(ceil(Double(max(1, filteredEntries.count)) / Double(pageSize))))
+        historyCurrentPage = max(0, min(historyCurrentPage, totalPages - 1))
+
+        let startIndex = historyCurrentPage * pageSize
+        let pageEntries = Array(filteredEntries.dropFirst(startIndex).prefix(pageSize))
+
+        if pageEntries.isEmpty {
+            let message = SettingsWindowSupport.historyEmptyStateText(
+                totalEntryCount: model.historyEntries.count,
+                filteredEntryCount: filteredEntries.count,
+                query: historySearchField.stringValue
+            )
             replaceArrangedSubviews(
                 in: historyRowsStack,
-                with: [makeBodyLabel("No history yet.")]
+                with: [makeBodyLabel(message)]
             )
         } else {
-            let grouped = Dictionary(grouping: entries) { entry in
-                Calendar.current.startOfDay(for: entry.createdAt)
-            }
-            let sortedDays = grouped.keys.sorted(by: >)
-
-            var rows: [NSView] = []
-            for (dayIndex, day) in sortedDays.enumerated() {
-                rows.append(makeHistoryGroupLabel(historyDayHeadingText(for: day)))
-
-                guard let dayEntries = grouped[day] else { continue }
-                for entry in dayEntries {
-                    rows.append(makeHistoryRow(entry: entry))
-                }
-
-                if dayIndex < sortedDays.count - 1 {
-                    rows.append(makeHistoryGroupSpacer())
-                }
-            }
-            replaceArrangedSubviews(in: historyRowsStack, with: rows)
+            replaceArrangedSubviews(
+                in: historyRowsStack,
+                with: pageEntries.map { makeHistoryRow(entry: $0) }
+            )
         }
+
+        rebuildHistoryPagination(totalPages: totalPages)
     }
 
     private func makeHistoryRow(entry: HistoryEntry) -> NSView {
-        let timestampLabel = makeSubtleCaption(historyTimestampText(for: entry.createdAt))
+        let presentation = SettingsWindowSupport.historyListRowPresentation(for: entry)
+
+        let iconView = NSImageView()
+        iconView.image = NSImage(
+            systemSymbolName: "doc.text",
+            accessibilityDescription: "History entry"
+        )?.withSymbolConfiguration(.init(pointSize: 21, weight: .regular))
+        iconView.contentTintColor = .labelColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconContainer = ThemedSurfaceView(style: .pill)
+        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        iconContainer.addSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconContainer.widthAnchor.constraint(equalToConstant: 48),
+            iconContainer.heightAnchor.constraint(equalToConstant: 56),
+            iconView.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor)
+        ])
+
+        let timestampLabel = makeSubtleCaption(presentation.timestampText)
         timestampLabel.maximumNumberOfLines = 1
         timestampLabel.lineBreakMode = .byTruncatingTail
 
-        let textLabel = NSTextField(wrappingLabelWithString: entry.text)
-        textLabel.font = .systemFont(ofSize: 13)
-        textLabel.maximumNumberOfLines = 2
-        textLabel.lineBreakMode = .byTruncatingTail
+        let titleLabel = NSTextField(labelWithString: presentation.titleText)
+        titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
 
-        let textStack = NSStackView(views: [timestampLabel, textLabel])
-        textStack.orientation = .vertical
-        textStack.spacing = 3
-        textStack.alignment = .leading
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let excerptLabel = NSTextField(wrappingLabelWithString: presentation.excerptText)
+        excerptLabel.font = .systemFont(ofSize: 12.5)
+        excerptLabel.textColor = .secondaryLabelColor
+        excerptLabel.maximumNumberOfLines = 2
+        excerptLabel.lineBreakMode = .byTruncatingTail
+        excerptLabel.isHidden = presentation.excerptText.isEmpty
 
         let actionsButton = makeOverflowActionButton(
             accessibilityLabel: "History actions",
@@ -7752,76 +8375,180 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         actionsButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         historyEntryByIdentifier[entry.id.uuidString] = entry
 
-        let rowContent = NSStackView(views: [textStack, NSView(), actionsButton])
+        let badgeLabel = makeHistoryFileTypeBadge(presentation.fileTypeText)
+
+        let titleRow = NSStackView(views: [titleLabel, NSView(), badgeLabel, actionsButton])
+        titleRow.orientation = .horizontal
+        titleRow.spacing = 10
+        titleRow.alignment = .centerY
+
+        let metadataRow = NSStackView(views: [
+            makeHistoryMetadataItem(symbolName: "clock", text: presentation.durationText),
+            makeHistoryMetadataItem(symbolName: "text.alignleft", text: presentation.charactersText),
+            makeHistoryMetadataItem(symbolName: "text.word.spacing", text: presentation.wordsText)
+        ])
+        metadataRow.orientation = .horizontal
+        metadataRow.spacing = 14
+        metadataRow.alignment = .centerY
+
+        let textStack = NSStackView(views: [timestampLabel, titleRow, excerptLabel, metadataRow])
+        textStack.orientation = .vertical
+        textStack.spacing = 6
+        textStack.alignment = .leading
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let rowContent = NSStackView(views: [iconContainer, textStack])
         rowContent.orientation = .horizontal
-        rowContent.spacing = 10
-        rowContent.alignment = .centerY
+        rowContent.spacing = 12
+        rowContent.alignment = .top
 
         let row = makeCompactListRow(content: rowContent)
-        row.heightAnchor.constraint(greaterThanOrEqualToConstant: 70).isActive = true
+        row.heightAnchor.constraint(greaterThanOrEqualToConstant: 112).isActive = true
         return row
     }
 
-    private func historyTimestampText(for date: Date) -> String {
-        DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .short)
-    }
-
-    private func historyDayHeadingText(for date: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return "Today"
-        }
-        if calendar.isDateInYesterday(date) {
-            return "Yesterday"
-        }
-        return DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
-    }
-
-    private func makeHistoryGroupLabel(_ text: String) -> NSTextField {
+    private func makeHistoryFileTypeBadge(_ text: String) -> NSView {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 14, weight: .semibold)
-        label.textColor = .secondaryLabelColor
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = currentThemePalette.accent
+
+        let badge = ThemedSurfaceView(style: .pill)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.wantsLayer = true
+        badge.layer?.backgroundColor = currentThemePalette.accent.withAlphaComponent(0.12).cgColor
+        badge.layer?.borderColor = currentThemePalette.accent.withAlphaComponent(0.10).cgColor
+        pinCardContent(label, into: badge, horizontalPadding: 10, verticalPadding: 6)
+        return badge
+    }
+
+    private func makeHistoryMetadataItem(symbolName: String, text: String) -> NSView {
+        let iconView = NSImageView()
+        iconView.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: text
+        )?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+        iconView.contentTintColor = .secondaryLabelColor
+
+        let label = makeSubtleCaption(text)
+        label.maximumNumberOfLines = 1
+
+        let row = NSStackView(views: [iconView, label])
+        row.orientation = .horizontal
+        row.spacing = 5
+        row.alignment = .centerY
+        return row
+    }
+
+    private func currentFilteredHistoryEntries() -> [HistoryEntry] {
+        SettingsWindowSupport.filteredHistoryEntries(
+            model.historyEntries,
+            query: historySearchField.stringValue,
+            dateFilter: historyDateFilter,
+            sortOrder: historySortOrder
+        )
+    }
+
+    private func rebuildHistoryPagination(totalPages: Int) {
+        guard totalPages > 1 else {
+            historyPaginationStack.isHidden = true
+            for arrangedSubview in historyPaginationStack.arrangedSubviews {
+                historyPaginationStack.removeArrangedSubview(arrangedSubview)
+                arrangedSubview.removeFromSuperview()
+            }
+            return
+        }
+
+        historyPaginationStack.isHidden = false
+
+        var views: [NSView] = []
+        views.append(makeHistoryPaginationArrowButton(
+            symbolName: "chevron.left",
+            action: #selector(goToPreviousHistoryPage)
+        ))
+
+        for page in historyVisiblePageIndices(totalPages: totalPages, currentPage: historyCurrentPage) {
+            if page < 0 {
+                views.append(makeHistoryPaginationEllipsis())
+            } else {
+                views.append(
+                    makeHistoryPaginationPageButton(
+                        page: page,
+                        isCurrent: page == historyCurrentPage
+                    )
+                )
+            }
+        }
+
+        views.append(makeHistoryPaginationArrowButton(
+            symbolName: "chevron.right",
+            action: #selector(goToNextHistoryPage)
+        ))
+
+        for arrangedSubview in historyPaginationStack.arrangedSubviews {
+            historyPaginationStack.removeArrangedSubview(arrangedSubview)
+            arrangedSubview.removeFromSuperview()
+        }
+        for view in views {
+            historyPaginationStack.addArrangedSubview(view)
+        }
+
+        if let previousButton = historyPaginationStack.arrangedSubviews.first as? NSButton {
+            previousButton.isEnabled = historyCurrentPage > 0
+        }
+        if let nextButton = historyPaginationStack.arrangedSubviews.last as? NSButton {
+            nextButton.isEnabled = historyCurrentPage < totalPages - 1
+        }
+    }
+
+    private func historyVisiblePageIndices(totalPages: Int, currentPage: Int) -> [Int] {
+        guard totalPages > 0 else { return [] }
+        if totalPages <= 7 {
+            return Array(0..<totalPages)
+        }
+
+        let middleStart = max(1, currentPage - 1)
+        let middleEnd = min(totalPages - 2, currentPage + 1)
+
+        var result: [Int] = [0]
+        if middleStart > 1 {
+            result.append(-1)
+        }
+        result.append(contentsOf: middleStart...middleEnd)
+        if middleEnd < totalPages - 2 {
+            result.append(-1)
+        }
+        result.append(totalPages - 1)
+        return result
+    }
+
+    private func makeHistoryPaginationPageButton(page: Int, isCurrent: Bool) -> NSButton {
+        let button = StyledSettingsButton(
+            title: "\(page + 1)",
+            role: isCurrent ? .primary : .secondary,
+            target: self,
+            action: #selector(selectHistoryPage(_:))
+        )
+        button.tag = page
+        button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 34).isActive = true
+        return button
+    }
+
+    private func makeHistoryPaginationArrowButton(symbolName: String, action: Selector) -> NSButton {
+        let button = makeSecondaryActionButton(title: "", action: action)
+        button.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: symbolName
+        )
+        button.imagePosition = .imageOnly
+        button.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        return button
+    }
+
+    private func makeHistoryPaginationEllipsis() -> NSView {
+        let label = makeSubtleCaption("...")
+        label.alignment = .center
         return label
-    }
-
-    private func makeHistoryGroupSpacer() -> NSView {
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.heightAnchor.constraint(equalToConstant: 2).isActive = true
-        return spacer
-    }
-
-    private func makeHistoryRowsScrollView() -> NSScrollView {
-        let scrollView = NSScrollView(frame: .zero)
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.heightAnchor.constraint(equalToConstant: 360).isActive = true
-
-        let documentView = FlippedLayoutView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = documentView
-
-        historyRowsStack.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(historyRowsStack)
-
-        let clipView = scrollView.contentView
-        NSLayoutConstraint.activate([
-            documentView.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
-            documentView.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
-            documentView.topAnchor.constraint(equalTo: clipView.topAnchor),
-            documentView.widthAnchor.constraint(equalTo: clipView.widthAnchor),
-
-            historyRowsStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
-            historyRowsStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            historyRowsStack.topAnchor.constraint(equalTo: documentView.topAnchor),
-            historyRowsStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor)
-        ])
-
-        return scrollView
     }
 
     private func makeDictionaryRowsScrollView(contentStack: NSStackView) -> NSScrollView {
@@ -8177,6 +8904,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         left.setContentHuggingPriority(.required, for: .vertical)
         right.setContentHuggingPriority(.required, for: .vertical)
         left.widthAnchor.constraint(greaterThanOrEqualTo: right.widthAnchor, multiplier: leftPriority / max(0.01, 1 - leftPriority)).isActive = true
+        return stack
+    }
+
+    private func makeDictionaryContentSection(left: NSView, right: NSView) -> NSView {
+        let stack = NSStackView(views: [left, right])
+        stack.orientation = .horizontal
+        stack.spacing = SettingsLayoutMetrics.twoColumnSpacing
+        stack.alignment = .top
+        stack.distribution = .fill
+        left.setContentHuggingPriority(.required, for: .horizontal)
+        left.setContentCompressionResistancePriority(.required, for: .horizontal)
+        right.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        right.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        left.setContentHuggingPriority(.required, for: .vertical)
+        right.setContentHuggingPriority(.required, for: .vertical)
         return stack
     }
 
@@ -9351,6 +10093,12 @@ final class HistoryUsageLineChartView: NSView, NSViewToolTipOwner {
         }
     }
 
+    var accentColor: NSColor = .systemBlue {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
     private var tooltipTags: [NSView.ToolTipTag] = []
     private var tooltipTextByTag: [NSView.ToolTipTag: String] = [:]
 
@@ -9439,9 +10187,7 @@ final class HistoryUsageLineChartView: NSView, NSViewToolTipOwner {
         areaPath.line(to: NSPoint(x: plotRect.maxX, y: plotRect.minY))
         areaPath.close()
 
-        let lineColor = isDark
-            ? NSColor.systemBlue.lighter()
-            : NSColor.systemBlue.darker()
+        let lineColor = accentColor
         lineColor.withAlphaComponent(0.16).setFill()
         areaPath.fill()
 
@@ -9630,6 +10376,12 @@ final class HistoryUsageHeatmapView: NSView, NSViewToolTipOwner {
         }
     }
 
+    var accentColor: NSColor = .systemBlue {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
     private let weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     private var tooltipTags: [NSView.ToolTipTag] = []
     private var tooltipTextByTag: [NSView.ToolTipTag: String] = [:]
@@ -9737,7 +10489,7 @@ final class HistoryUsageHeatmapView: NSView, NSViewToolTipOwner {
                 : NSColor.black.withAlphaComponent(0.04)
         }
 
-        let base = darkMode ? NSColor.systemTeal : NSColor.systemBlue
+        let base = accentColor
         return base.withAlphaComponent(CGFloat(0.18 + clamped * 0.72))
     }
 
@@ -10037,7 +10789,187 @@ final class ThemedSurfaceView: NSView {
 }
 
 @MainActor
+final class LibrarySubviewTabControl: NSView {
+    let historyButton = LibrarySubviewTabButton(
+        title: "History",
+        identifier: "library.subview.button.history",
+        indicatorIdentifier: "library.subview.indicator.history"
+    )
+    let dictionaryButton = LibrarySubviewTabButton(
+        title: "Dictionary",
+        identifier: "library.subview.button.dictionary",
+        indicatorIdentifier: "library.subview.indicator.dictionary"
+    )
+
+    var selectedSection: SettingsSection {
+        didSet {
+            applySelectionState()
+        }
+    }
+
+    init(
+        selectedSection: SettingsSection,
+        target: AnyObject?,
+        historyAction: Selector,
+        dictionaryAction: Selector
+    ) {
+        self.selectedSection = selectedSection == .dictionary ? .dictionary : .history
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier("library.subview.control")
+        wantsLayer = true
+
+        historyButton.target = target
+        historyButton.action = historyAction
+        dictionaryButton.target = target
+        dictionaryButton.action = dictionaryAction
+
+        let stack = NSStackView(views: [historyButton, dictionaryButton])
+        stack.orientation = .horizontal
+        stack.spacing = 0
+        stack.alignment = .centerY
+        stack.distribution = .fillEqually
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            historyButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
+            dictionaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 124),
+            heightAnchor.constraint(equalToConstant: 42)
+        ])
+
+        applySelectionState()
+        syncTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        syncTheme()
+        applySelectionState()
+    }
+
+    private func applySelectionState() {
+        historyButton.isSegmentSelected = selectedSection == .history
+        dictionaryButton.isSegmentSelected = selectedSection == .dictionary
+    }
+
+    private func syncTheme() {
+        let darkMode = SettingsWindowTheme.isDark(effectiveAppearance)
+        if darkMode {
+            layer?.backgroundColor = NSColor(
+                calibratedRed: 0x17 / 255.0,
+                green: 0x1B / 255.0,
+                blue: 0x1D / 255.0,
+                alpha: 0.98
+            ).cgColor
+            layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.06).cgColor
+        } else {
+            let chrome = SettingsWindowTheme.surfaceChrome(for: effectiveAppearance, style: .pill)
+            layer?.backgroundColor = chrome.background.cgColor
+            layer?.borderColor = chrome.border.cgColor
+        }
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 8
+    }
+}
+
+@MainActor
+final class LibrarySubviewTabButton: NSButton {
+    let titleLabel = NSTextField(labelWithString: "")
+    let indicatorView = NSView()
+    private let displayTitle: String
+
+    var isSegmentSelected = false {
+        didSet {
+            updateAppearance()
+        }
+    }
+
+    init(title: String, identifier: String, indicatorIdentifier: String) {
+        self.displayTitle = title
+        super.init(frame: .zero)
+        self.title = ""
+        self.identifier = NSUserInterfaceItemIdentifier(identifier)
+        indicatorView.identifier = NSUserInterfaceItemIdentifier(indicatorIdentifier)
+        configure()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    private func configure() {
+        setButtonType(.momentaryChange)
+        isBordered = false
+        bezelStyle = .regularSquare
+        wantsLayer = true
+        focusRingType = .none
+        imagePosition = .noImage
+        alignment = .center
+        setAccessibilityLabel(displayTitle)
+
+        titleLabel.stringValue = displayTitle
+        titleLabel.alignment = .center
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        indicatorView.translatesAutoresizingMaskIntoConstraints = false
+        indicatorView.wantsLayer = true
+        addSubview(titleLabel)
+        addSubview(indicatorView)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 8),
+            titleLabel.bottomAnchor.constraint(equalTo: indicatorView.topAnchor, constant: -8),
+            indicatorView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            indicatorView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            indicatorView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+            indicatorView.heightAnchor.constraint(equalToConstant: 2)
+        ])
+
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        let palette = SettingsWindowTheme.palette(for: effectiveAppearance)
+        let isDarkTheme = SettingsWindowTheme.isDark(effectiveAppearance)
+        let textColor = isSegmentSelected
+            ? palette.accent
+            : (isDarkTheme ? NSColor(calibratedWhite: 0.82, alpha: 1) : palette.titleText)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = textColor
+        indicatorView.isHidden = !isSegmentSelected
+        indicatorView.layer?.backgroundColor = palette.accent.cgColor
+        indicatorView.layer?.cornerRadius = 1
+    }
+}
+
+@MainActor
 final class ThemedPopUpButton: NSPopUpButton {
+    var leadingSymbolName: String? {
+        didSet {
+            applyAttributedTitles()
+            invalidateIntrinsicContentSize()
+        }
+    }
+
     override init(frame buttonFrame: NSRect, pullsDown flag: Bool) {
         super.init(frame: buttonFrame, pullsDown: flag)
         configure()
@@ -10059,7 +10991,8 @@ final class ThemedPopUpButton: NSPopUpButton {
 
     override var intrinsicContentSize: NSSize {
         let base = super.intrinsicContentSize
-        return NSSize(width: max(88, base.width + 20), height: max(34, base.height + 10))
+        let iconInset: CGFloat = leadingSymbolName == nil ? 0 : 4
+        return NSSize(width: max(80, base.width + 6 + iconInset), height: max(34, base.height + 8))
     }
 
     override func addItem(withTitle title: String) {
@@ -10116,7 +11049,7 @@ final class ThemedPopUpButton: NSPopUpButton {
     private func applyAttributedTitles(foregroundColor: NSColor? = nil) {
         let color = foregroundColor ?? resolvedForegroundColor()
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
+        paragraphStyle.alignment = leadingSymbolName == nil ? .center : .left
         paragraphStyle.lineBreakMode = .byTruncatingTail
 
         let attributes: [NSAttributedString.Key: Any] = [
@@ -10138,7 +11071,7 @@ final class ThemedPopUpButton: NSPopUpButton {
         needsDisplay = true
     }
 
-    private func resolvedForegroundColor() -> NSColor {
+    fileprivate func resolvedForegroundColor() -> NSColor {
         let isDarkTheme = resolvedAppearance().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         return isDarkTheme
             ? NSColor(calibratedWhite: 0.93, alpha: 1)
@@ -10176,18 +11109,40 @@ final class ThemedPopUpButton: NSPopUpButton {
             ?? NSApp?.effectiveAppearance
             ?? NSAppearance(named: .aqua)!
     }
+
+    fileprivate func resolvedLeadingSymbolImage() -> NSImage? {
+        guard let leadingSymbolName else { return nil }
+        let image = NSImage(
+            systemSymbolName: leadingSymbolName,
+            accessibilityDescription: titleOfSelectedItem ?? leadingSymbolName
+        )
+        return image?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+    }
 }
 
 private final class ThemedPopUpButtonCell: NSPopUpButtonCell {
-    private let horizontalInset: CGFloat = 12
-    private let trailingArrowInset: CGFloat = 14
-    private let centeredContentInset: CGFloat = 18
+    private let horizontalInset: CGFloat = 4
+    private let trailingArrowInset: CGFloat = 8
+    private let centeredContentInset: CGFloat = 10
+    private let leadingIconInset: CGFloat = 8
+    private let leadingIconSize: CGFloat = 12
+    private let leadingIconSpacing: CGFloat = 4
 
     override func drawBorderAndBackground(withFrame cellFrame: NSRect, in controlView: NSView) {
         // The control view draws its own rounded container.
     }
 
     override func titleRect(forBounds rect: NSRect) -> NSRect {
+        let hasLeadingIcon = (controlView as? ThemedPopUpButton)?.leadingSymbolName != nil
+        if hasLeadingIcon {
+            let leadingInset = leadingIconInset + leadingIconSize + leadingIconSpacing
+            return NSRect(
+                x: rect.minX + leadingInset,
+                y: rect.minY,
+                width: max(0, rect.width - leadingInset - (trailingArrowInset + 6)),
+                height: rect.height
+            )
+        }
         let contentInset = max(horizontalInset, centeredContentInset)
         return NSRect(
             x: rect.minX + contentInset,
@@ -10201,6 +11156,36 @@ private final class ThemedPopUpButtonCell: NSPopUpButtonCell {
         let textRect = titleRect(forBounds: cellFrame)
         let title = attributedTitle
         let titleSize = title.size()
+        if let popup = controlView as? ThemedPopUpButton,
+           let icon = popup.resolvedLeadingSymbolImage()?.withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: leadingIconSize, weight: .medium)
+           ) {
+            let iconRect = NSRect(
+                x: cellFrame.minX + leadingIconInset,
+                y: cellFrame.midY - leadingIconSize / 2,
+                width: leadingIconSize,
+                height: leadingIconSize
+            )
+            let tintedIcon = icon.copy() as? NSImage
+            tintedIcon?.isTemplate = true
+            popup.resolvedForegroundColor().set()
+            tintedIcon?.draw(
+                in: iconRect.integral,
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1
+            )
+
+            let drawRect = NSRect(
+                x: textRect.minX,
+                y: textRect.midY - titleSize.height / 2,
+                width: min(textRect.width, titleSize.width),
+                height: titleSize.height
+            )
+            title.draw(in: drawRect.integral)
+            return
+        }
+
         let drawRect = NSRect(
             x: textRect.midX - min(textRect.width, titleSize.width) / 2,
             y: textRect.midY - titleSize.height / 2,
@@ -10214,7 +11199,7 @@ private final class ThemedPopUpButtonCell: NSPopUpButtonCell {
     override func cellSize(forBounds aRect: NSRect) -> NSSize {
         let baseSize = super.cellSize(forBounds: aRect)
         return NSSize(
-            width: baseSize.width + horizontalInset,
+            width: baseSize.width + 2,
             height: baseSize.height
         )
     }
