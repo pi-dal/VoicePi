@@ -372,10 +372,24 @@ extension SettingsWindowController {
     }
 
     func navigationSection(for section: SettingsSection) -> SettingsSection {
-        section == .history ? .dictionary : section
+        switch section {
+        case .history:
+            return .dictionary
+        case .asr:
+            return .provider
+        default:
+            return section
+        }
     }
 
     func selectSection(_ section: SettingsSection) {
+        if section == .asr {
+            selectedProviderSubview = .asr
+            syncProviderSubviewControls()
+            selectSection(.provider)
+            return
+        }
+
         let previousSection = currentSection
         currentSection = section
         let selectedNavigationSection = navigationSection(for: section)
@@ -398,8 +412,9 @@ extension SettingsWindowController {
         permissionsView.isHidden = section != .permissions
         dictionaryView.isHidden = section != .dictionary
         historyView.isHidden = section != .history
-        asrView.isHidden = section != .asr
+        asrView.isHidden = !(section == .provider && selectedProviderSubview == .asr)
         llmView.isHidden = section != .llm
+        providerLLMView.isHidden = !(section == .provider && selectedProviderSubview == .llm)
         externalProcessorsView.isHidden = section != .externalProcessors
         aboutView.isHidden = section != .about
 
@@ -412,6 +427,7 @@ extension SettingsWindowController {
         }
 
         syncLibrarySubviewControls(for: section)
+        syncProviderSubviewControls()
     }
 
     @objc
@@ -431,7 +447,9 @@ extension SettingsWindowController {
 
     @objc
     func openLLMSection() {
-        selectSection(.llm)
+        selectedProviderSubview = .llm
+        syncProviderSubviewControls()
+        selectSection(.provider)
     }
 
     @objc
@@ -441,7 +459,23 @@ extension SettingsWindowController {
 
     @objc
     func openASRSection() {
-        selectSection(.asr)
+        selectedProviderSubview = .asr
+        syncProviderSubviewControls()
+        selectSection(.provider)
+    }
+
+    @objc
+    func openProviderASRSubview() {
+        selectedProviderSubview = .asr
+        syncProviderSubviewControls()
+        selectSection(.provider)
+    }
+
+    @objc
+    func openProviderLLMSubview() {
+        selectedProviderSubview = .llm
+        syncProviderSubviewControls()
+        selectSection(.provider)
     }
 
     @objc

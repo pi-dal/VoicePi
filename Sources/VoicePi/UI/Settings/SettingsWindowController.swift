@@ -36,6 +36,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     let permissionsView = NSView()
     let asrView = NSView()
     let llmView = NSView()
+    let providerLLMView = NSView()
     let externalProcessorsView = NSView()
     let aboutView = NSView()
     let dictionaryView = NSScrollView()
@@ -257,6 +258,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var externalProcessorManagerState = ExternalProcessorManagerState()
     var externalProcessorManagerSheetWindow: PreviewSheetWindow?
     var librarySubviewControls: [LibrarySubviewTabControl] = []
+    var providerSubviewControls: [ProviderSubviewTabControl] = []
+    var selectedProviderSubview: ProviderSubview = .asr
     var historyEntryByIdentifier: [String: HistoryEntry] = [:]
     var historyUsageMetricCardViews: [HistoryUsageMetric: ThemedSurfaceView] = [:]
     var historyUsageMetricValueLabels: [HistoryUsageMetric: NSTextField] = [:]

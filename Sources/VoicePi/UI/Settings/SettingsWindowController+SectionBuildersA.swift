@@ -266,6 +266,28 @@ extension SettingsWindowController {
         }
     }
 
+    func makeProviderSubviewControl(selectedSubview: ProviderSubview) -> NSView {
+        let control = ProviderSubviewTabControl(
+            selectedSubview: selectedSubview,
+            target: self,
+            asrAction: #selector(openProviderASRSubview),
+            llmAction: #selector(openProviderLLMSubview)
+        )
+        providerSubviewControls.append(control)
+
+        let row = NSStackView(views: [control, NSView()])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.alignment = .centerY
+        return row
+    }
+
+    func syncProviderSubviewControls() {
+        for control in providerSubviewControls {
+            control.selectedSubview = selectedProviderSubview
+        }
+    }
+
     func addPageSection(_ view: NSView, to stack: NSStackView) {
         stack.addArrangedSubview(view)
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -368,10 +390,12 @@ extension SettingsWindowController {
             return "books.vertical"
         case .history:
             return "clock.arrow.circlepath"
-        case .asr:
-            return "waveform.and.mic"
         case .llm:
             return "sparkles"
+        case .provider:
+            return "server.rack"
+        case .asr:
+            return "waveform.and.mic"
         case .externalProcessors:
             return "terminal"
         case .about:

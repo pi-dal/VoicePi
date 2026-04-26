@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 extension SettingsWindowController {
     func buildASRView() {
         let contentStack = makePageStack()
+        addPageSection(makeProviderSubviewControl(selectedSubview: .asr), to: contentStack)
 
         asrRemoteProviderPopup.removeAllItems()
         asrRemoteProviderPopup.addItems(withTitles: RemoteASRProvider.allCases.map(\.rawValue))
@@ -100,6 +101,70 @@ extension SettingsWindowController {
             asrModelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrVolcengineAppIDField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             asrPromptField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
+        ])
+    }
+
+    func buildProviderLLMView() {
+        let contentStack = makePageStack()
+        addPageSection(makeProviderSubviewControl(selectedSubview: .llm), to: contentStack)
+
+        baseURLField.placeholderString = "https://api.example.com/v1"
+        apiKeyField.placeholderString = "sk-..."
+        modelField.placeholderString = "gpt-4o-mini"
+
+        llmSummaryLabel.font = .systemFont(ofSize: 12.5)
+        llmSummaryLabel.textColor = .secondaryLabelColor
+        llmSummaryLabel.alignment = .left
+        llmSummaryLabel.lineBreakMode = .byWordWrapping
+        llmSummaryLabel.maximumNumberOfLines = 0
+
+        let providerSummaryCard = makeSimpleSummaryCard(
+            title: "LLM Provider",
+            subtitle: "Used when Text settings choose LLM-backed refinement or translation.",
+            bodyViews: [
+                llmSummaryLabel,
+                makeSubtleCaption("Text rules stay in the Text tab. Provider only manages the backing endpoint and model.")
+            ]
+        )
+
+        let configurationSection = makeGroupedSection(rows: [
+            makePreferenceRow(title: "API Base URL", control: baseURLField),
+            makePreferenceRow(title: "API Key", control: apiKeyField),
+            makePreferenceRow(title: "Model", control: modelField)
+        ])
+        let actionButtons = makeButtonGroup([
+            makeSecondaryActionButton(title: "Test Connection", action: #selector(testConfiguration)),
+            makePrimaryActionButton(title: "Save", action: #selector(saveConfiguration))
+        ])
+        let connectionContent = makeVerticalStack(
+            [configurationSection, makeSubtleCaption(Self.thinkingHelpText), actionButtons],
+            spacing: 10
+        )
+
+        let connectionCard = makeSimpleSummaryCard(
+            title: "Connection Details",
+            subtitle: "Configure the OpenAI-compatible endpoint and model VoicePi uses for LLM tasks.",
+            bodyViews: [connectionContent]
+        )
+
+        let statusCard = makeSimpleSummaryCard(
+            title: "Live Status",
+            subtitle: "Feedback reflects whether current Text rules require this provider and whether the connection can be tested.",
+            bodyViews: [llmStatusView]
+        )
+        let rightColumn = makeVerticalStack([connectionCard, statusCard], spacing: SettingsLayoutMetrics.pageSpacing)
+
+        addPageSection(
+            makeTwoColumnSection(left: providerSummaryCard, right: rightColumn, leftPriority: 0.46),
+            to: contentStack
+        )
+
+        installScrollablePage(contentStack, in: providerLLMView, section: .provider)
+
+        NSLayoutConstraint.activate([
+            baseURLField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            apiKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 300)
         ])
     }
 

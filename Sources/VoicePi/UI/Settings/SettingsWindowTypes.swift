@@ -7,13 +7,14 @@ enum SettingsSection: Int, CaseIterable {
     case permissions = 1
     case dictionary = 2
     case history = 3
-    case asr = 4
-    case llm = 5
-    case externalProcessors = 6
-    case about = 7
+    case llm = 4
+    case provider = 5
+    case asr = 6
+    case externalProcessors = 7
+    case about = 8
 
     static var navigationCases: [SettingsSection] {
-        allCases.filter { $0 != .history }
+        [.home, .permissions, .dictionary, .llm, .provider, .externalProcessors, .about]
     }
 
     var title: String {
@@ -26,16 +27,23 @@ enum SettingsSection: Int, CaseIterable {
             return "Library"
         case .history:
             return "History"
-        case .asr:
-            return "ASR"
         case .llm:
             return "Text"
+        case .provider:
+            return "Provider"
+        case .asr:
+            return "ASR"
         case .externalProcessors:
             return "Processors"
         case .about:
             return "About"
         }
     }
+}
+
+enum ProviderSubview: Equatable {
+    case asr
+    case llm
 }
 
 enum SettingsLayoutMetrics {

@@ -277,6 +277,99 @@ final class LibrarySubviewTabControl: NSView {
 }
 
 @MainActor
+final class ProviderSubviewTabControl: NSView {
+    let asrButton = LibrarySubviewTabButton(
+        title: "ASR",
+        identifier: "provider.subview.button.asr",
+        indicatorIdentifier: "provider.subview.indicator.asr"
+    )
+    let llmButton = LibrarySubviewTabButton(
+        title: "LLM",
+        identifier: "provider.subview.button.llm",
+        indicatorIdentifier: "provider.subview.indicator.llm"
+    )
+
+    var selectedSubview: ProviderSubview {
+        didSet {
+            applySelectionState()
+        }
+    }
+
+    init(
+        selectedSubview: ProviderSubview,
+        target: AnyObject?,
+        asrAction: Selector,
+        llmAction: Selector
+    ) {
+        self.selectedSubview = selectedSubview
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier("provider.subview.control")
+        wantsLayer = true
+
+        asrButton.target = target
+        asrButton.action = asrAction
+        llmButton.target = target
+        llmButton.action = llmAction
+
+        let stack = NSStackView(views: [asrButton, llmButton])
+        stack.orientation = .horizontal
+        stack.spacing = 0
+        stack.alignment = .centerY
+        stack.distribution = .fillEqually
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            asrButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
+            llmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 124),
+            heightAnchor.constraint(equalToConstant: 42)
+        ])
+
+        applySelectionState()
+        syncTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        syncTheme()
+        applySelectionState()
+    }
+
+    private func applySelectionState() {
+        asrButton.isSegmentSelected = selectedSubview == .asr
+        llmButton.isSegmentSelected = selectedSubview == .llm
+    }
+
+    private func syncTheme() {
+        let darkMode = SettingsWindowTheme.isDark(effectiveAppearance)
+        if darkMode {
+            layer?.backgroundColor = NSColor(
+                calibratedRed: 0x17 / 255.0,
+                green: 0x1B / 255.0,
+                blue: 0x1D / 255.0,
+                alpha: 0.98
+            ).cgColor
+            layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.06).cgColor
+        } else {
+            let chrome = SettingsWindowTheme.surfaceChrome(for: effectiveAppearance, style: .pill)
+            layer?.backgroundColor = chrome.background.cgColor
+            layer?.borderColor = chrome.border.cgColor
+        }
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 8
+    }
+}
+
+@MainActor
 final class LibrarySubviewTabButton: NSButton {
     let titleLabel = NSTextField(labelWithString: "")
     let indicatorView = NSView()
@@ -355,4 +448,3 @@ final class LibrarySubviewTabButton: NSButton {
         indicatorView.layer?.cornerRadius = 1
     }
 }
-

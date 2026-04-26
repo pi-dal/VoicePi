@@ -26,6 +26,8 @@ extension AppController {
             section = .dictionary
         case "history":
             section = .history
+        case "provider":
+            section = .provider
         case "asr":
             section = .asr
         case "text", "llm":

@@ -49,6 +49,7 @@ extension SettingsWindowController {
         buildPermissionsView()
         buildASRView()
         buildLLMView()
+        buildProviderLLMView()
         buildExternalProcessorsView()
         buildAboutView()
         buildDictionaryView()
@@ -58,12 +59,13 @@ extension SettingsWindowController {
         contentContainer.addSubview(permissionsView)
         contentContainer.addSubview(asrView)
         contentContainer.addSubview(llmView)
+        contentContainer.addSubview(providerLLMView)
         contentContainer.addSubview(externalProcessorsView)
         contentContainer.addSubview(aboutView)
         contentContainer.addSubview(dictionaryView)
         contentContainer.addSubview(historyView)
 
-        [homeView, permissionsView, asrView, llmView, externalProcessorsView, aboutView, dictionaryView, historyView].forEach { view in
+        [homeView, permissionsView, asrView, llmView, providerLLMView, externalProcessorsView, aboutView, dictionaryView, historyView].forEach { view in
             view.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
