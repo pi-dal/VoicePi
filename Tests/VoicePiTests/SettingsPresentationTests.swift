@@ -298,6 +298,19 @@ struct SettingsPresentationTests {
     }
 
     @Test
+    func aboutPresentationTruncatesLongBuildValuesForDisplay() {
+        let presentation = SettingsPresentation.aboutPresentation(
+            infoDictionary: [
+                "CFBundleShortVersionString": "2026.04.25",
+                "CFBundleVersion": "20260425172845"
+            ]
+        )
+
+        #expect(presentation.version == "2026.04.25")
+        #expect(presentation.build == "202604251728")
+    }
+
+    @Test
     func permissionPresentationMapsTitlesAndTones() {
         #expect(SettingsPresentation.permissionPresentation(for: .granted) == .init(title: "Granted", tone: .granted))
         #expect(SettingsPresentation.permissionPresentation(for: .denied) == .init(title: "Denied", tone: .denied))

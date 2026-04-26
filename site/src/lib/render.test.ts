@@ -54,8 +54,8 @@ describe("renderApp", () => {
     expect(html).toContain('data-highlight-frame="mode-cycle"');
     expect(html).toContain('data-highlight-frame="recording-overlay"');
     expect(html).toContain('href="#highlight-frame-mode-cycle"');
-    expect(html).toContain("/media/screenshots/mode-switch-sunny.png");
-    expect(html).toContain("/media/screenshots/mode-switch-moon.png");
+    expect(html).toContain("/media/screenshots/mode-switch-sunny.webp");
+    expect(html).toContain("/media/screenshots/mode-switch-moon.webp");
 
     expect(html).toContain('id="changelog-title"');
     expect(html).toContain("VoicePi v1.3.2");

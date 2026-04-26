@@ -69,8 +69,8 @@ const highlightItems = [
     frameBody: "The shortcut surface for Disabled, Refinement, and Translate.",
     sunnyAlt: "VoicePi mode switch panel in Sunny Mode",
     moonAlt: "VoicePi mode switch panel in Moonlight Mode",
-    sunnyImage: "/media/screenshots/mode-switch-sunny.png",
-    moonImage: "/media/screenshots/mode-switch-moon.png"
+    sunnyImage: "/media/screenshots/mode-switch-sunny.webp",
+    moonImage: "/media/screenshots/mode-switch-moon.webp"
   },
   {
     id: "recording-overlay",
@@ -80,8 +80,8 @@ const highlightItems = [
     frameBody: "A focused capture window with transcript feedback while you speak.",
     sunnyAlt: "VoicePi recording overlay in Sunny Mode",
     moonAlt: "VoicePi recording overlay in Moonlight Mode",
-    sunnyImage: "/media/screenshots/recording-sunny.png",
-    moonImage: "/media/screenshots/recording-moon.png"
+    sunnyImage: "/media/screenshots/recording-sunny.webp",
+    moonImage: "/media/screenshots/recording-moon.webp"
   },
   {
     id: "settings-home",
@@ -91,8 +91,8 @@ const highlightItems = [
     frameBody: "The main configuration surface for shortcuts, permissions, ASR, and text processing.",
     sunnyAlt: "VoicePi settings home in Sunny Mode",
     moonAlt: "VoicePi settings home in Moonlight Mode",
-    sunnyImage: "/media/screenshots/settings-home-sunny.png",
-    moonImage: "/media/screenshots/settings-home-moon.png"
+    sunnyImage: "/media/screenshots/settings-home-sunny.webp",
+    moonImage: "/media/screenshots/settings-home-moon.webp"
   }
 ] as const;
 
@@ -235,7 +235,7 @@ export function renderApp(state: SiteState): string {
         <div class="hero-body">
           <div class="hero-copy">
             <div class="hero-title-lockup">
-              <img class="hero-icon" src="/media/icons/voicepi-icon.png" alt="VoicePi icon" />
+              <img class="hero-icon" src="/media/icons/voicepi-icon.webp" alt="VoicePi icon" />
               <div>
                 <h1 id="hero-title">VoicePi</h1>
                 <p class="hero-intro">

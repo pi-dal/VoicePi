@@ -112,6 +112,8 @@ enum PermissionsCopy {
 }
 
 enum SettingsPresentation {
+    private static let maxDisplayedBuildLength = 12
+
     static func selectedThemeIndex(for theme: InterfaceTheme) -> Int {
         InterfaceTheme.allCases.firstIndex(of: theme) ?? 0
     }
@@ -119,13 +121,21 @@ enum SettingsPresentation {
     static func aboutPresentation(infoDictionary: [String: Any]?) -> AboutSectionPresentation {
         AboutSectionPresentation(
             version: infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown",
-            build: infoDictionary?["CFBundleVersion"] as? String ?? "Unknown",
+            build: displayedBuildString(from: infoDictionary?["CFBundleVersion"] as? String),
             author: AboutProfile.author,
             websiteDisplay: AboutProfile.websiteDisplay,
             githubDisplay: AboutProfile.githubDisplay,
             xDisplay: AboutProfile.xDisplay,
             repositoryLinkDisplay: AboutProfile.repositoryLinkDisplay
         )
+    }
+
+    private static func displayedBuildString(from build: String?) -> String {
+        guard let build, build.isEmpty == false else {
+            return "Unknown"
+        }
+
+        return String(build.prefix(maxDisplayedBuildLength))
     }
 
     @MainActor

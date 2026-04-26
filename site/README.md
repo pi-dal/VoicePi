@@ -18,7 +18,7 @@ pnpm build
 - `public/media/icons/` stores the website-local icon assets
 - `public/media/screenshots/` stores screenshots used by the landing page
 
-Current screenshot inventory starts with the generated `mode-switch.png` asset.
+Current screenshot inventory is optimized for the landing page and stored as `.webp` assets where possible.
 
 ## Content Source
 
