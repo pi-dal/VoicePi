@@ -22,17 +22,17 @@ fi
   -parse-as-library \
   -O \
   -whole-module-optimization \
-  "$ROOT_DIR/Sources/VoicePi/TextInjectionTiming.swift" \
-  "$ROOT_DIR/Sources/VoicePi/SpeechRecorderStopPolicy.swift" \
-  "$ROOT_DIR/Sources/VoicePi/RealtimeOverlayUpdateGate.swift" \
-  "$ROOT_DIR/Sources/VoicePi/PostInjectionLearningLoopPolicy.swift" \
-  "$ROOT_DIR/Sources/VoicePi/RecordingLatencyTrace.swift" \
-  "$ROOT_DIR/Sources/VoicePi/RecordingLatencyHistory.swift" \
-  "$ROOT_DIR/Sources/VoicePi/DictionaryModels.swift" \
-  "$ROOT_DIR/Sources/VoicePi/DictionarySuggestionExtractor.swift" \
-  "$ROOT_DIR/Sources/VoicePi/DictionaryTextNormalizer.swift" \
-  "$ROOT_DIR/Sources/VoicePi/FloatingPanelTranscriptPresentationState.swift" \
-  "$ROOT_DIR/Sources/VoicePi/PerformanceBenchmarkReport.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/TextInjectionTiming.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Shortcuts/SpeechRecorderStopPolicy.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/RealtimeOverlayUpdateGate.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/PostInjectionLearningLoopPolicy.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/RecordingLatencyTrace.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/RecordingLatencyHistory.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Models/DictionaryModels.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/DictionarySuggestionExtractor.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/DictionaryTextNormalizer.swift" \
+  "$ROOT_DIR/Sources/VoicePi/UI/Panels/FloatingPanelTranscriptPresentationState.swift" \
+  "$ROOT_DIR/Sources/VoicePi/Core/Processing/PerformanceBenchmarkReport.swift" \
   "$ROOT_DIR/Scripts/benchmark_main.swift" \
   -o "$BINARY_PATH"
 

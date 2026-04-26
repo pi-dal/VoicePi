@@ -1,11 +1,11 @@
 APP_NAME := VoicePi
 BUILD_DIR := .build
 DIST_DIR := dist
-SWIFT := ./Scripts/swiftw
-SWIFTC := ./Scripts/swiftcw
+SWIFT := $(if $(wildcard ./Scripts/swiftw),./Scripts/swiftw,swift)
+SWIFTC := $(if $(wildcard ./Scripts/swiftcw),./Scripts/swiftcw,swiftc)
 
-DEBUG_BIN_DIR := $(shell $(SWIFT) build --show-bin-path)
-RELEASE_BIN_DIR := $(shell $(SWIFT) build -c release --show-bin-path)
+DEBUG_BIN_DIR = $(shell $(SWIFT) build --show-bin-path)
+RELEASE_BIN_DIR = $(shell $(SWIFT) build -c release --show-bin-path)
 
 APP_BUNDLE := $(DIST_DIR)/release/$(APP_NAME).app
 DEBUG_APP_BUNDLE := $(DIST_DIR)/debug/$(APP_NAME).app

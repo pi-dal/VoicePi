@@ -2,7 +2,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-SOURCE_FILE="$ROOT_DIR/Sources/VoicePi/AppleTranslateService.swift"
+SOURCE_FILE="$ROOT_DIR/Sources/VoicePi/Adapters/ASR/AppleTranslateService.swift"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 

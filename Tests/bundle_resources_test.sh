@@ -53,7 +53,13 @@ chmod +x "$TMP_DIR/bin/codesign"
 (
   cd "$TMP_DIR"
   PATH="$TMP_DIR/bin:$PATH" \
-  make bundle APP_DIR="$TMP_DIR/dist/VoicePi.app" EXEC="$TMP_DIR/fake-bin/VoicePi" >/dev/null
+  make bundle APP_DIR="$TMP_DIR/dist/VoicePi.app" EXEC="$TMP_DIR/fake-bin/VoicePi" \
+    > "$TMP_DIR/.make-output" 2>&1
 )
 
 [ -f "$TMP_DIR/dist/VoicePi.app/Contents/Resources/VoicePi_VoicePi.bundle/registry.json" ]
+if grep -q 'Command not found' "$TMP_DIR/.make-output"; then
+  cat "$TMP_DIR/.make-output" >&2
+  echo "unexpected command lookup failure during make bundle" >&2
+  exit 1
+fi

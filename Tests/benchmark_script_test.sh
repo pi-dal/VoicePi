@@ -5,7 +5,13 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
-mkdir -p "$TMP_DIR/Scripts" "$TMP_DIR/Sources/VoicePi" "$TMP_DIR/bin"
+mkdir -p \
+  "$TMP_DIR/Scripts" \
+  "$TMP_DIR/Sources/VoicePi/Core/Models" \
+  "$TMP_DIR/Sources/VoicePi/Core/Processing" \
+  "$TMP_DIR/Sources/VoicePi/Core/Shortcuts" \
+  "$TMP_DIR/Sources/VoicePi/UI/Panels" \
+  "$TMP_DIR/bin"
 
 cp "$ROOT_DIR/Scripts/benchmark.sh" "$TMP_DIR/Scripts/benchmark.sh"
 chmod +x "$TMP_DIR/Scripts/benchmark.sh"
@@ -14,17 +20,17 @@ cat > "$TMP_DIR/Package.swift" <<'EOF'
 // test fixture
 EOF
 
-touch "$TMP_DIR/Sources/VoicePi/TextInjectionTiming.swift"
-touch "$TMP_DIR/Sources/VoicePi/SpeechRecorderStopPolicy.swift"
-touch "$TMP_DIR/Sources/VoicePi/RealtimeOverlayUpdateGate.swift"
-touch "$TMP_DIR/Sources/VoicePi/PostInjectionLearningLoopPolicy.swift"
-touch "$TMP_DIR/Sources/VoicePi/RecordingLatencyTrace.swift"
-touch "$TMP_DIR/Sources/VoicePi/RecordingLatencyHistory.swift"
-touch "$TMP_DIR/Sources/VoicePi/DictionaryModels.swift"
-touch "$TMP_DIR/Sources/VoicePi/DictionarySuggestionExtractor.swift"
-touch "$TMP_DIR/Sources/VoicePi/DictionaryTextNormalizer.swift"
-touch "$TMP_DIR/Sources/VoicePi/FloatingPanelTranscriptPresentationState.swift"
-touch "$TMP_DIR/Sources/VoicePi/PerformanceBenchmarkReport.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/TextInjectionTiming.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Shortcuts/SpeechRecorderStopPolicy.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/RealtimeOverlayUpdateGate.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/PostInjectionLearningLoopPolicy.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/RecordingLatencyTrace.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/RecordingLatencyHistory.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Models/DictionaryModels.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/DictionarySuggestionExtractor.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/DictionaryTextNormalizer.swift"
+touch "$TMP_DIR/Sources/VoicePi/UI/Panels/FloatingPanelTranscriptPresentationState.swift"
+touch "$TMP_DIR/Sources/VoicePi/Core/Processing/PerformanceBenchmarkReport.swift"
 touch "$TMP_DIR/Scripts/benchmark_main.swift"
 
 cat > "$TMP_DIR/bin/swiftc" <<'EOF'
