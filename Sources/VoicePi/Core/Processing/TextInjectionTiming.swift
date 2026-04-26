@@ -20,11 +20,13 @@ struct TextInjectionTiming: Equatable {
     static let `default` = TextInjectionTiming(
         // Keep the injection path responsive without collapsing the short waits
         // that certain web and IME-backed inputs need to observe clipboard and key events.
+        // We keep the blocking portion modest, but leave the clipboard intact for much
+        // longer so slower targets can still read the injected payload after Cmd+V lands.
         inputSourceSwitchSettleDelay: .milliseconds(60),
-        clipboardSettleDelay: .milliseconds(30),
+        clipboardSettleDelay: .milliseconds(50),
         keyPressInterval: .milliseconds(20),
-        postPasteSettleDelay: .milliseconds(60),
-        clipboardRestoreDelay: .milliseconds(220),
+        postPasteSettleDelay: .milliseconds(100),
+        clipboardRestoreDelay: .milliseconds(1_500),
         restoreInputSourceSettleDelay: .milliseconds(40)
     )
 }

@@ -10,13 +10,14 @@ struct TextInjectionExecutionPlanTests {
     }
 
     @Test
-    func defaultPlanKeepsBlockingLatencyWellBelowLegacyFloorWithoutInputSourceSwitch() {
+    func defaultPlanTradesASmallAmountOfLatencyForASaferPasteWindowWithoutInputSourceSwitch() {
         let plan = TextInjectionExecutionPlan.make(
             needsInputSourceSwitch: false,
             timing: .default
         )
 
-        #expect(plan.blockingLatencyMilliseconds < 150)
+        #expect(plan.blockingLatencyMilliseconds >= 160)
+        #expect(plan.blockingLatencyMilliseconds < 220)
     }
 
     @Test
@@ -31,12 +32,12 @@ struct TextInjectionExecutionPlanTests {
         )
 
         #expect(switched.blockingLatencyMilliseconds > baseline.blockingLatencyMilliseconds)
-        #expect(switched.blockingLatencyMilliseconds < 260)
+        #expect(switched.blockingLatencyMilliseconds < 320)
     }
 
     @Test
     func defaultTimingKeepsClipboardAvailableLongerThanBlockingPasteWindow() {
-        #expect(TextInjectionTiming.default.clipboardRestoreDelay.wholeMilliseconds >= 180)
+        #expect(TextInjectionTiming.default.clipboardRestoreDelay.wholeMilliseconds >= 1_500)
         #expect(
             TextInjectionTiming.default.clipboardRestoreDelay.wholeMilliseconds
                 > TextInjectionTiming.default.postPasteSettleDelay.wholeMilliseconds
@@ -45,9 +46,9 @@ struct TextInjectionExecutionPlanTests {
 
     @Test
     func defaultTimingKeepsPrePasteReliabilityWindowsAboveMinimumFloors() {
-        #expect(TextInjectionTiming.default.clipboardSettleDelay.wholeMilliseconds >= 30)
+        #expect(TextInjectionTiming.default.clipboardSettleDelay.wholeMilliseconds >= 50)
         #expect(TextInjectionTiming.default.keyPressInterval.wholeMilliseconds >= 20)
-        #expect(TextInjectionTiming.default.postPasteSettleDelay.wholeMilliseconds >= 60)
+        #expect(TextInjectionTiming.default.postPasteSettleDelay.wholeMilliseconds >= 100)
     }
 
     @Test

@@ -355,25 +355,42 @@ final class TextInjector {
 
     // MARK: - Keyboard Events
 
-    private func simulateCommandV(keyPressInterval: Duration) async throws {
-        guard let source = CGEventSource(stateID: .hidSystemState) else {
+    private func makePrivateEventSource() throws -> CGEventSource {
+        guard let source = CGEventSource(stateID: .privateState) else {
             throw TextInjectorError.eventSourceUnavailable
         }
 
-        let keyCode: CGKeyCode = 9 // ANSI V
+        source.setLocalEventsFilterDuringSuppressionState(
+            [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+            state: .eventSuppressionStateSuppressionInterval
+        )
+        return source
+    }
+
+    private func simulateCommandV(keyPressInterval: Duration) async throws {
+        let source = try makePrivateEventSource()
+
+        let commandKeyCode = CGKeyCode(kVK_Command)
+        let pasteKeyCode = CGKeyCode(kVK_ANSI_V)
 
         guard
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+            let commandDown = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: true),
+            let pasteDown = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true),
+            let pasteUp = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false),
+            let commandUp = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: false)
         else {
             throw TextInjectorError.eventSourceUnavailable
         }
 
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        commandDown.flags = .maskCommand
+        pasteDown.flags = .maskCommand
+        pasteUp.flags = .maskCommand
+        commandUp.flags = []
 
-        keyDown.post(tap: .cghidEventTap)
+        commandDown.post(tap: .cgSessionEventTap)
+        pasteDown.post(tap: .cgSessionEventTap)
         try await Task.sleep(for: keyPressInterval)
-        keyUp.post(tap: .cghidEventTap)
+        pasteUp.post(tap: .cgSessionEventTap)
+        commandUp.post(tap: .cgSessionEventTap)
     }
 }

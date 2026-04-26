@@ -18,14 +18,14 @@ struct PerformanceBenchmarkReportTests {
                     id: "text_injection_ascii_blocking_ms",
                     title: "ASCII text injection blocking latency",
                     legacyValue: 260,
-                    currentValue: 110,
+                    currentValue: 170,
                     unit: "ms"
                 ),
                 .init(
                     id: "text_injection_cjk_blocking_ms",
                     title: "CJK text injection blocking latency",
                     legacyValue: 470,
-                    currentValue: 210,
+                    currentValue: 270,
                     unit: "ms"
                 ),
                 .init(
@@ -83,7 +83,7 @@ struct PerformanceBenchmarkReportTests {
                     id: "modeled_stop_to_delivery_ascii_ms",
                     title: "Modeled stop-to-delivery latency (ASCII)",
                     legacyValue: 770,
-                    currentValue: 620,
+                    currentValue: 680,
                     unit: "ms",
                     assumptions: "fixed transcript_finalize=280ms refine=230ms"
                 ),
@@ -91,7 +91,7 @@ struct PerformanceBenchmarkReportTests {
                     id: "modeled_stop_to_delivery_cjk_ms",
                     title: "Modeled stop-to-delivery latency (CJK)",
                     legacyValue: 980,
-                    currentValue: 720,
+                    currentValue: 780,
                     unit: "ms",
                     assumptions: "fixed transcript_finalize=280ms refine=230ms"
                 ),
@@ -153,16 +153,16 @@ struct PerformanceBenchmarkReportTests {
                 """
                 VoicePi performance benchmarks
                 Budgets:
-                - text_injection_ascii_blocking_ms current=110ms legacy=260ms improvement=57.7%
-                - text_injection_cjk_blocking_ms current=210ms legacy=470ms improvement=55.3%
+                - text_injection_ascii_blocking_ms current=170ms legacy=260ms improvement=34.6%
+                - text_injection_cjk_blocking_ms current=270ms legacy=470ms improvement=42.6%
                 - text_injection_clipboard_restore_deficit_ms current=0ms legacy=120ms improvement=100.0%
                 - post_injection_idle_polls_per_minute current=100polls/min legacy=240polls/min improvement=58.3%
                 - floating_panel_repeated_partial_layouts current=1layouts legacy=10layouts improvement=90.0%
                 - speech_stop_partial_fallback_ms current=120ms legacy=450ms improvement=73.3%
                 - recording_meter_overlay_updates_per_second current=30updates/s legacy=43updates/s improvement=30.2%
                 Modeled scenarios:
-                - modeled_stop_to_delivery_ascii_ms current=620ms legacy=770ms improvement=19.5% assumptions="fixed transcript_finalize=280ms refine=230ms"
-                - modeled_stop_to_delivery_cjk_ms current=720ms legacy=980ms improvement=26.5% assumptions="fixed transcript_finalize=280ms refine=230ms"
+                - modeled_stop_to_delivery_ascii_ms current=680ms legacy=770ms improvement=11.7% assumptions="fixed transcript_finalize=280ms refine=230ms"
+                - modeled_stop_to_delivery_cjk_ms current=780ms legacy=980ms improvement=20.4% assumptions="fixed transcript_finalize=280ms refine=230ms"
                 - modeled_stop_to_transcript_local_partial_ms current=120ms legacy=450ms improvement=73.3% assumptions="apple_speech final callback pending, latest partial already available"
                 Recent sessions:
                 - recent_successful_sessions count=4
