@@ -31,6 +31,19 @@ struct SettingsWindowDictionaryTests {
     }
 
     @Test
+    func settingsNavigationUsesProviderInsteadOfTopLevelASR() {
+        #expect(SettingsSection.navigationCases.map(\.title) == [
+            "Home",
+            "Permissions",
+            "Library",
+            "Text",
+            "Provider",
+            "Processors",
+            "About"
+        ])
+    }
+
+    @Test
     func settingsNavigationHidesHistoryFromTopNavigation() {
         #expect(SettingsSection.allCases.contains(.history))
         #expect(SettingsSection.navigationCases.contains(.history) == false)
@@ -40,13 +53,16 @@ struct SettingsWindowDictionaryTests {
     @Test
     @MainActor
     func settingsNavigationPlacesExternalProcessorsAfterText() {
-        let sections = SettingsSection.allCases
+        let sections = SettingsSection.navigationCases
         let llmIndex = sections.firstIndex(of: .llm)
+        let providerIndex = sections.firstIndex(where: { $0.title == "Provider" })
         let externalProcessorsIndex = sections.firstIndex(of: .externalProcessors)
 
         #expect(llmIndex != nil)
+        #expect(providerIndex != nil)
         #expect(externalProcessorsIndex != nil)
-        #expect(externalProcessorsIndex == llmIndex.map { $0 + 1 })
+        #expect(providerIndex == llmIndex.map { $0 + 1 })
+        #expect(externalProcessorsIndex == providerIndex.map { $0 + 1 })
     }
 
     @Test

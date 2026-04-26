@@ -27,6 +27,15 @@ struct AppControllerInteractionTests {
                 scrollPosition: .bottom
             )
         )
+        #expect(
+            AppController.debugSettingsCaptureConfiguration(from: [
+                "VOICEPI_DEBUG_SETTINGS_SECTION": "provider"
+            ]) == AppController.DebugSettingsCaptureConfiguration(
+                section: .provider,
+                interfaceTheme: nil,
+                scrollPosition: .top
+            )
+        )
     }
 
     @Test

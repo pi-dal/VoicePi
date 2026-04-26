@@ -186,11 +186,15 @@ struct SettingsWindowLayoutTests {
             return labels.contains("Home")
                 && labels.contains("Permissions")
                 && labels.contains("Library")
-                && labels.contains("ASR")
                 && labels.contains("Text")
+                && labels.contains("Provider")
                 && labels.contains("Processors")
                 && labels.contains("About")
         })
+
+        let labels = Set(stackDescendantLabels(in: navigationStack))
+        #expect(labels.contains("ASR") == false)
+        #expect(labels.contains("Provider"))
 
         #expect(navigationStack.distribution == .fillEqually)
         #expect(navigationStack.spacing == 2)
@@ -401,12 +405,43 @@ struct SettingsWindowLayoutTests {
 
         contentView.layoutSubtreeIfNeeded()
 
-        #expect(contentContainer.subviews.count == 8)
+        #expect(contentContainer.subviews.count == 9)
 
         for sectionView in contentContainer.subviews {
             let sectionIsScrollable = sectionView is NSScrollView || containsScrollView(in: sectionView)
             #expect(sectionIsScrollable)
         }
+    }
+
+    @Test
+    func providerSectionOffersASRAndLLMSubtabs() throws {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.providerSectionOffersASRAndLLMSubtabs.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+        let contentView = try #require(controller.window?.contentView)
+
+        contentView.layoutSubtreeIfNeeded()
+
+        let labels = Set(findLabels(in: contentView) { _ in true }.map(\.stringValue))
+
+        #expect(labels.contains("Provider"))
+        #expect(labels.contains("ASR"))
+        #expect(labels.contains("LLM"))
+    }
+
+    @Test
+    func providerEntryPointsRouteASRAndLLMThroughProviderSection() {
+        let defaults = UserDefaults(
+            suiteName: "VoicePiTests.providerEntryPointsRouteASRAndLLMThroughProviderSection.\(UUID().uuidString)"
+        )!
+        let controller = SettingsWindowController(model: AppModel(defaults: defaults), delegate: nil)
+
+        controller.openASRSection()
+        #expect(controller.currentSection == .provider)
+
+        controller.openLLMSection()
+        #expect(controller.currentSection == .provider)
     }
 
     @Test
