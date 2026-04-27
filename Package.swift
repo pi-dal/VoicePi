@@ -15,6 +15,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/s1ntoneli/AppUpdater.git", from: "0.2.0"),
+        .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
         .package(
             url: "https://github.com/pi-dal/PermissionFlow.git",
             revision: "aa0df8557bea9032196294a9b938771ff6ad8784"
@@ -25,6 +26,7 @@ let package = Package(
             name: "VoicePi",
             dependencies: [
                 .product(name: "AppUpdater", package: "AppUpdater"),
+                .product(name: "TOMLKit", package: "TOMLKit"),
                 .product(name: "PermissionFlow", package: "PermissionFlow")
             ],
             path: "Sources/VoicePi",
