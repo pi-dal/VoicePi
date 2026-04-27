@@ -5,7 +5,7 @@ final class ModeSwitchCapsuleView: NSView {
     let title: String
     private(set) var isSelected = false
 
-    private let blurView = NSVisualEffectView()
+    private let blurView = PanelSurfaceView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private var palette: FloatingPanelPalette?
@@ -19,10 +19,6 @@ final class ModeSwitchCapsuleView: NSView {
         wantsLayer = true
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
-        blurView.material = .hudWindow
-        blurView.blendingMode = .withinWindow
-        blurView.state = .active
-        blurView.wantsLayer = true
         blurView.layer?.cornerRadius = 22
         blurView.layer?.masksToBounds = true
 
@@ -365,7 +361,6 @@ final class RefiningDotsView: NSView {
 }
 
 struct FloatingPanelPalette {
-    let material: NSVisualEffectView.Material
     let backgroundColor: NSColor
     let borderColor: NSColor
     let textColor: NSColor
@@ -378,39 +373,26 @@ struct FloatingPanelPalette {
     let selectedSubtextColor: NSColor
 
     init(appearance: NSAppearance, phase: FloatingPanelContentViewController.Phase) {
-        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        material = phase == .modeSwitch ? .hudWindow : .underWindowBackground
-
-        if isDarkTheme {
-            backgroundColor = phase == .modeSwitch
-                ? NSColor(calibratedWhite: 0.11, alpha: 0.78)
-                : NSColor(calibratedWhite: 0.16, alpha: 0.96)
-            borderColor = phase == .modeSwitch
-                ? NSColor(calibratedWhite: 1.0, alpha: 0.12)
-                : NSColor(calibratedWhite: 1.0, alpha: 0.08)
-            textColor = NSColor.white.withAlphaComponent(0.96)
-            waveformColor = NSColor.white.withAlphaComponent(0.95)
-            selectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.20)
-            selectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.18)
-            unselectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.06)
-            unselectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
-            selectedTextColor = NSColor.white.withAlphaComponent(0.98)
-            selectedSubtextColor = NSColor.white.withAlphaComponent(0.72)
-        } else {
-            backgroundColor = phase == .modeSwitch
-                ? NSColor(calibratedRed: 0xF1 / 255.0, green: 0xF0 / 255.0, blue: 0xEB / 255.0, alpha: 0.78)
-                : NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 0.96)
-            borderColor = phase == .modeSwitch
-                ? NSColor(calibratedWhite: 0.0, alpha: 0.10)
-                : NSColor(calibratedWhite: 0.0, alpha: 0.08)
-            textColor = NSColor(calibratedWhite: 0.16, alpha: 1)
-            waveformColor = NSColor(calibratedWhite: 0.18, alpha: 0.92)
-            selectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.42)
-            selectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.58)
-            unselectedCapsuleColor = NSColor(calibratedWhite: 1.0, alpha: 0.16)
-            unselectedBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.28)
-            selectedTextColor = NSColor(calibratedWhite: 0.10, alpha: 1)
-            selectedSubtextColor = NSColor(calibratedWhite: 0.16, alpha: 0.72)
-        }
+        let themePalette = SettingsWindowTheme.palette(for: appearance)
+        let pillChrome = PanelTheme.surfaceChrome(for: appearance, style: .pill)
+        let borderChrome = PanelTheme.surfaceChrome(
+            for: appearance,
+            style: phase == .modeSwitch ? .card : .row
+        )
+        let primaryChrome = PanelTheme.buttonChrome(for: appearance, role: .primary)
+        backgroundColor = borderChrome.background
+        borderColor = borderChrome.border
+        textColor = PanelTheme.titleText(for: appearance)
+        waveformColor = PanelTheme.titleText(for: appearance).withAlphaComponent(0.92)
+        selectedCapsuleColor = themePalette.accent.withAlphaComponent(
+            SettingsWindowTheme.isDark(appearance) ? 0.30 : 0.16
+        )
+        selectedBorderColor = themePalette.accent.withAlphaComponent(
+            SettingsWindowTheme.isDark(appearance) ? 0.42 : 0.22
+        )
+        unselectedCapsuleColor = pillChrome.background
+        unselectedBorderColor = pillChrome.border
+        selectedTextColor = primaryChrome.text
+        selectedSubtextColor = primaryChrome.text.withAlphaComponent(0.78)
     }
 }

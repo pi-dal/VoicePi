@@ -224,7 +224,7 @@ private final class InputFallbackPanelContentViewController: NSViewController {
     private let toggleButton = NSButton(title: "", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
     private let dismissButton = NSButton(title: "", target: nil, action: nil)
-    private let blurView = NSVisualEffectView()
+    private let blurView = PanelSurfaceView()
     private let footerView = NSView()
     private let rootView = NSView()
     private var state: InputFallbackPanelPresentationState?
@@ -241,10 +241,6 @@ private final class InputFallbackPanelContentViewController: NSViewController {
         rootView.wantsLayer = true
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
-        blurView.material = .underWindowBackground
-        blurView.state = .active
-        blurView.blendingMode = .withinWindow
-        blurView.wantsLayer = true
         blurView.layer?.cornerRadius = 28
         blurView.layer?.masksToBounds = true
 
@@ -380,7 +376,6 @@ private final class InputFallbackPanelContentViewController: NSViewController {
     func syncAppearance() {
         let appearance = view.window?.effectiveAppearance ?? view.effectiveAppearance
         let palette = InputFallbackPanelPalette(appearance: appearance)
-        blurView.material = palette.material
         blurView.layer?.backgroundColor = palette.backgroundColor.cgColor
         blurView.layer?.borderWidth = 1
         blurView.layer?.borderColor = palette.borderColor.cgColor

@@ -29,11 +29,26 @@ final class DictionarySuggestionToastController: NSWindowController {
 
     private let titleLabel = NSTextField(labelWithString: "Dictionary suggestion captured")
     private let summaryLabel = NSTextField(labelWithString: "")
-    private let approveButton = NSButton(title: approveTitle, target: nil, action: nil)
-    private let reviewButton = NSButton(title: reviewTitle, target: nil, action: nil)
-    private let dismissButton = NSButton(title: dismissTitle, target: nil, action: nil)
+    private lazy var approveButton = StyledSettingsButton(
+        title: Self.approveTitle,
+        role: .primary,
+        target: self,
+        action: #selector(approveClicked)
+    )
+    private lazy var reviewButton = StyledSettingsButton(
+        title: Self.reviewTitle,
+        role: .secondary,
+        target: self,
+        action: #selector(reviewClicked)
+    )
+    private lazy var dismissButton = StyledSettingsButton(
+        title: Self.dismissTitle,
+        role: .secondary,
+        target: self,
+        action: #selector(dismissClicked)
+    )
     private let rootView = NSView()
-    private let blurView = NSVisualEffectView()
+    private let blurView = PanelSurfaceView()
 
     private(set) var currentPayload: DictionarySuggestionToastPayload?
     private(set) var lastPresentedSessionID: UUID?
@@ -87,6 +102,7 @@ final class DictionarySuggestionToastController: NSWindowController {
 
     func applyInterfaceTheme(_ theme: InterfaceTheme) {
         window?.appearance = theme.appearance
+        syncAppearance()
     }
 
     func show(payload: DictionarySuggestionToastPayload) {
@@ -148,12 +164,9 @@ final class DictionarySuggestionToastController: NSWindowController {
         rootView.wantsLayer = true
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
-        blurView.material = .hudWindow
-        blurView.state = .active
-        blurView.blendingMode = .withinWindow
-        blurView.wantsLayer = true
         blurView.layer?.cornerRadius = 18
         blurView.layer?.masksToBounds = true
+        blurView.layer?.borderWidth = 1
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 14.5, weight: .semibold)
@@ -198,13 +211,14 @@ final class DictionarySuggestionToastController: NSWindowController {
             buttonRow.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 12),
             buttonRow.bottomAnchor.constraint(equalTo: blurView.bottomAnchor, constant: -12)
         ])
+
+        syncAppearance()
     }
 
     private func configureButton(_ button: NSButton, action: Selector) {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.target = self
         button.action = action
-        button.bezelStyle = .rounded
         button.setContentHuggingPriority(.required, for: .horizontal)
     }
 
@@ -236,5 +250,17 @@ final class DictionarySuggestionToastController: NSWindowController {
     @objc
     private func dismissClicked() {
         performDismiss()
+    }
+
+    private func syncAppearance() {
+        let appearance = window?.effectiveAppearance ?? rootView.effectiveAppearance
+        let cardChrome = PanelTheme.surfaceChrome(for: appearance, style: .card)
+        blurView.layer?.backgroundColor = cardChrome.background.cgColor
+        blurView.layer?.borderColor = cardChrome.border.cgColor
+        titleLabel.textColor = PanelTheme.titleText(for: appearance)
+        summaryLabel.textColor = PanelTheme.subtitleText(for: appearance)
+        approveButton.applyAppearance(isSelected: false)
+        reviewButton.applyAppearance(isSelected: false)
+        dismissButton.applyAppearance(isSelected: false)
     }
 }

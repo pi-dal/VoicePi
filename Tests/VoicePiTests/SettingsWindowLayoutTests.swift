@@ -1422,6 +1422,7 @@ struct SettingsWindowLayoutTests {
 
         #expect(labels.contains("Permissions"))
         #expect(labels.contains(PermissionsCopy.permissionsFooterNote))
+        #expect(labels.contains(PermissionsCopy.inputMonitoringDescription))
         #expect(!labels.contains("Permission Strategy"))
         #expect(compactPermissionRows != nil)
         #expect(footerActions != nil)

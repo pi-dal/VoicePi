@@ -82,6 +82,17 @@ final class DictionaryStore: DictionaryStoring {
         )
     }
 
+    convenience init(
+        configPaths: VoicePiConfigPaths,
+        fileManager: FileManager = .default
+    ) {
+        self.init(
+            dictionaryFileURL: configPaths.dictionaryURL,
+            suggestionsFileURL: configPaths.dictionarySuggestionsURL,
+            fileManager: fileManager
+        )
+    }
+
     var configuredDictionaryFileURL: URL { dictionaryFileURL }
     var configuredSuggestionsFileURL: URL { suggestionsFileURL }
 
@@ -193,6 +204,10 @@ final class DictionaryStore: DictionaryStoring {
         }
 
         let data = try Data(contentsOf: url)
+        if data.isEmpty {
+            try saveFallback(fallback)
+            return fallback
+        }
         return try decoder.decode(T.self, from: data)
     }
 

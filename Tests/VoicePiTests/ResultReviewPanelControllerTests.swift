@@ -223,6 +223,80 @@ struct ResultReviewPanelControllerTests {
         #expect(selections.last == selectedPresetID)
     }
 
+    @Test
+    func panelCardUsesSettingsCardChrome() throws {
+        let controller = ResultReviewPanelController()
+        controller.applyInterfaceTheme(.light)
+
+        controller.show(
+            payload: try #require(
+                ResultReviewPanelPayload(
+                    resultText: "Refined text",
+                    originalText: "Original text",
+                    selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                    selectedPromptTitle: PromptPreset.builtInDefault.title,
+                    availablePrompts: [
+                        .init(
+                            presetID: PromptPreset.builtInDefaultID,
+                            title: PromptPreset.builtInDefault.title
+                        )
+                    ]
+                )
+            )
+        )
+
+        let cardView = try #require(
+            controller.window?.contentViewController?.view.subviews.first as? NSView
+        )
+        let backgroundColor = try #require(cardView.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+        let borderColor = try #require(cardView.layer?.borderColor.flatMap(NSColor.init(cgColor:)))
+        let expectedChrome = SettingsWindowTheme.surfaceChrome(
+            for: NSAppearance(named: .aqua),
+            style: .card
+        )
+
+        #expect(backgroundColor == expectedChrome.background)
+        #expect(borderColor == expectedChrome.border)
+    }
+
+    @Test
+    func regenerateButtonUsesSettingsSecondaryButtonChrome() throws {
+        let controller = ResultReviewPanelController()
+        controller.applyInterfaceTheme(.light)
+
+        controller.show(
+            payload: try #require(
+                ResultReviewPanelPayload(
+                    resultText: "Refined text",
+                    originalText: "Original text",
+                    selectedPromptPresetID: PromptPreset.builtInDefaultID,
+                    selectedPromptTitle: PromptPreset.builtInDefault.title,
+                    availablePrompts: [
+                        .init(
+                            presetID: PromptPreset.builtInDefaultID,
+                            title: PromptPreset.builtInDefault.title
+                        )
+                    ]
+                )
+            )
+        )
+
+        let contentView = try #require(controller.window?.contentViewController?.view)
+        let regenerateButton = try #require(findButton(in: contentView, withTitle: "Regenerate"))
+        let backgroundColor = try #require(regenerateButton.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+        let borderColor = try #require(regenerateButton.layer?.borderColor.flatMap(NSColor.init(cgColor:)))
+        let expectedChrome = SettingsWindowTheme.buttonChrome(
+            for: NSAppearance(named: .aqua),
+            role: .secondary,
+            isSelected: false,
+            isHovered: false,
+            isHighlighted: false
+        )
+
+        #expect(backgroundColor == expectedChrome.fill)
+        #expect(borderColor == expectedChrome.border)
+    }
+
     private func findFirstPromptPopup(in view: NSView) -> NSPopUpButton? {
         if let popup = view as? NSPopUpButton {
             return popup

@@ -94,6 +94,32 @@ struct DictionaryStoreTests {
     }
 
     @Test
+    func loadDictionaryTreatsEmptyFileAsEmptyDocument() throws {
+        let fixture = try DictionaryStoreFixture()
+        defer { fixture.cleanup() }
+
+        try Data().write(to: fixture.dictionaryURL, options: .atomic)
+
+        let document = try fixture.makeStore().loadDictionary()
+
+        #expect(document.version == DictionarySchemaVersion.current)
+        #expect(document.entries.isEmpty)
+    }
+
+    @Test
+    func loadSuggestionsTreatsEmptyFileAsEmptyDocument() throws {
+        let fixture = try DictionaryStoreFixture()
+        defer { fixture.cleanup() }
+
+        try Data().write(to: fixture.suggestionsURL, options: .atomic)
+
+        let document = try fixture.makeStore().loadSuggestions()
+
+        #expect(document.version == DictionarySchemaVersion.current)
+        #expect(document.suggestions.isEmpty)
+    }
+
+    @Test
     func dictionaryAndSuggestionsPersistIndependently() throws {
         let fixture = try DictionaryStoreFixture()
         defer { fixture.cleanup() }

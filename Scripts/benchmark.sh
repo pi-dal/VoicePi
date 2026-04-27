@@ -18,10 +18,13 @@ if [ ! -x "$SWIFTC" ]; then
   SWIFTC=swiftc
 fi
 
+SDK_PATH=$(xcrun --sdk macosx --show-sdk-path)
+
 "$SWIFTC" \
   -parse-as-library \
   -O \
   -whole-module-optimization \
+  -sdk "$SDK_PATH" \
   "$ROOT_DIR/Sources/VoicePi/Core/Processing/TextInjectionTiming.swift" \
   "$ROOT_DIR/Sources/VoicePi/Core/Shortcuts/SpeechRecorderStopPolicy.swift" \
   "$ROOT_DIR/Sources/VoicePi/Core/Processing/RealtimeOverlayUpdateGate.swift" \

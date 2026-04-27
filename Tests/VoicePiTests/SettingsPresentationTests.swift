@@ -341,7 +341,7 @@ struct SettingsPresentationTests {
         )
         #expect(
             PermissionsCopy.inputMonitoringDescription
-                == "Required to capture keystrokes."
+                == "Only required for advanced shortcuts such as Escape or Option + Fn."
         )
         #expect(
             PermissionsCopy.permissionsFooterNote
@@ -349,7 +349,7 @@ struct SettingsPresentationTests {
         )
         #expect(
             PermissionsCopy.strategyDescription
-                == "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for advanced shortcut handling and paste injection."
+                == "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for paste injection and advanced shortcuts such as Escape or Option + Fn."
         )
         #expect(
             PermissionsCopy.standardShortcutHint

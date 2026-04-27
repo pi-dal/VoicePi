@@ -1387,7 +1387,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func launchPermissionPlanRequestsInputMonitoringOnlyForAdvancedShortcuts() {
+    func launchPermissionPlanDoesNotRequestInputMonitoringForAdvancedActivationShortcut() {
         let advancedShortcut = ActivationShortcut(
             keyCodes: [],
             modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
@@ -1400,7 +1400,7 @@ struct AppControllerInteractionTests {
             ) == .init(
                 requestMediaPermissions: true,
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true,
+                requestInputMonitoringPermission: false,
                 useSystemAccessibilityPrompt: false
             )
         )
@@ -1408,7 +1408,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func launchPermissionPlanAlsoRequestsInputMonitoringWhenModeCycleShortcutIsAdvanced() {
+    func launchPermissionPlanDoesNotRequestInputMonitoringForAdvancedModeCycleShortcut() {
         let activationShortcut = ActivationShortcut(
             keyCodes: [49],
             modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
@@ -1426,7 +1426,7 @@ struct AppControllerInteractionTests {
             ) == .init(
                 requestMediaPermissions: true,
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true,
+                requestInputMonitoringPermission: false,
                 useSystemAccessibilityPrompt: false
             )
         )
@@ -1434,7 +1434,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func launchPermissionPlanAlsoRequestsInputMonitoringWhenProcessorShortcutIsAdvanced() {
+    func launchPermissionPlanDoesNotRequestInputMonitoringForAdvancedProcessorShortcut() {
         let activationShortcut = ActivationShortcut(
             keyCodes: [49],
             modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
@@ -1454,7 +1454,7 @@ struct AppControllerInteractionTests {
             ) == .init(
                 requestMediaPermissions: true,
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true,
+                requestInputMonitoringPermission: false,
                 useSystemAccessibilityPrompt: false
             )
         )
@@ -1462,7 +1462,7 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
-    func launchPermissionPlanAlsoRequestsInputMonitoringWhenPromptCycleShortcutIsAdvanced() {
+    func launchPermissionPlanDoesNotRequestInputMonitoringForAdvancedPromptCycleShortcut() {
         let activationShortcut = ActivationShortcut(
             keyCodes: [49],
             modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
@@ -1482,8 +1482,52 @@ struct AppControllerInteractionTests {
             ) == .init(
                 requestMediaPermissions: true,
                 promptAccessibility: true,
-                requestInputMonitoringPermission: true,
+                requestInputMonitoringPermission: false,
                 useSystemAccessibilityPrompt: false
+            )
+        )
+    }
+
+    @Test
+    @MainActor
+    func shortcutUpdateRequestsInputMonitoringOnlyForUpdatedAdvancedShortcutWhenStillMissing() {
+        let advancedShortcut = ActivationShortcut(
+            keyCodes: [],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.option, .function]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+        let standardShortcut = ActivationShortcut(
+            keyCodes: [49],
+            modifierFlagsRawValue: NSEvent.ModifierFlags([.command, .option]).intersection(.deviceIndependentFlagsMask).rawValue
+        )
+
+        #expect(
+            AppController.shouldRequestInputMonitoringAfterShortcutUpdate(
+                updatedShortcut: advancedShortcut,
+                inputMonitoringState: .unknown
+            )
+        )
+        #expect(
+            AppController.shouldRequestInputMonitoringAfterShortcutUpdate(
+                updatedShortcut: advancedShortcut,
+                inputMonitoringState: .denied
+            )
+        )
+        #expect(
+            !AppController.shouldRequestInputMonitoringAfterShortcutUpdate(
+                updatedShortcut: standardShortcut,
+                inputMonitoringState: .unknown
+            )
+        )
+        #expect(
+            !AppController.shouldRequestInputMonitoringAfterShortcutUpdate(
+                updatedShortcut: ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0),
+                inputMonitoringState: .unknown
+            )
+        )
+        #expect(
+            !AppController.shouldRequestInputMonitoringAfterShortcutUpdate(
+                updatedShortcut: advancedShortcut,
+                inputMonitoringState: .granted
             )
         )
     }

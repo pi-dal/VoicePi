@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import VoicePi
 
@@ -78,5 +79,94 @@ struct FloatingPanelControllerTests {
 
         #expect(refining.requiresLayoutRecalculation)
         #expect(refining.displayedText == "hello")
+    }
+
+    @Test
+    func recordingPaletteReusesSettingsThemeBackgroundChrome() throws {
+        let lightAppearance = try #require(NSAppearance(named: .aqua))
+        let darkAppearance = try #require(NSAppearance(named: .darkAqua))
+
+        let lightPalette = FloatingPanelPalette(appearance: lightAppearance, phase: .recording)
+        let darkPalette = FloatingPanelPalette(appearance: darkAppearance, phase: .recording)
+        let lightChrome = SettingsWindowTheme.surfaceChrome(for: lightAppearance, style: .row)
+        let darkChrome = SettingsWindowTheme.surfaceChrome(for: darkAppearance, style: .row)
+
+        #expect(lightPalette.backgroundColor == lightChrome.background)
+        #expect(darkPalette.backgroundColor == darkChrome.background)
+        #expect(lightPalette.borderColor == lightChrome.border)
+        #expect(darkPalette.borderColor == darkChrome.border)
+    }
+
+    @Test
+    @MainActor
+    func recordingBannerRendersSameWarmSurfaceAsSettings() throws {
+        let appearance = try #require(NSAppearance(named: .aqua))
+        let controller = FloatingPanelContentViewController()
+
+        controller.loadViewIfNeeded()
+        controller.view.appearance = appearance
+        controller.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: FloatingPanelSupport.compactBannerWidth,
+            height: FloatingPanelSupport.compactBannerHeight
+        )
+        controller.setPhase(.recording)
+        controller.updateTranscript("")
+        controller.view.layoutSubtreeIfNeeded()
+
+        let referenceView = ThemedSurfaceView(style: .row)
+        referenceView.appearance = appearance
+        referenceView.frame = controller.view.bounds
+        referenceView.layoutSubtreeIfNeeded()
+
+        let samplePoint = NSPoint(x: controller.view.bounds.width - 12, y: 12)
+        let actualColor = try #require(sampleRenderedColor(in: controller.view, at: samplePoint))
+        let expectedColor = try #require(sampleRenderedColor(in: referenceView, at: samplePoint))
+
+        #expect(actualColor.isApproximatelyEqual(to: expectedColor, tolerance: 0.01))
+    }
+
+    @Test
+    func modeSwitchPaletteUsesSettingsSurfaceChrome() throws {
+        let lightAppearance = try #require(NSAppearance(named: .aqua))
+        let darkAppearance = try #require(NSAppearance(named: .darkAqua))
+
+        let lightPalette = FloatingPanelPalette(appearance: lightAppearance, phase: .modeSwitch)
+        let darkPalette = FloatingPanelPalette(appearance: darkAppearance, phase: .modeSwitch)
+        let lightChrome = SettingsWindowTheme.surfaceChrome(for: lightAppearance, style: .card)
+        let darkChrome = SettingsWindowTheme.surfaceChrome(for: darkAppearance, style: .card)
+
+        #expect(lightPalette.backgroundColor == lightChrome.background)
+        #expect(darkPalette.backgroundColor == darkChrome.background)
+    }
+}
+
+@MainActor
+private func sampleRenderedColor(in view: NSView, at point: NSPoint) -> NSColor? {
+    view.layoutSubtreeIfNeeded()
+    guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        return nil
+    }
+
+    view.cacheDisplay(in: view.bounds, to: representation)
+    let sampleX = min(max(Int(point.x.rounded(.down)), 0), representation.pixelsWide - 1)
+    let sampleY = min(max(Int(point.y.rounded(.down)), 0), representation.pixelsHigh - 1)
+    return representation.colorAt(x: sampleX, y: sampleY)?.usingColorSpace(.deviceRGB)
+}
+
+private extension NSColor {
+    func isApproximatelyEqual(to other: NSColor, tolerance: CGFloat = 0.002) -> Bool {
+        guard
+            let lhs = usingColorSpace(.deviceRGB),
+            let rhs = other.usingColorSpace(.deviceRGB)
+        else {
+            return false
+        }
+
+        return abs(lhs.redComponent - rhs.redComponent) <= tolerance
+            && abs(lhs.greenComponent - rhs.greenComponent) <= tolerance
+            && abs(lhs.blueComponent - rhs.blueComponent) <= tolerance
+            && abs(lhs.alphaComponent - rhs.alphaComponent) <= tolerance
     }
 }

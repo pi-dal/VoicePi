@@ -58,7 +58,6 @@ struct InputFallbackPanelPresentationState: Equatable {
 }
 
 struct InputFallbackPanelPalette {
-    let material: NSVisualEffectView.Material
     let backgroundColor: NSColor
     let borderColor: NSColor
     let titleColor: NSColor
@@ -73,35 +72,21 @@ struct InputFallbackPanelPalette {
     let toggleColor: NSColor
 
     init(appearance: NSAppearance) {
-        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        material = .underWindowBackground
+        let cardChrome = PanelTheme.surfaceChrome(for: appearance, style: .card)
+        let primaryChrome = PanelTheme.buttonChrome(for: appearance, role: .primary)
+        let secondaryChrome = PanelTheme.buttonChrome(for: appearance, role: .secondary)
 
-        if isDarkTheme {
-            backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 0.96)
-            borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
-            titleColor = NSColor.white.withAlphaComponent(0.96)
-            textColor = NSColor.white.withAlphaComponent(0.92)
-            secondaryTextColor = NSColor.white.withAlphaComponent(0.70)
-            primaryButtonBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.20)
-            primaryButtonBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.16)
-            primaryButtonTextColor = NSColor.white.withAlphaComponent(0.98)
-            secondaryButtonBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.06)
-            secondaryButtonBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
-            secondaryButtonTextColor = NSColor.white.withAlphaComponent(0.80)
-            toggleColor = NSColor.white.withAlphaComponent(0.78)
-        } else {
-            backgroundColor = NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 0.96)
-            borderColor = NSColor(calibratedWhite: 0.0, alpha: 0.08)
-            titleColor = NSColor(calibratedWhite: 0.16, alpha: 1)
-            textColor = NSColor(calibratedWhite: 0.16, alpha: 1)
-            secondaryTextColor = NSColor(calibratedWhite: 0.16, alpha: 0.66)
-            primaryButtonBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.58)
-            primaryButtonBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.62)
-            primaryButtonTextColor = NSColor(calibratedWhite: 0.10, alpha: 1)
-            secondaryButtonBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.22)
-            secondaryButtonBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.30)
-            secondaryButtonTextColor = NSColor(calibratedWhite: 0.22, alpha: 0.82)
-            toggleColor = NSColor(calibratedWhite: 0.18, alpha: 0.82)
-        }
+        backgroundColor = cardChrome.background
+        borderColor = cardChrome.border
+        titleColor = PanelTheme.titleText(for: appearance)
+        textColor = PanelTheme.titleText(for: appearance)
+        secondaryTextColor = PanelTheme.subtitleText(for: appearance)
+        primaryButtonBackgroundColor = primaryChrome.fill
+        primaryButtonBorderColor = primaryChrome.border
+        primaryButtonTextColor = primaryChrome.text
+        secondaryButtonBackgroundColor = secondaryChrome.fill
+        secondaryButtonBorderColor = secondaryChrome.border
+        secondaryButtonTextColor = secondaryChrome.text
+        toggleColor = PanelTheme.subtitleText(for: appearance)
     }
 }

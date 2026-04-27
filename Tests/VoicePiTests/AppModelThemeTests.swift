@@ -37,14 +37,15 @@ struct AppModelThemeTests {
 
     @Test
     @MainActor
-    func interfaceThemeWritesExpectedRawValue() {
+    func interfaceThemeWritesExpectedRawValue() throws {
         let defaults = UserDefaults(suiteName: "VoicePiTests.interfaceThemeWritesExpectedRawValue.\(UUID().uuidString)")!
         defaults.removePersistentDomain(forName: defaultsSuiteName(defaults))
 
         let model = AppModel(defaults: defaults)
         model.interfaceTheme = .light
 
-        #expect(defaults.string(forKey: AppModel.Keys.interfaceTheme) == InterfaceTheme.light.rawValue)
+        let persisted = try model.configStore.loadConfiguration()
+        #expect(persisted.app.interfaceTheme == .light)
     }
 
     private func defaultsSuiteName(_ defaults: UserDefaults) -> String {

@@ -75,7 +75,6 @@ enum SelectionRegenerateHintLayout {
 }
 
 struct SelectionRegenerateHintPalette {
-    let material: NSVisualEffectView.Material
     let backgroundColor: NSColor
     let borderColor: NSColor
     let titleColor: NSColor
@@ -91,38 +90,28 @@ struct SelectionRegenerateHintPalette {
     let primaryButtonHoverTextColor: NSColor
 
     init(appearance: NSAppearance) {
-        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        material = .underWindowBackground
+        let cardChrome = PanelTheme.surfaceChrome(for: appearance, style: .card)
+        let pillChrome = PanelTheme.surfaceChrome(for: appearance, style: .pill)
+        let primaryChrome = PanelTheme.buttonChrome(for: appearance, role: .primary)
+        let primaryHoverChrome = PanelTheme.buttonChrome(
+            for: appearance,
+            role: .primary,
+            isHighlighted: true
+        )
 
-        if isDarkTheme {
-            backgroundColor = NSColor(calibratedWhite: 0.13, alpha: 0.96)
-            borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.10)
-            titleColor = NSColor.white.withAlphaComponent(0.97)
-            subtitleColor = NSColor.white.withAlphaComponent(0.70)
-            badgeBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.08)
-            badgeBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.12)
-            badgeSymbolColor = NSColor.white.withAlphaComponent(0.86)
-            primaryButtonBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.14)
-            primaryButtonBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.16)
-            primaryButtonTextColor = NSColor.white.withAlphaComponent(0.98)
-            primaryButtonHoverBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.22)
-            primaryButtonHoverBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.24)
-            primaryButtonHoverTextColor = NSColor.white
-        } else {
-            backgroundColor = NSColor(calibratedRed: 0xF4 / 255.0, green: 0xF1 / 255.0, blue: 0xE9 / 255.0, alpha: 0.97)
-            borderColor = NSColor(calibratedWhite: 0.0, alpha: 0.08)
-            titleColor = NSColor(calibratedWhite: 0.12, alpha: 1.0)
-            subtitleColor = NSColor(calibratedWhite: 0.28, alpha: 0.90)
-            badgeBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.52)
-            badgeBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.70)
-            badgeSymbolColor = NSColor(calibratedWhite: 0.18, alpha: 0.95)
-            primaryButtonBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.70)
-            primaryButtonBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.76)
-            primaryButtonTextColor = NSColor(calibratedWhite: 0.12, alpha: 1.0)
-            primaryButtonHoverBackgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.92)
-            primaryButtonHoverBorderColor = NSColor(calibratedWhite: 1.0, alpha: 0.98)
-            primaryButtonHoverTextColor = NSColor(calibratedWhite: 0.08, alpha: 1.0)
-        }
+        backgroundColor = cardChrome.background
+        borderColor = cardChrome.border
+        titleColor = PanelTheme.titleText(for: appearance)
+        subtitleColor = PanelTheme.subtitleText(for: appearance)
+        badgeBackgroundColor = pillChrome.background
+        badgeBorderColor = pillChrome.border
+        badgeSymbolColor = PanelTheme.accent(for: appearance)
+        primaryButtonBackgroundColor = primaryChrome.fill
+        primaryButtonBorderColor = primaryChrome.border
+        primaryButtonTextColor = primaryChrome.text
+        primaryButtonHoverBackgroundColor = primaryHoverChrome.fill
+        primaryButtonHoverBorderColor = primaryHoverChrome.border
+        primaryButtonHoverTextColor = primaryHoverChrome.text
     }
 }
 
@@ -295,7 +284,7 @@ final class SelectionRegenerateHintController: NSWindowController {
     private let panelHeight: CGFloat = 96
 
     private let rootView = NSView()
-    private let blurView = NSVisualEffectView()
+    private let blurView = PanelSurfaceView()
     private let contentStackView = NSStackView()
     private let textStackView = NSStackView()
     private let badgeView = NSView()
@@ -412,9 +401,6 @@ final class SelectionRegenerateHintController: NSWindowController {
         rootView.wantsLayer = true
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
-        blurView.state = .active
-        blurView.blendingMode = .withinWindow
-        blurView.wantsLayer = true
         blurView.layer?.cornerRadius = 18
         blurView.layer?.masksToBounds = true
         blurView.layer?.borderWidth = 1
@@ -491,7 +477,6 @@ final class SelectionRegenerateHintController: NSWindowController {
         let appearance = window?.effectiveAppearance ?? rootView.effectiveAppearance
         let palette = SelectionRegenerateHintPalette(appearance: appearance)
 
-        blurView.material = palette.material
         blurView.layer?.backgroundColor = palette.backgroundColor.cgColor
         blurView.layer?.borderColor = palette.borderColor.cgColor
         hintLabel.textColor = palette.titleColor

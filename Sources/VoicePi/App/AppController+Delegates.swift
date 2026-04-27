@@ -65,6 +65,7 @@ extension AppController: StatusBarControllerDelegate {
         recordingShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
+        requestInputMonitoringPermissionIfNeededAfterShortcutUpdate(shortcut)
     }
 
     func statusBarController(_ controller: StatusBarController, didUpdateCancelShortcut shortcut: ActivationShortcut) {
@@ -72,6 +73,7 @@ extension AppController: StatusBarControllerDelegate {
         cancelShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
+        requestInputMonitoringPermissionIfNeededAfterShortcutUpdate(shortcut)
     }
 
     func statusBarController(_ controller: StatusBarController, didUpdateModeCycleShortcut shortcut: ActivationShortcut) {
@@ -79,6 +81,7 @@ extension AppController: StatusBarControllerDelegate {
         modeCycleShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
+        requestInputMonitoringPermissionIfNeededAfterShortcutUpdate(shortcut)
     }
 
     func statusBarController(_ controller: StatusBarController, didUpdatePromptCycleShortcut shortcut: ActivationShortcut) {
@@ -86,6 +89,7 @@ extension AppController: StatusBarControllerDelegate {
         promptCycleShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
+        requestInputMonitoringPermissionIfNeededAfterShortcutUpdate(shortcut)
     }
 
     func statusBarController(_ controller: StatusBarController, didUpdateProcessorShortcut shortcut: ActivationShortcut) {
@@ -93,6 +97,7 @@ extension AppController: StatusBarControllerDelegate {
         processorShortcutAction.shortcut = shortcut
         controller.refreshAll()
         ensureHotkeyMonitorRunning()
+        requestInputMonitoringPermissionIfNeededAfterShortcutUpdate(shortcut)
     }
 
     func statusBarController(_ controller: StatusBarController, didSave configuration: LLMConfiguration) {

@@ -280,7 +280,7 @@ final class FloatingPanelContentViewController: NSViewController {
     var panelSizeDidChange: ((CGFloat, CGFloat) -> Void)?
 
     private let rootView = AppearanceAwareView()
-    private let blurView = NSVisualEffectView()
+    private let blurView = PanelSurfaceView()
     private let stackView = NSStackView()
     private let textStackView = NSStackView()
     private let modeSwitchContainer = NSStackView()
@@ -332,10 +332,6 @@ final class FloatingPanelContentViewController: NSViewController {
         rootView.layer?.masksToBounds = false
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
-        blurView.material = .underWindowBackground
-        blurView.state = .active
-        blurView.blendingMode = .withinWindow
-        blurView.wantsLayer = true
         blurView.layer?.cornerRadius = 28
         blurView.layer?.masksToBounds = true
 
@@ -676,7 +672,6 @@ final class FloatingPanelContentViewController: NSViewController {
 
     private func syncAppearance() {
         let palette = FloatingPanelPalette(appearance: view.effectiveAppearance, phase: phase)
-        blurView.material = palette.material
         blurView.layer?.backgroundColor = palette.backgroundColor.cgColor
         blurView.layer?.borderWidth = 1
         blurView.layer?.borderColor = palette.borderColor.cgColor

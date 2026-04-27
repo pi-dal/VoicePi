@@ -468,7 +468,60 @@ VoicePi supports these recognition languages:
 
 You can change the recognition language from the ASR settings section and, depending on the current app build, from the menu bar language submenu.
 
-The selected language is stored in `UserDefaults`.
+The selected language is stored in `~/.config/voicepi/config.toml` under `[app].language`.
+
+## Configuration Files
+
+VoicePi now uses a file-first configuration model rooted at `~/.config/voicepi`.
+The Settings UI edits the same files you can edit manually, and VoicePi reloads
+those files while the app is running.
+
+The default layout is:
+
+```text
+~/.config/voicepi/
+├── config.toml
+├── user-prompt.txt
+├── dictionary.json
+├── dictionary-suggestions.json
+├── processors.json
+├── prompt-workspace.json
+├── prompts/
+│   ├── user.release-notes.json
+│   ├── user.email-writer.json
+│   └── ...
+└── history/
+    ├── 2026-04.jsonl
+    ├── 2026-05.jsonl
+    └── ...
+```
+
+`config.toml` is the main source of truth for app behavior, including language,
+ASR backend, remote ASR credentials, LLM credentials, hotkeys, theme, and
+history policy. Structured files such as `dictionary.json`,
+`dictionary-suggestions.json`, `processors.json`, and `prompt-workspace.json`
+hold the larger object graphs that are awkward to manage inline in TOML.
+
+The prompt body files are split out intentionally:
+
+- `user-prompt.txt` stores the currently resolved refinement prompt body
+- `prompt-workspace.json` stores prompt workspace state such as the active selection
+- `prompts/*.json` stores one user-defined prompt preset per file, which is easier for agents and git diffs to edit safely
+
+History is stored as monthly JSONL shards under `history/`. Each line is one
+saved session record, including the final text by default, so agent tooling can
+analyze usage without scraping app internals. The default history directory and
+storage behavior live in `config.toml` under `[history]`.
+
+Most path-based storage locations can be overridden in `config.toml` under
+`[paths]`, and VoicePi resolves relative paths against `~/.config/voicepi`.
+Absolute paths are also supported if you want to move specific files into a
+synced directory or a repo.
+
+On first launch after upgrading to the file-first build, VoicePi migrates
+existing `UserDefaults` settings and legacy `Application Support` JSON files
+into this config root automatically. After migration, the file tree above
+becomes the primary persistent state.
 
 ## Remote ASR
 
@@ -605,7 +658,9 @@ Bundled starter prompts live under [`Sources/VoicePi/PromptLibrary`](Sources/Voi
 - [`registry.json`](Sources/VoicePi/PromptLibrary/registry.json) lists the shipped prompt assets.
 - [`profiles/`](Sources/VoicePi/PromptLibrary/profiles) contains the starter prompt bodies such as `meeting_notes`, `json_output`, and `support_reply`.
 
-VoicePi loads these bundled starters as read-only presets. User-created prompts are persisted separately in app settings.
+VoicePi loads these bundled starters as read-only presets. User-created prompts
+and prompt workspace state are persisted under `~/.config/voicepi/` instead of
+remaining embedded only in app-local preferences.
 
 ## Input Method Handling
 

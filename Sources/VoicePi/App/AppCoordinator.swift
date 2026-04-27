@@ -80,6 +80,7 @@ final class AppController: NSObject {
     var externalProcessorResultRetryTask: Task<Void, Never>?
     var realtimeOverlayUpdateGate = RealtimeOverlayUpdateGate()
     var realtimeAudioFramePump: RealtimeAudioFramePump?
+    var configWatcher: VoicePiConfigWatcher?
 
 
     func start() {
@@ -196,7 +197,7 @@ final class AppController: NSObject {
                 self?.handleCancelShortcutPress()
             }
         }
-        cancelShortcutAction.shortcut = model.cancelShortcut
+        syncShortcutControllersFromModel()
 
         let statusBarController = StatusBarController(model: model)
         statusBarController.delegate = self
@@ -210,6 +211,7 @@ final class AppController: NSObject {
         }
         applyUpdateExperience(.idle(source: .unknown))
         bootstrapHotkeyMonitoring()
+        startConfigWatcher()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -251,6 +253,8 @@ final class AppController: NSObject {
         startupHotkeyBootstrapTask?.cancel()
         modeCycleRepeatTask = nil
         startupHotkeyBootstrapTask = nil
+        configWatcher?.stop()
+        configWatcher = nil
         recordingShortcutAction.stop()
         modeCycleShortcutAction.stop()
         promptCycleShortcutAction.stop()
@@ -271,4 +275,38 @@ final class AppController: NSObject {
     }
 
 
+}
+
+@MainActor
+private extension AppController {
+    func syncShortcutControllersFromModel() {
+        recordingShortcutAction.shortcut = model.activationShortcut
+        modeCycleShortcutAction.shortcut = model.modeCycleShortcut
+        promptCycleShortcutAction.shortcut = model.promptCycleShortcut
+        processorShortcutAction.shortcut = model.processorShortcut
+        cancelShortcutAction.shortcut = model.cancelShortcut
+    }
+
+    func startConfigWatcher() {
+        configWatcher?.stop()
+        do {
+            let paths = model.configStore.resolvedPaths(for: model.activeFileConfiguration)
+            let watcher = VoicePiConfigWatcher(paths: paths) { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.handleExternalConfigReload()
+                }
+            }
+            try watcher.start()
+            configWatcher = watcher
+        } catch {
+            model.presentError("Config watcher failed: \(error.localizedDescription)")
+        }
+    }
+
+    func handleExternalConfigReload() {
+        model.reloadFromConfigStore()
+        syncShortcutControllersFromModel()
+        statusBarController?.refreshAll()
+        startConfigWatcher()
+    }
 }

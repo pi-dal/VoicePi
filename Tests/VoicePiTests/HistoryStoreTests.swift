@@ -2,6 +2,33 @@ import Foundation
 import Testing
 @testable import VoicePi
 
+private struct MonthlyHistoryJSONLFixtureRecord: Codable {
+    let id: UUID
+    let text: String
+    let createdAt: Date
+    let characterCount: Int
+    let wordCount: Int
+    let recordingDurationMilliseconds: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case createdAt = "created_at"
+        case characterCount = "character_count"
+        case wordCount = "word_count"
+        case recordingDurationMilliseconds = "recording_duration_milliseconds"
+    }
+
+    init(entry: HistoryEntry) {
+        self.id = entry.id
+        self.text = entry.text
+        self.createdAt = entry.createdAt
+        self.characterCount = entry.characterCount
+        self.wordCount = entry.wordCount
+        self.recordingDurationMilliseconds = entry.recordingDurationMilliseconds
+    }
+}
+
 struct HistoryStoreTests {
     @Test
     @MainActor
@@ -138,5 +165,62 @@ struct HistoryStoreTests {
         #expect(document.entries.first?.text == "Item \(HistoryStore.maximumEntryCount + 3)")
         #expect(document.entries.contains(where: { $0.text == "kept" }) == false)
         #expect(document.entries.contains(where: { $0.text.isEmpty }) == false)
+    }
+
+    @Test
+    func monthlyJSONLAppendOnlyDoesNotRewriteOlderMonthFiles() throws {
+        let fileManager = FileManager()
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("VoicePiTests.History.MonthlyAppend.\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let store = HistoryStore(historyDirectoryURL: root, fileManager: fileManager)
+
+        let calendar = Calendar(identifier: .gregorian)
+        let currentDate = Date()
+        let previousMonthDate = try #require(calendar.date(byAdding: .month, value: -1, to: currentDate))
+        let previousMonthFileURL = root.appendingPathComponent(
+            "\(VoicePiConfigPaths.historyMonthString(for: previousMonthDate)).jsonl",
+            isDirectory: false
+        )
+
+        let preservedEntry = HistoryEntry(
+            text: "Older month entry",
+            createdAt: previousMonthDate,
+            recordingDurationMilliseconds: 321
+        )
+        let preservedData = try JSONEncoder().encode(MonthlyHistoryJSONLFixtureRecord(entry: preservedEntry))
+        let preservedLine = String(decoding: preservedData, as: UTF8.self)
+        let originalPreviousMonthContents = "\(preservedLine)\n\n"
+        try originalPreviousMonthContents.write(
+            to: previousMonthFileURL,
+            atomically: true,
+            encoding: String.Encoding.utf8
+        )
+
+        try store.appendEntry(
+            text: "Current month entry",
+            recordingDurationMilliseconds: 654
+        )
+
+        let updatedPreviousMonthContents = try String(
+            contentsOf: previousMonthFileURL,
+            encoding: .utf8
+        )
+        #expect(updatedPreviousMonthContents == originalPreviousMonthContents)
+
+        let currentMonthFileURL = root.appendingPathComponent(
+            "\(VoicePiConfigPaths.historyMonthString(for: currentDate)).jsonl",
+            isDirectory: false
+        )
+        let currentMonthContents = try String(contentsOf: currentMonthFileURL, encoding: .utf8)
+        let currentMonthLines = currentMonthContents.split(whereSeparator: \.isNewline)
+        #expect(currentMonthLines.count == 1)
+        let appendedRecord = try JSONDecoder().decode(
+            MonthlyHistoryJSONLFixtureRecord.self,
+            from: Data(currentMonthLines[0].utf8)
+        )
+        #expect(appendedRecord.text == "Current month entry")
+        #expect(appendedRecord.recordingDurationMilliseconds == 654)
     }
 }

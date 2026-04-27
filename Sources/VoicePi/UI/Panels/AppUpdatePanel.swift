@@ -232,10 +232,7 @@ final class AppUpdatePanelController: NSWindowController, NSWindowDelegate {
         guard let window, let contentView = window.contentView else { return }
         window.appearance = interfaceAppearance
         let appearance = interfaceAppearance ?? window.effectiveAppearance
-        let isDarkTheme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let pageBackgroundColor = isDarkTheme
-            ? NSColor(calibratedWhite: 0.16, alpha: 1)
-            : NSColor(calibratedRed: 0xF5 / 255.0, green: 0xF3 / 255.0, blue: 0xED / 255.0, alpha: 1)
+        let pageBackgroundColor = PanelTheme.pageBackground(for: appearance)
         window.backgroundColor = pageBackgroundColor
         contentView.layer?.backgroundColor = pageBackgroundColor.cgColor
     }

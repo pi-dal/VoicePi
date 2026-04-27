@@ -208,7 +208,8 @@ struct AppModelPersistenceTests {
                 baseURL: "https://llm.example.com",
                 apiKey: "llm-key",
                 model: "gpt-4o-mini",
-                refinementPrompt: ""
+                refinementPrompt: "",
+                enableThinking: false
             )
         )
         #expect(reloaded.asrBackend == .remoteOpenAICompatible)
@@ -568,7 +569,6 @@ struct AppModelPersistenceTests {
         #expect(initial.activationShortcut.isRegisteredHotkeyCompatible)
         #expect(reloaded.activationShortcut == initial.activationShortcut)
         #expect(reloaded.activationShortcut.requiresInputMonitoring == false)
-        #expect(defaults.data(forKey: AppModel.Keys.activationShortcut) != nil)
     }
 
     @Test

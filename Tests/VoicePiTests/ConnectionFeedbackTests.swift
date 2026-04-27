@@ -4,10 +4,20 @@ import Testing
 
 struct ConnectionFeedbackTests {
     @Test
-    func remoteASRSuccessUsesSuccessIndicatorAndCelebration() {
-        let presentation = ConnectionTestFeedback.remoteASRTestResult(.success("Remote ASR endpoint responded with HTTP 401."))
+    func remoteASRHTTP200SuccessUsesGenericSuccessCopy() {
+        let presentation = ConnectionTestFeedback.remoteASRTestResult(.success("Remote ASR endpoint responded with HTTP 200."))
 
-        #expect(presentation.text == "Remote ASR endpoint responded with HTTP 401.")
+        #expect(presentation.text == "Test succeeded.")
+        #expect(presentation.tone == .success)
+        #expect(presentation.symbolName == "checkmark.circle.fill")
+        #expect(presentation.celebrates)
+    }
+
+    @Test
+    func remoteASRAcceptedProbeStatusUsesReachableSuccessCopy() {
+        let presentation = ConnectionTestFeedback.remoteASRTestResult(.success("Remote ASR endpoint responded with HTTP 403."))
+
+        #expect(presentation.text == "Test succeeded. The ASR endpoint is reachable, although it rejected the lightweight probe.")
         #expect(presentation.tone == .success)
         #expect(presentation.symbolName == "checkmark.circle.fill")
         #expect(presentation.celebrates)
@@ -38,6 +48,26 @@ struct ConnectionFeedbackTests {
         let presentation = ConnectionTestFeedback.llmTestResult(.failure(ConnectionFeedbackTestError.sample))
 
         #expect(presentation.text == "Test failed: sample")
+        #expect(presentation.tone == .error)
+        #expect(presentation.symbolName == "xmark.octagon.fill")
+        #expect(presentation.celebrates == false)
+    }
+
+    @Test
+    func llmHTTPStatusFailureUsesFriendlyCopy() {
+        let presentation = ConnectionTestFeedback.llmTestResult(.failure(LLMRefinerError.badStatusCode(403, nil)))
+
+        #expect(presentation.text == "Test failed: the server rejected the request credentials or permissions.")
+        #expect(presentation.tone == .error)
+        #expect(presentation.symbolName == "xmark.octagon.fill")
+        #expect(presentation.celebrates == false)
+    }
+
+    @Test
+    func remoteASRHTTPStatusFailureUsesFriendlyCopy() {
+        let presentation = ConnectionTestFeedback.remoteASRTestResult(.failure(RemoteASRClientError.badStatusCode(404, nil)))
+
+        #expect(presentation.text == "Test failed: the API endpoint was not found.")
         #expect(presentation.tone == .error)
         #expect(presentation.symbolName == "xmark.octagon.fill")
         #expect(presentation.celebrates == false)

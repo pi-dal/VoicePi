@@ -72,10 +72,10 @@ enum PermissionsCopy {
         "Required to control system UI."
 
     static let inputMonitoringDescription =
-        "Required to capture keystrokes."
+        "Only required for advanced shortcuts such as Escape or Option + Fn."
 
     static let strategyDescription =
-        "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for advanced shortcut handling and paste injection."
+        "VoicePi uses guided permission handoffs: Microphone and Speech Recognition lead into macOS permission sheets, while Accessibility and Input Monitoring are only needed for paste injection and advanced shortcuts such as Escape or Option + Fn."
 
     static let standardShortcutHint =
         "Current shortcut: %@. Click above to change it. Standard shortcuts work without Input Monitoring. Accessibility is still required for paste injection."

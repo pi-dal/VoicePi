@@ -70,13 +70,9 @@ extension AppController {
                 modeCycleShortcut: modeCycleShortcut,
                 inputMonitoringState: inputMonitoringState
             ),
-            requestInputMonitoringPermission: shortcutsRequireInputMonitoring(
-                activationShortcut: activationShortcut,
-                modeCycleShortcut: modeCycleShortcut,
-                processorShortcut: processorShortcut,
-                cancelShortcut: cancelShortcut,
-                promptCycleShortcut: promptCycleShortcut
-            ),
+            // Input Monitoring is requested when a user explicitly configures an advanced shortcut,
+            // never during startup.
+            requestInputMonitoringPermission: false,
             useSystemAccessibilityPrompt: false
         )
     }
@@ -128,6 +124,14 @@ extension AppController {
     ) -> Bool {
         requestInputMonitoringPermission &&
         inputMonitoringStateAfterRequest != .granted
+    }
+
+    static func shouldRequestInputMonitoringAfterShortcutUpdate(
+        updatedShortcut: ActivationShortcut,
+        inputMonitoringState: AuthorizationState
+    ) -> Bool {
+        updatedShortcut.requiresInputMonitoring &&
+        inputMonitoringState != .granted
     }
 
     static func inputMonitoringLaunchAction(

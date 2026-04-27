@@ -240,64 +240,115 @@ extension AppModel {
     }
 
     func persistConfiguration() {
-        if let data = try? encoder.encode(llmConfiguration) {
-            defaults.set(data, forKey: Keys.llmConfig)
+        persistFileConfiguration { configuration in
+            configuration.llm.baseURL = llmConfiguration.baseURL
+            configuration.llm.apiKey = llmConfiguration.apiKey
+            configuration.llm.model = llmConfiguration.model
+            configuration.llm.refinementPrompt = llmConfiguration.refinementPrompt
+            configuration.llm.enableThinking = llmConfiguration.enableThinking ?? false
+        }
+
+        do {
+            try configStore.saveUserPrompt(
+                llmConfiguration.refinementPrompt,
+                configuration: activeFileConfiguration
+            )
+        } catch {
+            presentError("Prompt save failed: \(error.localizedDescription)")
         }
     }
 
     func persistPromptWorkspace() {
-        if let data = try? encoder.encode(promptWorkspace) {
-            defaults.set(data, forKey: Keys.promptWorkspace)
+        do {
+            try configStore.savePromptWorkspace(
+                promptWorkspace,
+                configuration: activeFileConfiguration
+            )
+            try configStore.saveUserPrompt(
+                resolvedRefinementPrompt(for: .voicePi) ?? "",
+                configuration: activeFileConfiguration
+            )
+        } catch {
+            presentError("Prompt workspace save failed: \(error.localizedDescription)")
         }
     }
 
     func persistExternalProcessorEntries() {
-        if let data = try? encoder.encode(externalProcessorEntries) {
-            defaults.set(data, forKey: Keys.externalProcessorEntries)
-        }
+        persistExternalProcessorState()
     }
 
     func persistSelectedExternalProcessorEntryID() {
-        if let selectedExternalProcessorEntryID {
-            defaults.set(selectedExternalProcessorEntryID.uuidString, forKey: Keys.selectedExternalProcessorEntryID)
-        } else {
-            defaults.removeObject(forKey: Keys.selectedExternalProcessorEntryID)
-        }
+        persistExternalProcessorState()
     }
 
     func persistActivationShortcut() {
-        if let data = try? encoder.encode(activationShortcut) {
-            defaults.set(data, forKey: Keys.activationShortcut)
+        persistFileConfiguration { configuration in
+            configuration.hotkeys.activation = .init(
+                keyCodes: activationShortcut.keyCodes,
+                modifierFlags: activationShortcut.modifierFlagsRawValue
+            )
         }
     }
 
     func persistModeCycleShortcut() {
-        if let data = try? encoder.encode(modeCycleShortcut) {
-            defaults.set(data, forKey: Keys.modeCycleShortcut)
+        persistFileConfiguration { configuration in
+            configuration.hotkeys.modeCycle = .init(
+                keyCodes: modeCycleShortcut.keyCodes,
+                modifierFlags: modeCycleShortcut.modifierFlagsRawValue
+            )
         }
     }
 
     func persistCancelShortcut() {
-        if let data = try? encoder.encode(cancelShortcut) {
-            defaults.set(data, forKey: Keys.cancelShortcut)
+        persistFileConfiguration { configuration in
+            configuration.hotkeys.cancel = .init(
+                keyCodes: cancelShortcut.keyCodes,
+                modifierFlags: cancelShortcut.modifierFlagsRawValue
+            )
         }
     }
 
     func persistProcessorShortcut() {
-        if let data = try? encoder.encode(processorShortcut) {
-            defaults.set(data, forKey: Keys.processorShortcut)
+        persistFileConfiguration { configuration in
+            configuration.hotkeys.processor = .init(
+                keyCodes: processorShortcut.keyCodes,
+                modifierFlags: processorShortcut.modifierFlagsRawValue
+            )
         }
     }
 
     func persistPromptCycleShortcut() {
-        if let data = try? encoder.encode(promptCycleShortcut) {
-            defaults.set(data, forKey: Keys.promptCycleShortcut)
+        persistFileConfiguration { configuration in
+            configuration.hotkeys.promptCycle = .init(
+                keyCodes: promptCycleShortcut.keyCodes,
+                modifierFlags: promptCycleShortcut.modifierFlagsRawValue
+            )
         }
     }
 
     func persistRemoteASRConfiguration() {
-        if let data = try? encoder.encode(remoteASRConfiguration) {
-            defaults.set(data, forKey: Keys.remoteASRConfig)
+        persistFileConfiguration { configuration in
+            configuration.asr.remote = .init(
+                baseURL: remoteASRConfiguration.baseURL,
+                apiKey: remoteASRConfiguration.apiKey,
+                model: remoteASRConfiguration.model,
+                prompt: remoteASRConfiguration.prompt,
+                volcengineAppID: remoteASRConfiguration.volcengineAppID
+            )
+        }
+    }
+
+    private func persistExternalProcessorState() {
+        do {
+            try configStore.saveExternalProcessors(
+                .init(
+                    entries: externalProcessorEntries,
+                    selectedEntryID: selectedExternalProcessorEntryID?.uuidString
+                ),
+                configuration: activeFileConfiguration
+            )
+        } catch {
+            presentError("Processor configuration save failed: \(error.localizedDescription)")
         }
     }
 

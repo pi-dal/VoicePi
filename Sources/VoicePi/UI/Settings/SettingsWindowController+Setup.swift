@@ -308,7 +308,7 @@ extension SettingsWindowController {
             makePermissionOverviewCard(
                 icon: "figure.wave",
                 title: "Accessibility",
-                description: "Required to control system UI.",
+                description: PermissionsCopy.accessibilityDescription,
                 statusLabel: accessibilityStatusLabel,
                 statusIconView: accessibilityStatusIconView,
                 action: #selector(openAccessibilitySettingsFromCard(_:))
@@ -316,7 +316,7 @@ extension SettingsWindowController {
             makePermissionOverviewCard(
                 icon: "keyboard",
                 title: "Input Monitoring",
-                description: "Required to capture keystrokes.",
+                description: PermissionsCopy.inputMonitoringDescription,
                 statusLabel: inputMonitoringStatusLabel,
                 statusIconView: inputMonitoringStatusIconView,
                 action: #selector(openInputMonitoringSettingsFromCard(_:))

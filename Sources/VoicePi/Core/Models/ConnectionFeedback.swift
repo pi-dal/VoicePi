@@ -195,9 +195,9 @@ enum ConnectionTestFeedback {
             let preview = response.trimmingCharacters(in: .whitespacesAndNewlines)
             return preview.isEmpty
                 ? .error("Remote ASR test failed: empty response.")
-                : .success(preview)
+                : .success(remoteASRSuccessText(from: preview))
         case .failure(let error):
-            return .error("Test failed: \(error.localizedDescription)")
+            return .error(friendlyFailureText(for: error))
         case .none:
             return .error("Test unavailable.")
         }
@@ -213,10 +213,72 @@ enum ConnectionTestFeedback {
                 ? .error("Test failed: empty response.")
                 : .success("Test succeeded.")
         case .failure(let error):
-            return .error("Test failed: \(error.localizedDescription)")
+            return .error(friendlyFailureText(for: error))
         case .none:
             return .error("Test unavailable.")
         }
+    }
+
+    private static func remoteASRSuccessText(from response: String) -> String {
+        guard let statusCode = probeStatusCode(from: response) else {
+            return response
+        }
+
+        if (200...299).contains(statusCode) {
+            return "Test succeeded."
+        }
+
+        return "Test succeeded. The ASR endpoint is reachable, although it rejected the lightweight probe."
+    }
+
+    private static func friendlyFailureText(for error: Error) -> String {
+        let statusCode: Int?
+        switch error {
+        case let remoteError as RemoteASRClientError:
+            if case .badStatusCode(let code, _) = remoteError {
+                statusCode = code
+            } else {
+                statusCode = nil
+            }
+        case let llmError as LLMRefinerError:
+            if case .badStatusCode(let code, _) = llmError {
+                statusCode = code
+            } else {
+                statusCode = nil
+            }
+        default:
+            statusCode = nil
+        }
+
+        guard let statusCode else {
+            return "Test failed: \(error.localizedDescription)"
+        }
+
+        switch statusCode {
+        case 401, 403:
+            return "Test failed: the server rejected the request credentials or permissions."
+        case 404:
+            return "Test failed: the API endpoint was not found."
+        case 405:
+            return "Test failed: the API endpoint rejected the request method."
+        case 426:
+            return "Test failed: the server requires a different connection protocol."
+        case 429:
+            return "Test failed: the server rate-limited the request."
+        default:
+            return "Test failed: \(error.localizedDescription)"
+        }
+    }
+
+    private static func probeStatusCode(from response: String) -> Int? {
+        let prefix = "Remote ASR endpoint responded with HTTP "
+        guard response.hasPrefix(prefix) else {
+            return nil
+        }
+
+        let suffix = response.dropFirst(prefix.count)
+        let digits = suffix.prefix { $0.isNumber }
+        return Int(digits)
     }
 }
 

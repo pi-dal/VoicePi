@@ -30,103 +30,120 @@ final class AppModel: ObservableObject {
 
     @Published var selectedLanguage: SupportedLanguage {
         didSet {
-            defaults.set(selectedLanguage.rawValue, forKey: Keys.selectedLanguage)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.app.language = selectedLanguage }
         }
     }
 
     @Published var llmConfiguration: LLMConfiguration {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistConfiguration()
         }
     }
 
     @Published var promptWorkspace: PromptWorkspaceSettings {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistPromptWorkspace()
         }
     }
 
     @Published var postProcessingMode: PostProcessingMode {
         didSet {
-            defaults.set(postProcessingMode.rawValue, forKey: Keys.postProcessingMode)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.text.postProcessingMode = postProcessingMode }
         }
     }
 
     @Published var translationProvider: TranslationProvider {
         didSet {
-            defaults.set(translationProvider.rawValue, forKey: Keys.translationProvider)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.text.translationProvider = translationProvider }
         }
     }
 
     @Published var refinementProvider: RefinementProvider {
         didSet {
-            defaults.set(refinementProvider.rawValue, forKey: Keys.refinementProvider)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.text.refinementProvider = refinementProvider }
         }
     }
 
     @Published var externalProcessorEntries: [ExternalProcessorEntry] {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistExternalProcessorEntries()
         }
     }
 
     @Published var selectedExternalProcessorEntryID: UUID? {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistSelectedExternalProcessorEntryID()
         }
     }
 
     @Published var targetLanguage: SupportedLanguage {
         didSet {
-            defaults.set(targetLanguage.rawValue, forKey: Keys.targetLanguage)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.text.targetLanguage = targetLanguage }
         }
     }
 
     @Published var activationShortcut: ActivationShortcut {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistActivationShortcut()
         }
     }
 
     @Published var modeCycleShortcut: ActivationShortcut {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistModeCycleShortcut()
         }
     }
 
     @Published var cancelShortcut: ActivationShortcut {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistCancelShortcut()
         }
     }
 
     @Published var processorShortcut: ActivationShortcut {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistProcessorShortcut()
         }
     }
 
     @Published var promptCycleShortcut: ActivationShortcut {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistPromptCycleShortcut()
         }
     }
 
     @Published var asrBackend: ASRBackend {
         didSet {
-            defaults.set(asrBackend.rawValue, forKey: Keys.asrBackend)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.asr.backend = asrBackend }
         }
     }
 
     @Published var remoteASRConfiguration: RemoteASRConfiguration {
         didSet {
+            guard !isApplyingPersistedState else { return }
             persistRemoteASRConfiguration()
         }
     }
 
     @Published var interfaceTheme: InterfaceTheme {
         didSet {
-            defaults.set(interfaceTheme.rawValue, forKey: Keys.interfaceTheme)
+            guard !isApplyingPersistedState else { return }
+            persistFileConfiguration { $0.app.interfaceTheme = interfaceTheme }
         }
     }
 
@@ -143,235 +160,266 @@ final class AppModel: ObservableObject {
     @Published var historyEntries: [HistoryEntry] = []
 
     let defaults: UserDefaults
-    let dictionaryStore: DictionaryStoring?
-    let historyStore: HistoryStoring?
+    var dictionaryStore: DictionaryStoring?
+    var historyStore: HistoryStoring?
+    let configStore: VoicePiConfigStore
     let encoder = JSONEncoder()
     let decoder = JSONDecoder()
     lazy var cachedPromptLibrary: PromptLibrary? = try? PromptLibrary.loadBundled()
 
+    private let shouldManageDictionaryStore: Bool
+    private let shouldManageHistoryStore: Bool
+    private var fileConfiguration: VoicePiFileConfiguration
+    private var isApplyingPersistedState = false
+
     init(
         defaults: UserDefaults = .standard,
         dictionaryStore: DictionaryStoring? = nil,
-        historyStore: HistoryStoring? = nil
+        historyStore: HistoryStoring? = nil,
+        configStore: VoicePiConfigStore? = nil,
+        configRootURL: URL? = nil
     ) {
         self.defaults = defaults
+        self.shouldManageDictionaryStore = dictionaryStore == nil
+        self.shouldManageHistoryStore = historyStore == nil
+
+        if let configStore {
+            self.configStore = configStore
+        } else {
+            let root = configRootURL ?? Self.defaultConfigRootURL(for: defaults)
+            self.configStore = VoicePiConfigStore(
+                paths: VoicePiConfigPaths(rootDirectoryURL: root)
+            )
+        }
+
+        let migration = VoicePiLegacyMigration(
+            defaults: defaults,
+            configStore: self.configStore,
+            legacyDictionaryStore: dictionaryStore,
+            legacyHistoryStore: historyStore
+        )
+        do {
+            try migration.runIfNeeded()
+        } catch {
+            print("VoicePi migration failed: \(error)")
+        }
+
+        let initialConfiguration: VoicePiFileConfiguration
+        let loadedConfigurationSuccessfully: Bool
+        do {
+            initialConfiguration = try self.configStore.loadConfiguration()
+            loadedConfigurationSuccessfully = true
+        } catch {
+            print("VoicePi config load failed, using defaults: \(error)")
+            initialConfiguration = .init()
+            loadedConfigurationSuccessfully = false
+        }
+        self.fileConfiguration = initialConfiguration
+
+        if loadedConfigurationSuccessfully {
+            do {
+                try self.configStore.normalizePromptWorkspaceStorageIfNeeded(configuration: initialConfiguration)
+            } catch {
+                print("VoicePi prompt workspace normalization failed: \(error)")
+            }
+        }
+
+        let resolvedPaths = self.configStore.resolvedPaths(for: initialConfiguration)
         if let dictionaryStore {
             self.dictionaryStore = dictionaryStore
         } else {
-            self.dictionaryStore = try? DictionaryStore()
+            self.dictionaryStore = DictionaryStore(configPaths: resolvedPaths)
         }
         if let historyStore {
             self.historyStore = historyStore
         } else {
-            self.historyStore = try? HistoryStore()
+            self.historyStore = HistoryStore(configPaths: resolvedPaths)
         }
 
-        let initialSelectedLanguage: SupportedLanguage
+        let initialPromptWorkspace = (try? self.configStore.loadPromptWorkspace(configuration: initialConfiguration)) ?? .init()
+        let processorDocument = (try? self.configStore.loadExternalProcessors(configuration: initialConfiguration)) ?? .init()
+        let persistedUserPrompt = (try? self.configStore.loadUserPrompt(configuration: initialConfiguration))
 
-        if
-            let storedLanguage = defaults.string(forKey: Keys.selectedLanguage),
-            let language = SupportedLanguage(rawValue: storedLanguage)
-        {
-            initialSelectedLanguage = language
-        } else {
-            initialSelectedLanguage = .default
-        }
-        self.selectedLanguage = initialSelectedLanguage
+        let loadedActivationShortcut = ActivationShortcut(
+            keyCodes: initialConfiguration.hotkeys.activation.keyCodes,
+            modifierFlagsRawValue: initialConfiguration.hotkeys.activation.modifierFlags
+        )
+        let loadedCancelShortcut = ActivationShortcut(
+            keyCodes: initialConfiguration.hotkeys.cancel.keyCodes,
+            modifierFlagsRawValue: initialConfiguration.hotkeys.cancel.modifierFlags
+        )
 
-        let initialLLMConfiguration: LLMConfiguration
-        if
-            let data = defaults.data(forKey: Keys.llmConfig),
-            let decoded = try? decoder.decode(LLMConfiguration.self, from: data)
-        {
-            initialLLMConfiguration = decoded
-        } else {
-            initialLLMConfiguration = .init()
-        }
-        self.llmConfiguration = initialLLMConfiguration
-
-        let initialPromptWorkspace: PromptWorkspaceSettings
-        let shouldPersistMigratedPromptWorkspace: Bool
-        if
-            let data = defaults.data(forKey: Keys.promptWorkspace),
-            let decoded = try? decoder.decode(PromptWorkspaceSettings.self, from: data)
-        {
-            initialPromptWorkspace = decoded
-            shouldPersistMigratedPromptWorkspace = false
-        } else {
-            initialPromptWorkspace = AppModel.migratePromptWorkspace(
-                defaults: defaults,
-                decoder: decoder,
-                initialLLMConfiguration: initialLLMConfiguration
-            )
-            shouldPersistMigratedPromptWorkspace = true
-        }
+        self.selectedLanguage = initialConfiguration.app.language
+        self.llmConfiguration = .init(
+            baseURL: initialConfiguration.llm.baseURL,
+            apiKey: initialConfiguration.llm.apiKey,
+            model: initialConfiguration.llm.model,
+            refinementPrompt: {
+                let fromFile = persistedUserPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return fromFile.isEmpty ? initialConfiguration.llm.refinementPrompt : fromFile
+            }(),
+            enableThinking: initialConfiguration.llm.enableThinking
+        )
         self.promptWorkspace = initialPromptWorkspace
+        self.postProcessingMode = initialConfiguration.text.postProcessingMode
+        self.translationProvider = initialConfiguration.text.translationProvider
+        self.refinementProvider = initialConfiguration.text.refinementProvider
+        self.externalProcessorEntries = processorDocument.entries
+        self.selectedExternalProcessorEntryID = processorDocument.selectedEntryID.flatMap(UUID.init(uuidString:))
+        self.targetLanguage = initialConfiguration.text.targetLanguage
+        self.activationShortcut = loadedActivationShortcut.isEmpty
+            ? AppModel.defaultActivationShortcut(defaults: defaults)
+            : loadedActivationShortcut
+        self.modeCycleShortcut = ActivationShortcut(
+            keyCodes: initialConfiguration.hotkeys.modeCycle.keyCodes,
+            modifierFlagsRawValue: initialConfiguration.hotkeys.modeCycle.modifierFlags
+        )
+        self.cancelShortcut = loadedCancelShortcut.isEmpty
+            ? AppModel.defaultCancelShortcut
+            : loadedCancelShortcut
+        self.processorShortcut = ActivationShortcut(
+            keyCodes: initialConfiguration.hotkeys.processor.keyCodes,
+            modifierFlagsRawValue: initialConfiguration.hotkeys.processor.modifierFlags
+        )
+        self.promptCycleShortcut = ActivationShortcut(
+            keyCodes: initialConfiguration.hotkeys.promptCycle.keyCodes,
+            modifierFlagsRawValue: initialConfiguration.hotkeys.promptCycle.modifierFlags
+        )
+        self.asrBackend = initialConfiguration.asr.backend
+        self.remoteASRConfiguration = .init(
+            baseURL: initialConfiguration.asr.remote.baseURL,
+            apiKey: initialConfiguration.asr.remote.apiKey,
+            model: initialConfiguration.asr.remote.model,
+            prompt: initialConfiguration.asr.remote.prompt,
+            volcengineAppID: initialConfiguration.asr.remote.volcengineAppID
+        )
+        self.interfaceTheme = initialConfiguration.app.interfaceTheme
 
-        if
-            let storedMode = defaults.string(forKey: Keys.postProcessingMode),
-            let mode = PostProcessingMode(rawValue: storedMode)
-        {
-            self.postProcessingMode = mode
-        } else {
-            let legacyEnabled = defaults.object(forKey: Keys.llmEnabled) as? Bool ?? false
-            self.postProcessingMode = legacyEnabled ? .refinement : .disabled
-        }
-
-        if
-            let storedProvider = defaults.string(forKey: Keys.translationProvider),
-            let provider = TranslationProvider(rawValue: storedProvider)
-        {
-            self.translationProvider = provider
-        } else {
-            self.translationProvider = .appleTranslate
-        }
-
-        if
-            let storedRefinementProvider = defaults.string(forKey: Keys.refinementProvider),
-            let provider = RefinementProvider(rawValue: storedRefinementProvider)
-        {
-            self.refinementProvider = provider
-        } else {
-            self.refinementProvider = .llm
-        }
-
-        if
-            let data = defaults.data(forKey: Keys.externalProcessorEntries),
-            let decoded = try? decoder.decode([ExternalProcessorEntry].self, from: data)
-        {
-            self.externalProcessorEntries = decoded
-        } else {
-            self.externalProcessorEntries = []
-        }
-
-        if
-            let storedSelectedExternalProcessorEntryID = defaults.string(forKey: Keys.selectedExternalProcessorEntryID),
-            let uuid = UUID(uuidString: storedSelectedExternalProcessorEntryID)
-        {
-            self.selectedExternalProcessorEntryID = uuid
-        } else {
-            self.selectedExternalProcessorEntryID = nil
-        }
-
-        if
-            let storedTargetLanguage = defaults.string(forKey: Keys.targetLanguage),
-            let language = SupportedLanguage(rawValue: storedTargetLanguage)
-        {
-            self.targetLanguage = language
-        } else {
-            self.targetLanguage = initialSelectedLanguage
-        }
-
-        let shouldPersistActivationShortcut: Bool
-        if
-            let data = defaults.data(forKey: Keys.activationShortcut),
-            let decoded = try? decoder.decode(ActivationShortcut.self, from: data),
-            !decoded.isEmpty
-        {
-            self.activationShortcut = decoded
-            shouldPersistActivationShortcut = false
-        } else {
-            self.activationShortcut = AppModel.defaultActivationShortcut(defaults: defaults)
-            shouldPersistActivationShortcut = true
-        }
-
-        let shouldPersistModeCycleShortcut: Bool
-        if
-            let data = defaults.data(forKey: Keys.modeCycleShortcut),
-            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
-        {
-            self.modeCycleShortcut = decoded
-            shouldPersistModeCycleShortcut = false
-        } else {
-            self.modeCycleShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
-            shouldPersistModeCycleShortcut = true
-        }
-
-        let shouldPersistCancelShortcut: Bool
-        if
-            let data = defaults.data(forKey: Keys.cancelShortcut),
-            let decoded = try? decoder.decode(ActivationShortcut.self, from: data),
-            !decoded.isEmpty
-        {
-            self.cancelShortcut = decoded
-            shouldPersistCancelShortcut = false
-        } else {
-            self.cancelShortcut = AppModel.defaultCancelShortcut
-            shouldPersistCancelShortcut = true
-        }
-
-        let shouldPersistProcessorShortcut: Bool
-        if
-            let data = defaults.data(forKey: Keys.processorShortcut),
-            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
-        {
-            self.processorShortcut = decoded
-            shouldPersistProcessorShortcut = false
-        } else {
-            self.processorShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
-            shouldPersistProcessorShortcut = true
-        }
-
-        let shouldPersistPromptCycleShortcut: Bool
-        if
-            let data = defaults.data(forKey: Keys.promptCycleShortcut),
-            let decoded = try? decoder.decode(ActivationShortcut.self, from: data)
-        {
-            self.promptCycleShortcut = decoded
-            shouldPersistPromptCycleShortcut = false
-        } else {
-            self.promptCycleShortcut = ActivationShortcut(keyCodes: [], modifierFlagsRawValue: 0)
-            shouldPersistPromptCycleShortcut = true
-        }
-
-        if
-            let storedBackend = defaults.string(forKey: Keys.asrBackend),
-            let backend = ASRBackend(rawValue: storedBackend)
-        {
-            self.asrBackend = backend
-        } else {
-            self.asrBackend = .default
-        }
-
-        if
-            let data = defaults.data(forKey: Keys.remoteASRConfig),
-            let decoded = try? decoder.decode(RemoteASRConfiguration.self, from: data)
-        {
-            self.remoteASRConfiguration = decoded
-        } else {
-            self.remoteASRConfiguration = .init()
-        }
-
-        if
-            let storedTheme = defaults.string(forKey: Keys.interfaceTheme),
-            let theme = InterfaceTheme(rawValue: storedTheme)
-        {
-            self.interfaceTheme = theme
-        } else {
-            self.interfaceTheme = .system
-        }
-
-        if shouldPersistMigratedPromptWorkspace {
-            persistPromptWorkspace()
-        }
-        if shouldPersistActivationShortcut {
+        if loadedConfigurationSuccessfully && loadedActivationShortcut.isEmpty {
             persistActivationShortcut()
         }
-        if shouldPersistModeCycleShortcut {
-            persistModeCycleShortcut()
-        }
-        if shouldPersistCancelShortcut {
+        if loadedConfigurationSuccessfully && loadedCancelShortcut.isEmpty {
             persistCancelShortcut()
-        }
-        if shouldPersistProcessorShortcut {
-            persistProcessorShortcut()
-        }
-        if shouldPersistPromptCycleShortcut {
-            persistPromptCycleShortcut()
         }
 
         refreshDictionaryState()
         refreshHistoryState()
+    }
+
+    private static func defaultConfigRootURL(
+        for defaults: UserDefaults,
+        fileManager: FileManager = .default
+    ) -> URL {
+        if defaults === UserDefaults.standard {
+            return VoicePiConfigPaths.defaultRootDirectoryURL(fileManager: fileManager)
+        }
+
+        let markerKey = "voicepi.fileConfigRootPath"
+        if let existingPath = defaults.string(forKey: markerKey), !existingPath.isEmpty {
+            return URL(fileURLWithPath: existingPath, isDirectory: true)
+        }
+
+        let generatedRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("VoicePiUserDefaultsConfig", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defaults.set(generatedRoot.path, forKey: markerKey)
+        return generatedRoot
+    }
+
+    func persistFileConfiguration(
+        _ mutate: (inout VoicePiFileConfiguration) -> Void
+    ) {
+        var updated = fileConfiguration
+        mutate(&updated)
+        fileConfiguration = updated
+
+        do {
+            try configStore.saveConfiguration(updated)
+        } catch {
+            presentError("Configuration save failed: \(error.localizedDescription)")
+        }
+    }
+
+    var activeFileConfiguration: VoicePiFileConfiguration {
+        fileConfiguration
+    }
+
+    func reloadFromConfigStore() {
+        do {
+            let updatedConfiguration = try configStore.loadConfiguration()
+            try configStore.normalizePromptWorkspaceStorageIfNeeded(configuration: updatedConfiguration)
+            let workspace = try configStore.loadPromptWorkspace(configuration: updatedConfiguration)
+            let processors = try configStore.loadExternalProcessors(configuration: updatedConfiguration)
+            let persistedUserPrompt = try configStore.loadUserPrompt(configuration: updatedConfiguration)
+
+            if shouldManageDictionaryStore {
+                dictionaryStore = DictionaryStore(
+                    configPaths: configStore.resolvedPaths(for: updatedConfiguration)
+                )
+            }
+            if shouldManageHistoryStore {
+                historyStore = HistoryStore(
+                    configPaths: configStore.resolvedPaths(for: updatedConfiguration)
+                )
+            }
+
+            isApplyingPersistedState = true
+            fileConfiguration = updatedConfiguration
+            selectedLanguage = updatedConfiguration.app.language
+            llmConfiguration = .init(
+                baseURL: updatedConfiguration.llm.baseURL,
+                apiKey: updatedConfiguration.llm.apiKey,
+                model: updatedConfiguration.llm.model,
+                refinementPrompt: {
+                    let fromFile = persistedUserPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return fromFile.isEmpty ? updatedConfiguration.llm.refinementPrompt : fromFile
+                }(),
+                enableThinking: updatedConfiguration.llm.enableThinking
+            )
+            promptWorkspace = workspace
+            postProcessingMode = updatedConfiguration.text.postProcessingMode
+            translationProvider = updatedConfiguration.text.translationProvider
+            refinementProvider = updatedConfiguration.text.refinementProvider
+            externalProcessorEntries = processors.entries
+            selectedExternalProcessorEntryID = processors.selectedEntryID.flatMap(UUID.init(uuidString:))
+            targetLanguage = updatedConfiguration.text.targetLanguage
+            activationShortcut = .init(
+                keyCodes: updatedConfiguration.hotkeys.activation.keyCodes,
+                modifierFlagsRawValue: updatedConfiguration.hotkeys.activation.modifierFlags
+            )
+            modeCycleShortcut = .init(
+                keyCodes: updatedConfiguration.hotkeys.modeCycle.keyCodes,
+                modifierFlagsRawValue: updatedConfiguration.hotkeys.modeCycle.modifierFlags
+            )
+            cancelShortcut = .init(
+                keyCodes: updatedConfiguration.hotkeys.cancel.keyCodes,
+                modifierFlagsRawValue: updatedConfiguration.hotkeys.cancel.modifierFlags
+            )
+            processorShortcut = .init(
+                keyCodes: updatedConfiguration.hotkeys.processor.keyCodes,
+                modifierFlagsRawValue: updatedConfiguration.hotkeys.processor.modifierFlags
+            )
+            promptCycleShortcut = .init(
+                keyCodes: updatedConfiguration.hotkeys.promptCycle.keyCodes,
+                modifierFlagsRawValue: updatedConfiguration.hotkeys.promptCycle.modifierFlags
+            )
+            asrBackend = updatedConfiguration.asr.backend
+            remoteASRConfiguration = .init(
+                baseURL: updatedConfiguration.asr.remote.baseURL,
+                apiKey: updatedConfiguration.asr.remote.apiKey,
+                model: updatedConfiguration.asr.remote.model,
+                prompt: updatedConfiguration.asr.remote.prompt,
+                volcengineAppID: updatedConfiguration.asr.remote.volcengineAppID
+            )
+            interfaceTheme = updatedConfiguration.app.interfaceTheme
+            isApplyingPersistedState = false
+
+            refreshDictionaryState()
+            refreshHistoryState()
+        } catch {
+            isApplyingPersistedState = false
+            presentError("Configuration reload failed: \(error.localizedDescription)")
+        }
     }
 
     var isLLMReady: Bool {
@@ -466,5 +514,4 @@ final class AppModel: ObservableObject {
             enableThinking: enableThinking ?? llmConfiguration.enableThinking
         )
     }
-
 }

@@ -51,4 +51,20 @@ struct InputFallbackPanelSupportTests {
         #expect(lightPalette.textColor != darkPalette.textColor)
         #expect(lightPalette.primaryButtonBackgroundColor != darkPalette.primaryButtonBackgroundColor)
     }
+
+    @Test
+    func paletteReusesSettingsThemeBackgroundChrome() throws {
+        let lightAppearance = try #require(NSAppearance(named: .aqua))
+        let darkAppearance = try #require(NSAppearance(named: .darkAqua))
+
+        let lightPalette = InputFallbackPanelPalette(appearance: lightAppearance)
+        let darkPalette = InputFallbackPanelPalette(appearance: darkAppearance)
+        let lightChrome = SettingsWindowTheme.surfaceChrome(for: lightAppearance, style: .card)
+        let darkChrome = SettingsWindowTheme.surfaceChrome(for: darkAppearance, style: .card)
+
+        #expect(lightPalette.backgroundColor == lightChrome.background)
+        #expect(darkPalette.backgroundColor == darkChrome.background)
+        #expect(lightPalette.borderColor == lightChrome.border)
+        #expect(darkPalette.borderColor == darkChrome.border)
+    }
 }

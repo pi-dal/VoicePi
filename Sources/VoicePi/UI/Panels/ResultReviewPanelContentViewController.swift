@@ -3,7 +3,7 @@ import Foundation
 
 final class ResultReviewPanelContentViewController: NSViewController {
     private let rootView = NSView()
-    private let cardView = NSVisualEffectView()
+    private let cardView = PanelSurfaceView()
     private let headerContainer = NSView()
     private let closeButton = NSButton(title: "", target: nil, action: nil)
     private let brandStack = NSStackView()
@@ -19,8 +19,13 @@ final class ResultReviewPanelContentViewController: NSViewController {
     private let promptRow = NSView()
     private let promptIconView = NSImageView()
     private let promptSectionLabel = NSTextField(labelWithString: "")
-    private let promptPresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let regenerateButton = NSButton(title: "", target: nil, action: nil)
+    private let promptPresetPopup = ThemedPopUpButton()
+    private lazy var regenerateButton = StyledSettingsButton(
+        title: "",
+        role: .secondary,
+        target: self,
+        action: #selector(regeneratePressed)
+    )
     private let interactionHintLabel = NSTextField(labelWithString: "")
 
     private let answerContainer = NSView()
@@ -54,10 +59,6 @@ final class ResultReviewPanelContentViewController: NSViewController {
         rootView.layer?.masksToBounds = true
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
-        cardView.material = .underWindowBackground
-        cardView.blendingMode = .withinWindow
-        cardView.state = .active
-        cardView.wantsLayer = true
         cardView.layer?.cornerRadius = 28
         cardView.layer?.masksToBounds = true
         cardView.layer?.borderWidth = 1
@@ -134,51 +135,37 @@ final class ResultReviewPanelContentViewController: NSViewController {
 
     func syncAppearance() {
         cardView.appearance = view.window?.appearance
-        let isDark = view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let appearance = view.window?.effectiveAppearance ?? view.effectiveAppearance
+        let cardChrome = PanelTheme.surfaceChrome(for: appearance, style: .card)
+        let rowChrome = PanelTheme.surfaceChrome(for: appearance, style: .row)
+        let titleColor = PanelTheme.titleText(for: appearance)
+        let subtitleColor = PanelTheme.subtitleText(for: appearance)
 
-        let cardBackground = isDark
-            ? NSColor(calibratedWhite: 0.145, alpha: 0.98)
-            : NSColor(calibratedWhite: 0.945, alpha: 0.98)
-        let cardBorder = isDark
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.1)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.07)
-        let answerBackground = isDark
-            ? NSColor(calibratedWhite: 0.17, alpha: 0.97)
-            : NSColor(calibratedWhite: 0.98, alpha: 0.92)
-        let answerBorder = isDark
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.12)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.08)
-        let separatorColor = isDark
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.1)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.08)
-        let iconTint = isDark
-            ? NSColor(calibratedWhite: 0.9, alpha: 0.95)
-            : NSColor.secondaryLabelColor
+        cardView.layer?.backgroundColor = cardChrome.background.cgColor
+        cardView.layer?.borderColor = cardChrome.border.cgColor
+        answerContainer.layer?.backgroundColor = rowChrome.background.cgColor
+        answerContainer.layer?.borderColor = rowChrome.border.cgColor
+        answerHeaderSeparator.layer?.backgroundColor = rowChrome.border.cgColor
 
-        cardView.layer?.backgroundColor = cardBackground.cgColor
-        cardView.layer?.borderColor = cardBorder.cgColor
-        answerContainer.layer?.backgroundColor = answerBackground.cgColor
-        answerContainer.layer?.borderColor = answerBorder.cgColor
-        answerHeaderSeparator.layer?.backgroundColor = separatorColor.cgColor
-
-        brandLabel.textColor = .labelColor
-        originalIconView.contentTintColor = .secondaryLabelColor
-        originalSectionLabel.textColor = .labelColor
-        originalTextLabel.textColor = .secondaryLabelColor
-        promptIconView.contentTintColor = .secondaryLabelColor
-        promptSectionLabel.textColor = .labelColor
-        interactionHintLabel.textColor = .secondaryLabelColor
-        answerIconView.contentTintColor = .secondaryLabelColor
-        answerTitleLabel.textColor = .labelColor
-        outputTextView.textColor = .labelColor
+        brandLabel.textColor = titleColor
+        originalIconView.contentTintColor = subtitleColor
+        originalSectionLabel.textColor = titleColor
+        originalTextLabel.textColor = subtitleColor
+        promptIconView.contentTintColor = subtitleColor
+        promptSectionLabel.textColor = titleColor
+        interactionHintLabel.textColor = subtitleColor
+        answerIconView.contentTintColor = subtitleColor
+        answerTitleLabel.textColor = titleColor
+        outputTextView.textColor = titleColor
         outputTextView.backgroundColor = .clear
         promptPresetPopup.appearance = view.window?.appearance
+        promptPresetPopup.syncTheme()
 
         for button in [outputCopyButton] {
-            button.contentTintColor = iconTint
+            button.contentTintColor = subtitleColor
         }
 
-        closeButton.contentTintColor = .secondaryLabelColor
+        closeButton.contentTintColor = subtitleColor
     }
 
     var titleText: String {
@@ -220,6 +207,7 @@ final class ResultReviewPanelContentViewController: NSViewController {
         outputCopyButton.isEnabled = !state.outputCopyText.isEmpty
         promptPresetPopup.isEnabled = state.isPromptPickerEnabled
         regenerateButton.title = state.regenerateButtonTitle
+        regenerateButton.applyAppearance(isSelected: false)
         regenerateButton.isEnabled = state.isRegenerateEnabled
         if let interactionHintText = state.interactionHintText {
             interactionHintLabel.stringValue = interactionHintText
@@ -337,10 +325,6 @@ final class ResultReviewPanelContentViewController: NSViewController {
         promptPresetPopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         regenerateButton.translatesAutoresizingMaskIntoConstraints = false
-        regenerateButton.target = self
-        regenerateButton.action = #selector(regeneratePressed)
-        regenerateButton.bezelStyle = .rounded
-        regenerateButton.controlSize = .small
         regenerateButton.setContentHuggingPriority(.required, for: .horizontal)
         regenerateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 

@@ -65,6 +65,38 @@ struct SelectionRegenerateHintControllerTests {
     }
 
     @Test
+    func paletteReusesSettingsThemeBackgroundAndPrimaryActionChrome() throws {
+        let lightAppearance = try #require(NSAppearance(named: .aqua))
+        let darkAppearance = try #require(NSAppearance(named: .darkAqua))
+
+        let lightPalette = SelectionRegenerateHintPalette(appearance: lightAppearance)
+        let darkPalette = SelectionRegenerateHintPalette(appearance: darkAppearance)
+        let expectedLightPrimary = SettingsWindowTheme.buttonChrome(
+            for: lightAppearance,
+            role: .primary,
+            isSelected: false,
+            isHovered: false,
+            isHighlighted: false
+        )
+        let expectedDarkPrimary = SettingsWindowTheme.buttonChrome(
+            for: darkAppearance,
+            role: .primary,
+            isSelected: false,
+            isHovered: false,
+            isHighlighted: false
+        )
+        let lightChrome = SettingsWindowTheme.surfaceChrome(for: lightAppearance, style: .card)
+        let darkChrome = SettingsWindowTheme.surfaceChrome(for: darkAppearance, style: .card)
+
+        #expect(lightPalette.backgroundColor == lightChrome.background)
+        #expect(darkPalette.backgroundColor == darkChrome.background)
+        #expect(lightPalette.primaryButtonBackgroundColor == expectedLightPrimary.fill)
+        #expect(darkPalette.primaryButtonBackgroundColor == expectedDarkPrimary.fill)
+        #expect(lightPalette.primaryButtonTextColor == expectedLightPrimary.text)
+        #expect(darkPalette.primaryButtonTextColor == expectedDarkPrimary.text)
+    }
+
+    @Test
     func showUpdatesPayloadAndPreview() {
         let controller = SelectionRegenerateHintController()
         let payload = SelectionRegenerateHintPayload(

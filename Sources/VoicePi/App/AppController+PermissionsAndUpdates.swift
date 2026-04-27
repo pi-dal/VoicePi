@@ -380,6 +380,26 @@ extension AppController {
         InputMonitoringAccess.authorizationState()
     }
 
+    func requestInputMonitoringPermissionIfNeededAfterShortcutUpdate(_ shortcut: ActivationShortcut) {
+        let inputMonitoringState = currentInputMonitoringAuthorizationState()
+        guard Self.shouldRequestInputMonitoringAfterShortcutUpdate(
+            updatedShortcut: shortcut,
+            inputMonitoringState: inputMonitoringState
+        ) else {
+            return
+        }
+
+        let shouldPromptAccessibility = currentAccessibilityAuthorizationState(prompt: false) != .granted
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshPermissionStates(
+                promptAccessibility: shouldPromptAccessibility,
+                requestInputMonitoringPermission: true,
+                inputMonitoringPromptSource: .manualSettingsButton
+            )
+        }
+    }
+
     func requestMicrophonePermissionIfNeeded() async -> Bool {
         let authorizationState = currentMicrophoneAuthorizationState()
         switch authorizationState {

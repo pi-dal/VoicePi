@@ -264,7 +264,7 @@ final class ExternalProcessorResultPanelController: NSWindowController {
 @MainActor
 private final class ExternalProcessorResultPanelContentViewController: NSViewController {
     private let rootView = NSView()
-    private let cardView = NSVisualEffectView()
+    private let cardView = PanelSurfaceView()
     private let headerContainer = NSView()
     private let closeButton = NSButton(title: "", target: nil, action: nil)
     private let brandStack = NSStackView()
@@ -290,8 +290,18 @@ private final class ExternalProcessorResultPanelContentViewController: NSViewCon
 
     private let footerRow = NSView()
     private let hintLabel = NSTextField(labelWithString: "")
-    private let retryButton = NSButton(title: "", target: nil, action: nil)
-    private let insertButton = NSButton(title: "", target: nil, action: nil)
+    private lazy var retryButton = StyledSettingsButton(
+        title: "",
+        role: .secondary,
+        target: self,
+        action: #selector(retryPressed)
+    )
+    private lazy var insertButton = StyledSettingsButton(
+        title: "",
+        role: .primary,
+        target: self,
+        action: #selector(insertPressed)
+    )
     private let resultScrollView = NSScrollView()
     private let resultTextView = NSTextView()
 
@@ -315,10 +325,6 @@ private final class ExternalProcessorResultPanelContentViewController: NSViewCon
         rootView.layer?.masksToBounds = true
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
-        cardView.material = .underWindowBackground
-        cardView.blendingMode = .withinWindow
-        cardView.state = .active
-        cardView.wantsLayer = true
         cardView.layer?.cornerRadius = 28
         cardView.layer?.masksToBounds = true
         cardView.layer?.borderWidth = 1
@@ -383,53 +389,34 @@ private final class ExternalProcessorResultPanelContentViewController: NSViewCon
 
     func syncAppearance() {
         cardView.appearance = view.window?.appearance
-        let isDark = view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let appearance = view.window?.effectiveAppearance ?? view.effectiveAppearance
+        let cardChrome = PanelTheme.surfaceChrome(for: appearance, style: .card)
+        let rowChrome = PanelTheme.surfaceChrome(for: appearance, style: .row)
+        let pillChrome = PanelTheme.surfaceChrome(for: appearance, style: .pill)
+        let titleColor = PanelTheme.titleText(for: appearance)
+        let subtitleColor = PanelTheme.subtitleText(for: appearance)
 
-        let cardBackground = isDark
-            ? NSColor(calibratedWhite: 0.145, alpha: 0.98)
-            : NSColor(calibratedWhite: 0.945, alpha: 0.98)
-        let cardBorder = isDark
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.1)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.07)
-        let resultBackground = isDark
-            ? NSColor(calibratedWhite: 0.17, alpha: 0.97)
-            : NSColor(calibratedWhite: 0.98, alpha: 0.92)
-        let resultBorder = isDark
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.12)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.08)
-        let separatorColor = isDark
-            ? NSColor(calibratedWhite: 1.0, alpha: 0.1)
-            : NSColor(calibratedWhite: 0.0, alpha: 0.08)
-        let badgeBackground = isDark
-            ? NSColor(calibratedRed: 0.52, green: 0.41, blue: 0.12, alpha: 0.28)
-            : NSColor(calibratedRed: 0.98, green: 0.89, blue: 0.63, alpha: 0.9)
-        let badgeBorder = isDark
-            ? NSColor(calibratedRed: 0.87, green: 0.73, blue: 0.31, alpha: 0.28)
-            : NSColor(calibratedRed: 0.82, green: 0.68, blue: 0.28, alpha: 0.32)
-
-        cardView.layer?.backgroundColor = cardBackground.cgColor
-        cardView.layer?.borderColor = cardBorder.cgColor
-        resultContainer.layer?.backgroundColor = resultBackground.cgColor
-        resultContainer.layer?.borderColor = resultBorder.cgColor
-        resultHeaderSeparator.layer?.backgroundColor = separatorColor.cgColor
-        resultStatusBadge.layer?.backgroundColor = badgeBackground.cgColor
-        resultStatusBadge.layer?.borderColor = badgeBorder.cgColor
+        cardView.layer?.backgroundColor = cardChrome.background.cgColor
+        cardView.layer?.borderColor = cardChrome.border.cgColor
+        resultContainer.layer?.backgroundColor = rowChrome.background.cgColor
+        resultContainer.layer?.borderColor = rowChrome.border.cgColor
+        resultHeaderSeparator.layer?.backgroundColor = rowChrome.border.cgColor
+        resultStatusBadge.layer?.backgroundColor = pillChrome.background.cgColor
+        resultStatusBadge.layer?.borderColor = pillChrome.border.cgColor
 
         [titleLabel, originalSectionLabel, resultSectionLabel].forEach {
-            $0.textColor = .labelColor
+            $0.textColor = titleColor
         }
-        sourceIconView.contentTintColor = .secondaryLabelColor
-        resultIconView.contentTintColor = .secondaryLabelColor
-        hintLabel.textColor = .secondaryLabelColor
-        sourcePreviewLabel.textColor = .secondaryLabelColor
-        resultTextView.textColor = .labelColor
+        sourceIconView.contentTintColor = subtitleColor
+        resultIconView.contentTintColor = subtitleColor
+        hintLabel.textColor = subtitleColor
+        sourcePreviewLabel.textColor = subtitleColor
+        resultTextView.textColor = titleColor
         resultTextView.font = .systemFont(ofSize: 14, weight: .regular)
         resultTextView.backgroundColor = .clear
-        resultStatusLabel.textColor = isDark
-            ? NSColor(calibratedRed: 0.96, green: 0.86, blue: 0.57, alpha: 0.98)
-            : NSColor(calibratedRed: 0.44, green: 0.33, blue: 0.08, alpha: 0.98)
+        resultStatusLabel.textColor = PanelTheme.accent(for: appearance)
         [closeButton, originalCopyButton, resultCopyButton].forEach {
-            $0.contentTintColor = .secondaryLabelColor
+            $0.contentTintColor = subtitleColor
         }
     }
 
@@ -457,6 +444,8 @@ private final class ExternalProcessorResultPanelContentViewController: NSViewCon
         resultCopyButton.toolTip = state.resultCopyButtonTitle
         retryButton.title = state.retryButtonTitle
         insertButton.title = state.insertButtonTitle
+        retryButton.applyAppearance(isSelected: false)
+        insertButton.applyAppearance(isSelected: false)
         resultStatusLabel.stringValue = state.resultStatusText
         resultStatusBadge.isHidden = state.resultStatusText.isEmpty
         resultCopyButton.isEnabled = !state.resultCopyText.isEmpty
@@ -506,9 +495,6 @@ private final class ExternalProcessorResultPanelContentViewController: NSViewCon
         button.translatesAutoresizingMaskIntoConstraints = false
         button.target = self
         button.action = action
-        button.bezelStyle = .rounded
-        button.setButtonType(.momentaryPushIn)
-        button.controlSize = .regular
     }
 
     private func configureHeader() {

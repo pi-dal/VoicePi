@@ -66,6 +66,20 @@ chmod +x "$OUTPUT_PATH"
 EOF
 chmod +x "$TMP_DIR/bin/swiftc"
 
+cat > "$TMP_DIR/bin/xcrun" <<'EOF'
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "--sdk" ] && [ "${2:-}" = "macosx" ] && [ "${3:-}" = "--show-sdk-path" ]; then
+  printf '%s\n' "/tmp/VoicePiBenchmarkTest.sdk"
+  exit 0
+fi
+
+echo "unexpected xcrun invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$TMP_DIR/bin/xcrun"
+
 (
   cd "$TMP_DIR"
   PATH="$TMP_DIR/bin:$PATH" \
@@ -86,5 +100,7 @@ grep -q -- 'PerformanceBenchmarkReport.swift$' "$TMP_DIR/.swiftc-args"
 grep -q -- 'benchmark_main.swift$' "$TMP_DIR/.swiftc-args"
 grep -q -- '^-O$' "$TMP_DIR/.swiftc-args"
 grep -q -- '^-whole-module-optimization$' "$TMP_DIR/.swiftc-args"
+grep -q -- '^-sdk$' "$TMP_DIR/.swiftc-args"
+grep -q -- '^/tmp/VoicePiBenchmarkTest.sdk$' "$TMP_DIR/.swiftc-args"
 grep -q -- '^VoicePi performance benchmarks$' "$TMP_DIR/.benchmark-output"
 grep -q -- '^- text_injection_clipboard_restore_deficit_ms current=0ms legacy=120ms improvement=100.0%$' "$TMP_DIR/.benchmark-output"
