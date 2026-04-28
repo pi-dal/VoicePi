@@ -382,6 +382,79 @@ export function renderApp(state: SiteState): string {
         </div>
       </section>
 
+      <section class="config-archive" aria-labelledby="config-archive-title">
+        <div class="section-heading">
+          <p class="eyebrow">The Files</p>
+          <h2 id="config-archive-title">The app and your agents read the same state.</h2>
+          <p>
+            VoicePi keeps its working state under ~/.config/voicepi so prompts, history, and settings stay easy to inspect, diff, and edit.
+          </p>
+        </div>
+
+        <div class="release-window">
+          <div class="release-panel">
+            <div class="release-panel-head">
+              <div>
+                <p class="release-panel-kicker">File-First Config</p>
+                <h3>Readable by people. Safe for automation.</h3>
+              </div>
+              <p class="release-panel-meta">TOML + JSON + JSONL</p>
+            </div>
+            <div class="release-panel-scroll">
+              <section class="release-section">
+                <div class="release-section-head">
+                  <p class="release-section-kicker">Layout</p>
+                  <h3>~/.config/voicepi</h3>
+                </div>
+                <div class="release-copy">
+                  <pre class="install-command"><code>~/.config/voicepi/
+├── config.toml
+├── user-prompt.txt
+├── dictionary.json
+├── dictionary-suggestions.json
+├── processors.json
+├── prompt-workspace.json
+├── prompts/
+│   └── *.json
+└── history/
+    └── YYYY-MM.jsonl</code></pre>
+                </div>
+              </section>
+
+              <section class="release-section">
+                <div class="release-section-head">
+                  <p class="release-section-kicker">What Goes Where</p>
+                  <h3>One source of truth per shape of data.</h3>
+                </div>
+                <div class="release-copy">
+                  <ul>
+                    <li>config.toml keeps app behavior, providers, hotkeys, and path overrides.</li>
+                    <li>prompts/*.json stores one user prompt preset per file for safer diffs and edits.</li>
+                    <li>history/*.jsonl stores one saved session per line for local analysis.</li>
+                    <li>dictionary.json and dictionary-suggestions.json separate confirmed terms from pending suggestions.</li>
+                  </ul>
+                </div>
+              </section>
+
+              <section class="release-section">
+                <div class="release-section-head">
+                  <p class="release-section-kicker">Migration</p>
+                  <h3>Upgrades do not strand older data.</h3>
+                </div>
+                <div class="release-copy">
+                  <p>
+                    On first launch after upgrading, VoicePi migrates legacy defaults and Application Support files into this root.
+                  </p>
+                  <p>
+                    The migration is resumable, so if config.toml already exists but sidecar files are still missing, VoicePi keeps filling in the missing pieces before it marks the migration complete.
+                  </p>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="changelog" aria-labelledby="changelog-title">
         <div class="section-heading">
           <p class="eyebrow">The Journey</p>

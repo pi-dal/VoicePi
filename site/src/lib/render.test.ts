@@ -108,6 +108,18 @@ describe("renderApp", () => {
     expect(html).not.toContain("Click any section on the left to scroll this window to its paired explanation.");
   });
 
+  test("documents the file-first config layout and resumable migration on the site", () => {
+    const state = createSiteState(entries, "sunny");
+    const html = renderApp(state);
+
+    expect(html).toContain('id="config-archive-title"');
+    expect(html).toContain("~/.config/voicepi");
+    expect(html).toContain("config.toml");
+    expect(html).toContain("prompts/");
+    expect(html).toContain("YYYY-MM.jsonl");
+    expect(html).toContain("The migration is resumable");
+  });
+
   test("renders the redesigned hero as a desk scene with a floating install dialog", () => {
     const state = createSiteState(entries, "sunny");
     const html = renderApp(state);

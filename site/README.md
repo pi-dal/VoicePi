@@ -20,6 +20,14 @@ pnpm build
 
 Current screenshot inventory is optimized for the landing page and stored as `.webp` assets where possible.
 
+Refresh the source PNGs with:
+
+```sh
+./Scripts/swiftw test --filter SiteScreenshotExporterTests/exportGalleryAssetsWritesExpectedFilesForBothThemes
+```
+
+The test exports fresh PNGs into a temporary `voicepi-site-screenshots-*` directory. Convert those PNGs to `.webp` before replacing the checked-in website assets.
+
 ## Content Source
 
 The changelog timeline is injected at build time from:
@@ -27,3 +35,5 @@ The changelog timeline is injected at build time from:
 ```text
 ../docs/changelogs/*.md
 ```
+
+The landing page also includes product copy about VoicePi's file-first configuration model. Keep that copy aligned with the main repository README when config layout, prompt storage, or migration behavior changes.

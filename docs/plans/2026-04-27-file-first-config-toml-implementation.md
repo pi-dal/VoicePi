@@ -133,8 +133,8 @@ store_text = true
 directory = "history"
 
 [paths]
-system_prompt = "system-prompt.txt"
 user_prompt = "user-prompt.txt"
+user_prompts_directory = "prompts"
 dictionary = "dictionary.json"
 dictionary_suggestions = "dictionary-suggestions.json"
 processors = "processors.json"
@@ -279,14 +279,14 @@ Expected: missing type failures.
 
 Create `Sources/VoicePi/Core/Configuration/VoicePiLegacyMigration.swift` with logic that:
 
-- detects whether file-first config already exists
+- checks the migration marker and resumes incomplete migration work when needed
 - reads current `UserDefaults` values using `AppModel.Keys`
 - reads legacy `DictionaryStore` and `HistoryStore` data
 - builds `VoicePiFileConfiguration`
-- writes all new files
+- writes any missing new files without clobbering user-edited file-first state
 - records a migration version marker
 
-Keep migration idempotent. If the new config exists, do not overwrite user edits.
+Keep migration idempotent. `config.toml` may already exist from a partial run; in that case, continue migrating any missing prompts, processors, dictionary sidecars, or history shards, then write the completion marker.
 
 **Step 4: Wire migration into app bootstrap**
 
@@ -400,7 +400,8 @@ git commit -m "refactor: load and persist app model state via file config"
 
 Create `Tests/VoicePiTests/PromptFilePersistenceTests.swift` to verify:
 
-- saving the refinement prompt persists to `system-prompt.txt` or `user-prompt.txt` as designed
+- saving the resolved refinement prompt persists to `user-prompt.txt`
+- user-defined prompt presets persist as one file per preset under `prompts/*.json`
 - prompt workspace JSON is stored at the configured path
 - reloading from disk updates the model-facing state
 
@@ -469,12 +470,12 @@ Expected: missing type failures.
 Create `VoicePiConfigWatcher` around `DispatchSourceFileSystemObject` or a similarly testable abstraction. Watch:
 
 - `config.toml`
-- `system-prompt.txt`
 - `user-prompt.txt`
 - `dictionary.json`
 - `dictionary-suggestions.json`
 - `processors.json`
 - `prompt-workspace.json`
+- the `prompts/` directory for prompt preset file changes
 
 Debounce rapid change bursts.
 
@@ -519,7 +520,7 @@ Document:
 - prompt files
 - dictionary JSON files
 - monthly `history/*.jsonl`
-- migration behavior
+- resumable migration behavior
 - privacy behavior for stored `text`
 
 **Step 2: Run full verification**
@@ -546,8 +547,9 @@ Verify manually:
 2. Confirm migration creates the new directory.
 3. Change settings in the UI and confirm `config.toml` updates.
 4. Edit `config.toml` manually and confirm the running app reloads it.
-5. Record a session and confirm a new line is appended to the current month JSONL file.
-6. Open Settings and confirm history UI still renders recent entries.
+5. Simulate a partial migration by leaving `config.toml` in place without one or more sidecar files, relaunch, and confirm the missing files are migrated before `.migration-version` is written.
+6. Record a session and confirm a new line is appended to the current month JSONL file.
+7. Open Settings and confirm history UI still renders recent entries.
 
 **Step 4: Commit**
 
