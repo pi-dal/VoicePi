@@ -435,6 +435,34 @@ struct LLMRefinerTests {
     }
 
     @Test
+    func refinementPromptAllowsRemovingObviousSpeechDisfluencies() {
+        let prompt = LLMRefiner.systemPrompt(
+            mode: .refinement,
+            targetLanguage: nil,
+            refinementPrompt: ""
+        )
+
+        #expect(prompt.contains("You may remove obvious speech disfluencies that do not add meaning") == true)
+        #expect(prompt.contains("filler words or particles such as") == true)
+        #expect(prompt.contains("false starts or abandoned restarts") == true)
+    }
+
+    @Test
+    func refinementPromptExplainsDisfluencyCleanupBoundariesInDetail() {
+        let prompt = LLMRefiner.systemPrompt(
+            mode: .refinement,
+            targetLanguage: nil,
+            refinementPrompt: ""
+        )
+
+        #expect(prompt.contains("Examples that are usually safe to remove when they are semantically empty") == true)
+        #expect(prompt.contains("嗯, 啊, 呃, 那个, 就是, you know, like") == true)
+        #expect(prompt.contains("or then restarting the sentence") == true)
+        #expect(prompt.contains("Do not remove words that carry hesitation, uncertainty, emphasis, politeness, or emotional tone") == true)
+        #expect(prompt.contains("If you are not highly confident a span is semantically empty, keep it") == true)
+    }
+
+    @Test
     func translationPromptTreatsInputAsSourceNotConversation() {
         let prompt = LLMRefiner.systemPrompt(
             mode: .translation,
