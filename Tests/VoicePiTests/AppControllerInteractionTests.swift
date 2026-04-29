@@ -255,6 +255,42 @@ struct AppControllerInteractionTests {
 
     @Test
     @MainActor
+    func cancellingStartupClearsActiveRecordingWorkflowState() {
+        let controller = AppController()
+        controller.recordingSessionCoordinator.configure(with: controller)
+        controller.isStartingRecording = true
+        controller.activeRecordingWorkflowOverride = .externalProcessorShortcut
+        controller.activeRecordingLatencyTrace = RecordingLatencyTrace(originTimestamp: 0)
+        controller.activeFloatingRefiningPresentationStartedAt = Date()
+
+        controller.cancelCurrentRecordingAndHideOverlay()
+
+        #expect(controller.isStartingRecording == false)
+        #expect(controller.activeRecordingWorkflowOverride == nil)
+        #expect(controller.activeRecordingLatencyTrace == nil)
+        #expect(controller.activeFloatingRefiningPresentationStartedAt == nil)
+    }
+
+    @Test
+    @MainActor
+    func cancellingProcessingClearsActiveRecordingWorkflowState() {
+        let controller = AppController()
+        controller.recordingSessionCoordinator.configure(with: controller)
+        controller.isProcessingRelease = true
+        controller.activeRecordingWorkflowOverride = .externalProcessorShortcut
+        controller.activeRecordingLatencyTrace = RecordingLatencyTrace(originTimestamp: 0)
+        controller.activeFloatingRefiningPresentationStartedAt = Date()
+
+        controller.cancelProcessingAndHideOverlay()
+
+        #expect(controller.isProcessingRelease == false)
+        #expect(controller.activeRecordingWorkflowOverride == nil)
+        #expect(controller.activeRecordingLatencyTrace == nil)
+        #expect(controller.activeFloatingRefiningPresentationStartedAt == nil)
+    }
+
+    @Test
+    @MainActor
     func escapeCancelActionCancelsRecordingWhenCaptureIsActive() {
         #expect(
             AppController.escapeCancelAction(

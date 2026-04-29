@@ -82,8 +82,15 @@ final class AppController: NSObject {
     var realtimeAudioFramePump: RealtimeAudioFramePump?
     var configWatcher: VoicePiConfigWatcher?
 
+    lazy var recordingSessionCoordinator = RecordingSessionCoordinator()
+    lazy var permissionBootstrapCoordinator = PermissionBootstrapCoordinator()
+    lazy var reviewPanelCoordinator = ReviewPanelCoordinator()
 
     func start() {
+        recordingSessionCoordinator.configure(with: self)
+        permissionBootstrapCoordinator.configure(with: self)
+        reviewPanelCoordinator.configure(with: self)
+
         let debugSettingsCapture = Self.debugSettingsCaptureConfiguration()
         if let debugInterfaceTheme = debugSettingsCapture?.interfaceTheme {
             model.interfaceTheme = debugInterfaceTheme

@@ -9,52 +9,15 @@ import Speech
 @MainActor
 extension AppController {
     func cancelCurrentRecordingAndHideOverlay() {
-        guard isStartingRecording || speechRecorder.isRecording else { return }
-
-        recordingStartupTask?.cancel()
-        recordingStartupTask = nil
-        latestTranscript = ""
-        speechRecorder.cancelImmediately()
-
-        Task { @MainActor [weak self] in
-            await self?.realtimeASRSessionCoordinator.close()
-        }
-
-        activeRecordingStartedAt = nil
-        finishActiveRecordingLatency(.cancelled)
-        clearActiveRecordingWorkflowState()
-        isStartingRecording = false
-        statusBarController?.setRecording(false)
-        statusBarController?.setTransientStatus(nil)
-        floatingPanelController.hide()
-        model.hideOverlay()
-        refreshCancelShortcutMonitorState()
+        recordingSessionCoordinator.cancelRecording()
     }
 
     func cancelProcessingAndHideOverlay() {
-        guard isProcessingRelease else { return }
-
-        processingTask?.cancel()
-        processingTask = nil
-        cancelPostInjectionLearning()
-        clearResultReviewState()
-        isProcessingRelease = false
-        finishActiveRecordingLatency(.cancelled)
-        clearActiveRecordingWorkflowState()
-        latestTranscript = ""
-        statusBarController?.setRecording(false)
-        statusBarController?.setTransientStatus(nil)
-        floatingPanelController.hide()
-        model.hideOverlay()
+        recordingSessionCoordinator.cancelProcessing()
     }
 
     func clearActiveRecordingWorkflowState() {
-        activeRecordingWorkflowOverride = nil
-        activeCapturedSourceSnapshot = nil
-        activeRecordingLatencyTrace = nil
-        activeFloatingRefiningPresentationStartedAt = nil
-        realtimeOverlayUpdateGate.reset()
-        realtimeAudioFramePump = nil
+        recordingSessionCoordinator.clearActiveRecordingWorkflowState()
     }
 
     func presentInputFallbackPanel(_ payload: InputFallbackPanelPayload) {
@@ -71,30 +34,13 @@ extension AppController {
         sourceApplicationBundleID: String?,
         recordingDurationMilliseconds: Int
     ) {
-        guard let payload = ExternalProcessorResultPanelPayload(
-            resultText: text,
-            originalText: sourceText
-        ) else {
-            presentTransientError("External processor returned unreadable output.")
-            return
-        }
-
-        externalProcessorResultRetryTask?.cancel()
-        externalProcessorResultRetryTask = nil
-        externalProcessorResultSession = ExternalProcessorResultSession(
-            payload: payload,
+        reviewPanelCoordinator.presentExternalProcessorResultPanel(
+            text: text,
             sourceText: sourceText,
             workflowOverride: workflowOverride,
             sourceApplicationBundleID: sourceApplicationBundleID,
-            recordingDurationMilliseconds: max(0, recordingDurationMilliseconds)
+            recordingDurationMilliseconds: recordingDurationMilliseconds
         )
-        selectionRegenerateHintController.hide()
-        resultReviewPanelController.hide()
-        floatingPanelController.hide(immediately: true)
-        model.hideOverlay()
-        statusBarController?.setTransientStatus(nil)
-        inputFallbackPanelController.hide()
-        externalProcessorResultPanelController.show(payload: payload)
     }
 
     func presentResultReviewPanel(
@@ -110,86 +56,35 @@ extension AppController {
         isRegenerating: Bool = false,
         isAutoOpened: Bool
     ) {
-        let sanitizedOriginalText = ExternalProcessorOutputSanitizer.sanitize(originalText)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sanitizedOriginalText.isEmpty else {
-            presentTransientError("Original text is unavailable for review.")
-            return
-        }
-
-        let selectedPromptPresetID = Self.normalizedResultReviewPromptPresetID(
-            selectedPromptPresetIDOverride
-        ) ?? resolvedRefinementPrompt(for: workflow)?.presetID ?? PromptPreset.builtInDefaultID
-        let fallbackPromptTitle = resolvedRefinementPrompt(for: workflow)?.title
-            ?? PromptPreset.builtInDefault.title
-        let selectedPromptTitle = Self.normalizedResultReviewPromptTitle(
-            selectedPromptTitleOverride,
-            fallback: fallbackPromptTitle
-        )
-        let session = RefinementReviewSession(
+        reviewPanelCoordinator.presentResultReviewPanel(
             sourceType: sourceType,
-            rawTranscript: sanitizedOriginalText,
-            selectedPromptPresetID: selectedPromptPresetID,
-            selectedPromptTitle: selectedPromptTitle,
-            currentResultText: resultText,
-            selectionAnchor: selectionAnchor,
-            recordingDurationMilliseconds: max(0, recordingDurationMilliseconds),
+            resultText: resultText,
+            originalText: originalText,
             workflow: workflow,
             workflowOverride: workflowOverride,
+            selectionAnchor: selectionAnchor,
+            selectedPromptPresetIDOverride: selectedPromptPresetIDOverride,
+            selectedPromptTitleOverride: selectedPromptTitleOverride,
+            recordingDurationMilliseconds: recordingDurationMilliseconds,
+            isRegenerating: isRegenerating,
             isAutoOpened: isAutoOpened
         )
-
-        guard let payload = resultReviewPayload(for: session, isRegenerating: isRegenerating) else {
-            presentTransientError("External processor returned unreadable output.")
-            return
-        }
-
-        resultReviewRetryTask?.cancel()
-        resultReviewRetryTask = nil
-        refinementReviewSession = session
-        selectionRegenerateHintController.hide()
-        clearExternalProcessorResultState()
-        floatingPanelController.hide(immediately: true)
-        model.hideOverlay()
-        statusBarController?.setTransientStatus(nil)
-        inputFallbackPanelController.hide()
-        resultReviewPanelController.show(payload: payload)
     }
 
     func clearExternalProcessorResultState() {
-        externalProcessorResultRetryTask?.cancel()
-        externalProcessorResultRetryTask = nil
-        externalProcessorResultSession = nil
-        externalProcessorResultPanelController.hide()
+        reviewPanelCoordinator.clearExternalProcessorResultState()
     }
 
     func dismissExternalProcessorResultPanel() {
-        clearExternalProcessorResultState()
+        reviewPanelCoordinator.dismissExternalProcessorResultPanel()
     }
 
     func updateResultReviewPromptSelection(_ presetID: String) {
-        guard var session = refinementReviewSession else { return }
-
-        let resolvedPrompt = model.resolvedPromptPresetForExplicitPresetID(presetID)
-        let updatedSelection = Self.updatedResultReviewPromptSelection(
-            selectedPromptPresetID: session.selectedPromptPresetID,
-            selectedPromptTitle: session.selectedPromptTitle,
-            pendingPromptPresetID: session.pendingPromptPresetID,
-            pendingPromptTitle: session.pendingPromptTitle,
-            requestedPromptPresetID: resolvedPrompt.presetID ?? PromptPreset.builtInDefaultID,
-            requestedPromptTitle: resolvedPrompt.title
-        )
-        session.selectedPromptPresetID = updatedSelection.selectedPromptPresetID
-        session.selectedPromptTitle = updatedSelection.selectedPromptTitle
-        session.pendingPromptPresetID = updatedSelection.pendingPromptPresetID
-        session.pendingPromptTitle = updatedSelection.pendingPromptTitle
-        refinementReviewSession = session
+        reviewPanelCoordinator.updateResultReviewPromptSelection(presetID)
     }
 
     func resultReviewPromptOptions() -> [ResultReviewPanelPromptOption] {
-        model.orderedPromptCyclePresets().map {
-            .init(presetID: $0.id, title: $0.resolvedTitle)
-        }
+        reviewPanelCoordinator.resultReviewPromptOptions()
     }
 
     func resultReviewPayload(
@@ -220,15 +115,11 @@ extension AppController {
     }
 
     func clearResultReviewState() {
-        resultReviewRetryTask?.cancel()
-        resultReviewRetryTask = nil
-        refinementReviewSession = nil
-        selectionRegenerateHintController.hide()
-        resultReviewPanelController.hide()
+        reviewPanelCoordinator.clearResultReviewState()
     }
 
     func dismissResultReviewPanel() {
-        clearResultReviewState()
+        reviewPanelCoordinator.dismissResultReviewPanel()
     }
 
     func retryReviewedText(
