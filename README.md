@@ -50,7 +50,7 @@ VoicePi is released under the [MIT License](LICENSE).
 - `.github/workflows/ci.yml` — macOS test workflow for pushes and pull requests
 - `.github/workflows/release.yml` — tag-driven GitHub Release and Homebrew cask update workflow
 - `Casks/voicepi.rb` — Homebrew cask definition kept in sync with tagged releases
-- `Scripts/test.sh` — repository-level test entrypoint for Swift and shell checks
+- `Scripts/test.sh` — repository-level test entrypoint for Swift, shell, and `site/` workspace checks
 - `Scripts/verify.sh` — development verification workflow that builds the debug app bundle
 - `Scripts/package.sh` — release packaging workflow that verifies first, then exports the release app bundle
 - `Scripts/prepare_release.sh` — release helper that packages the zip asset, computes SHA256, and refreshes the cask metadata

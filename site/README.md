@@ -2,16 +2,20 @@
 
 Static website workspace for the GitHub Pages `What's New` page.
 
+**Package manager: pnpm only.** Do not use npm or yarn in this workspace. The `pnpm-lock.yaml` file is the authoritative lockfile.
+
 ## Local Commands
 
 ```sh
 cd site
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 pnpm test -- --run
 pnpm typecheck
 pnpm build
 ```
+
+The repository-level `./Scripts/test.sh` also runs the site verification commands (`pnpm test -- --run && pnpm typecheck && pnpm build`) as part of the CI contract.
 
 ## Media
 
