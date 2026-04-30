@@ -323,15 +323,14 @@ final class ExternalProcessorRunner {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         if process.terminationStatus != 0 {
+            var message = "Process exited with status \(process.terminationStatus)."
             if !output.isEmpty {
-                return output
+                message += " stdout: \(output)"
             }
-
             if !errorOutput.isEmpty {
-                return errorOutput
+                message += " stderr: \(errorOutput)"
             }
-
-            throw ExternalProcessorRunnerError.launchFailed("Process exited with status \(process.terminationStatus).")
+            throw ExternalProcessorRunnerError.launchFailed(message)
         }
 
         if output.isEmpty, !errorOutput.isEmpty {

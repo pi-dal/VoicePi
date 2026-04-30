@@ -199,8 +199,9 @@ struct ExternalProcessorRunnerTests {
             timeout: .seconds(1)
         )
 
-        let output = try? await runner.run(invocation: invocation, stdin: "input transcript")
-        #expect(output == "alma command failed")
+        await #expect(throws: ExternalProcessorRunnerError.launchFailed("Process exited with status 2. stderr: alma command failed")) {
+            _ = try await runner.run(invocation: invocation, stdin: "input transcript")
+        }
     }
 
     @Test

@@ -353,7 +353,7 @@ extension SettingsWindowController {
                 let invocation = try AlmaCLIInvocationBuilder().build(
                     executablePath: entry.executablePath,
                     prompt: "VoicePi external processor test",
-                    additionalArguments: entry.additionalArguments.map(\.value)
+                    additionalArguments: entry.additionalArguments.map(\.value).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
                 )
                 let runner = ExternalProcessorRunner()
                 let output = try await runner.run(invocation: invocation, stdin: "VoicePi test")

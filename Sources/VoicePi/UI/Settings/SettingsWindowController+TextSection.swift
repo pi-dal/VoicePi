@@ -583,7 +583,7 @@ extension SettingsWindowController {
                             let invocation = try AlmaCLIInvocationBuilder().build(
                                 executablePath: processor.executablePath,
                                 prompt: prompt,
-                                additionalArguments: processor.additionalArguments.map(\.value)
+                                additionalArguments: processor.additionalArguments.map(\.value).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
                             )
                             let runner = ExternalProcessorRunner()
                             let result = try await runner.run(invocation: invocation, stdin: inputText)
