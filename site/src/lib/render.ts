@@ -223,7 +223,7 @@ export function renderApp(state: SiteState): string {
 
   return `
     <main class="page-shell">
-      <section class="hero" aria-labelledby="hero-title">
+      <section class="hero" data-motion-section="hero" aria-labelledby="hero-title">
         <div class="hero-topline">
           <p class="eyebrow">Voice. Perfected.</p>
           <div class="theme-switcher" role="tablist" aria-label="Theme modes">
@@ -350,7 +350,7 @@ export function renderApp(state: SiteState): string {
         </ul>
       </section>
 
-      <section class="highlights" aria-labelledby="highlights-title">
+      <section class="highlights" data-motion-section="highlights" aria-labelledby="highlights-title">
         <div class="section-heading">
           <p class="eyebrow">The Essence</p>
           <h2 id="highlights-title">The power of simplicity.</h2>
@@ -382,7 +382,7 @@ export function renderApp(state: SiteState): string {
         </div>
       </section>
 
-      <section class="config-archive" aria-labelledby="config-archive-title">
+      <section class="config-archive" data-motion-section="config" aria-labelledby="config-archive-title">
         <div class="section-heading">
           <p class="eyebrow">The Files</p>
           <h2 id="config-archive-title">The app and your agents read the same state.</h2>
@@ -455,7 +455,7 @@ export function renderApp(state: SiteState): string {
         </div>
       </section>
 
-      <section class="changelog" aria-labelledby="changelog-title">
+      <section class="changelog" data-motion-section="changelog" aria-labelledby="changelog-title">
         <div class="section-heading">
           <p class="eyebrow">The Journey</p>
           <h2 id="changelog-title">The Art of Progress.</h2>
@@ -507,7 +507,7 @@ export function renderApp(state: SiteState): string {
         </div>
       </section>
 
-      <footer class="footprint">
+      <footer class="footprint" data-motion-section="footprint">
         <div class="footprint-copy">
           <p class="eyebrow">Footprint</p>
           <h2>Mindfully Crafted.</h2>

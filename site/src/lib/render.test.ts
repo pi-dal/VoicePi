@@ -124,6 +124,11 @@ describe("renderApp", () => {
     const state = createSiteState(entries, "sunny");
     const html = renderApp(state);
 
+    expect(html).toContain('class="hero" data-motion-section="hero"');
+    expect(html).toContain('class="highlights" data-motion-section="highlights"');
+    expect(html).toContain('class="config-archive" data-motion-section="config"');
+    expect(html).toContain('class="changelog" data-motion-section="changelog"');
+    expect(html).toContain('class="footprint" data-motion-section="footprint"');
     expect(html).toContain('class="hero-scene" data-scene-theme="sunny"');
     expect(html).toContain('class="scene-stage" aria-hidden="true"');
     expect(html).toContain('class="scene-window-light"');

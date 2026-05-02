@@ -24,4 +24,9 @@ describe("hero styles", () => {
     expect(styles).toContain(".theme-celestial-layer");
     expect(styles).toContain("left: min(4vw, 48px);");
   });
+
+  test("does not use scroll progress to offset page or atmosphere layers", () => {
+    expect(styles).not.toMatch(/transform:[^;}]*var\(--page-scroll-progress\)/);
+    expect(styles).not.toMatch(/transform:\s*[\s\S]*?var\(--page-scroll-progress\)[\s\S]*?;/);
+  });
 });

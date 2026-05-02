@@ -9,6 +9,7 @@ export interface AppController {
   state: SiteState;
   cleanupAtmosphere: (() => void) | undefined;
   cleanupHeroMask: (() => void) | undefined;
+  cleanupPageMotion: (() => void) | undefined;
   cleanupOutsideClick: (() => void) | undefined;
   pendingOutsideClickTimeout: ReturnType<typeof setTimeout> | undefined;
 }
@@ -22,6 +23,11 @@ export function startApp(root: HTMLElement, initialState: SiteState): AppControl
     `<canvas class="atmosphere-canvas" data-atmosphere></canvas>
     <div class="noise-layer"></div>
     <div class="beam-layer"></div>
+    <div class="scroll-ribbon" aria-hidden="true">
+      <span class="scroll-ribbon-track"></span>
+      <span class="scroll-ribbon-fill"></span>
+      <span class="scroll-ribbon-dot"></span>
+    </div>
     <div class="theme-celestial-layer">
       <span class="theme-celestial theme-celestial-halo"></span>
       <span class="theme-celestial theme-celestial-core"></span>
@@ -56,6 +62,7 @@ export function startApp(root: HTMLElement, initialState: SiteState): AppControl
     state: initialState,
     cleanupAtmosphere: undefined,
     cleanupHeroMask: undefined,
+    cleanupPageMotion: undefined,
     cleanupOutsideClick: undefined,
     pendingOutsideClickTimeout: undefined,
   };
@@ -91,6 +98,8 @@ function render(controller: AppController): void {
   // Re-bind hero mask after every content render — .hero is in contentLayer
   controller.cleanupHeroMask?.();
   controller.cleanupHeroMask = mountHeroAtmosphereMask();
+  controller.cleanupPageMotion?.();
+  controller.cleanupPageMotion = mountPageMotion();
 }
 
 function handleVersionSelect(controller: AppController, version: string): void {
@@ -313,5 +322,64 @@ export function mountHeroAtmosphereMask(): () => void {
     atmosphere.style.removeProperty("--hero-cutout-right");
     atmosphere.style.removeProperty("--hero-cutout-top");
     atmosphere.style.removeProperty("--hero-cutout-bottom");
+  };
+}
+
+export function mountPageMotion(): () => void {
+  const sections = Array.from(document.querySelectorAll<HTMLElement>("[data-motion-section]"));
+  if (sections.length === 0) {
+    return () => undefined;
+  }
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let animationFrame = 0;
+
+  sections.forEach((section, index) => {
+    section.style.setProperty("--motion-index", `${index}`);
+    section.classList.add("is-visible");
+  });
+
+  const syncProgress = () => {
+    const maxScroll = Math.max(
+      1,
+      Math.max(document.body.scrollHeight || 0, document.documentElement.scrollHeight || 0) - window.innerHeight,
+    );
+    const scrollTop = Math.max(0, window.scrollY || 0);
+    const progress = Math.min(1, scrollTop / maxScroll);
+    const bandIndex = Math.min(sections.length - 1, Math.floor(progress * sections.length));
+
+    document.documentElement.style.setProperty("--page-scroll-progress", progress.toFixed(4));
+    document.body.dataset.scrollBand = sections[bandIndex]?.dataset.motionSection ?? "hero";
+  };
+
+  const scheduleSync = () => {
+    window.cancelAnimationFrame(animationFrame);
+    animationFrame = window.requestAnimationFrame(syncProgress);
+  };
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting || entry.intersectionRatio > 0.18) {
+          (entry.target as HTMLElement).classList.add("is-visible");
+        }
+      }
+    },
+    {
+      threshold: [0.18, 0.38, 0.58],
+      rootMargin: "0px 0px -12% 0px",
+    },
+  );
+
+  sections.forEach((section) => observer.observe(section));
+  syncProgress();
+  window.addEventListener("scroll", scheduleSync, { passive: true });
+  window.addEventListener("resize", scheduleSync);
+
+  return () => {
+    observer.disconnect();
+    window.removeEventListener("scroll", scheduleSync);
+    window.removeEventListener("resize", scheduleSync);
+    window.cancelAnimationFrame(animationFrame);
   };
 }

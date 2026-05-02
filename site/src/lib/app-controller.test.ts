@@ -22,6 +22,7 @@ const mockRemoveEventListener = vi.fn();
 const mockClearTimeout = vi.fn();
 const mockCancelAnimationFrame = vi.fn();
 const mockRequestAnimationFrame = vi.fn((fn: () => void) => { fn(); return 1 });
+const intersectionObserverInstances: Array<{ observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>; unobserve: ReturnType<typeof vi.fn> }> = [];
 const resizeObserverInstances: Array<{ observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>; unobserve: ReturnType<typeof vi.fn> }> = [];
 
 function addListener(el: object, event: string, handler: Function) {
@@ -131,6 +132,16 @@ vi.stubGlobal("ResizeObserver", vi.fn(function (_callback: ResizeObserverCallbac
   return observer;
 }));
 
+vi.stubGlobal("IntersectionObserver", vi.fn(function (_callback: IntersectionObserverCallback) {
+  const observer = {
+    observe: vi.fn(),
+    disconnect: vi.fn(),
+    unobserve: vi.fn(),
+  };
+  intersectionObserverInstances.push(observer);
+  return observer;
+}));
+
 vi.stubGlobal("setTimeout", ((fn: () => void) => { fn(); return 1 }) as unknown as typeof setTimeout);
 vi.stubGlobal("clearTimeout", mockClearTimeout);
 vi.stubGlobal("cancelAnimationFrame", mockCancelAnimationFrame);
@@ -177,6 +188,7 @@ describe("AppController interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resizeObserverInstances.length = 0;
+    intersectionObserverInstances.length = 0;
     elementData.clear();
     (document.body as any).dataset = {};
     document.body.style.cssText = "";
@@ -250,6 +262,35 @@ describe("AppController interactions", () => {
 
     expect(resizeObserverInstances).toHaveLength(1);
     expect(resizeObserverInstances[0].observe).toHaveBeenCalledWith(hero);
+  });
+
+  test("startup mounts page motion observers for rendered sections", async () => {
+    const { startApp } = await import("./app-controller");
+
+    const root = makeEl("div");
+    root.id = "app";
+    const hero = makeEl("section");
+    const atmosphere = makeEl("div");
+    const sections = [makeEl("section"), makeEl("section"), makeEl("section")];
+
+    (document.querySelector as any).mockImplementation((selector: string) => {
+      if (selector === ".hero") return hero;
+      if (selector === ".theme-atmosphere") return atmosphere;
+      return null;
+    });
+    (document.querySelectorAll as any).mockImplementation((selector: string) => {
+      if (selector === "[data-motion-section]") return sections;
+      return [];
+    });
+
+    startApp(root, createSiteState(entries, "sunny"));
+
+    expect(intersectionObserverInstances).toHaveLength(1);
+    expect(intersectionObserverInstances[0].observe).toHaveBeenCalledTimes(sections.length);
+    for (const section of sections) {
+      expect(intersectionObserverInstances[0].observe).toHaveBeenCalledWith(section);
+      expect(section.classList.add).toHaveBeenCalledWith("is-visible");
+    }
   });
 
   // ── Install tab ────────────────────────────────────────────────────────

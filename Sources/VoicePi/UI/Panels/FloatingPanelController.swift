@@ -431,7 +431,6 @@ final class FloatingPanelContentViewController: NSViewController {
         setPhase(.recording)
         updateTranscript("")
         waveformView.update(level: 0.02)
-        syncAppearance()
     }
 
     func setPhase(_ phase: Phase) {
@@ -444,6 +443,7 @@ final class FloatingPanelContentViewController: NSViewController {
         modeSwitchContainer.isHidden = phase != .modeSwitch
         transcriptLabel.alignment = .left
         updateDisplayedText()
+        syncAppearance()
     }
 
     func updateTranscript(_ transcript: String) {

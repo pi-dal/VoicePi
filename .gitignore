@@ -39,5 +39,3 @@ site/node_modules/
 node_modules/
 !.vscode/extensions.json
 !.vscode/settings.json
-# Standalone extracted repos
-/VoicePi-iOS/
