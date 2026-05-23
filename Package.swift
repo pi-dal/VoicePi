@@ -19,7 +19,8 @@ let package = Package(
         .package(
             url: "https://github.com/pi-dal/PermissionFlow.git",
             revision: "aa0df8557bea9032196294a9b938771ff6ad8784"
-        )
+        ),
+        .package(path: "Packages/VoicePiCore")
     ],
     targets: [
         .executableTarget(
@@ -27,7 +28,8 @@ let package = Package(
             dependencies: [
                 .product(name: "AppUpdater", package: "AppUpdater"),
                 .product(name: "TOMLKit", package: "TOMLKit"),
-                .product(name: "PermissionFlow", package: "PermissionFlow")
+                .product(name: "PermissionFlow", package: "PermissionFlow"),
+                .product(name: "VoicePiCore", package: "VoicePiCore")
             ],
             path: "Sources/VoicePi",
             exclude: [

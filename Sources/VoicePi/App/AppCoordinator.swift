@@ -241,6 +241,9 @@ final class AppController: NSObject {
             )
             _ = await self.checkForUpdates(trigger: .automatic)
         }
+
+        // Launch background extraction of voice history → shared lexicon
+        model.runLexiconExtraction()
     }
 
     func stop() {

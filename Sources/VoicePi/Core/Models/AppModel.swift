@@ -3,6 +3,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import Combine
 import Foundation
+import VoicePiCore
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -162,6 +163,7 @@ final class AppModel: ObservableObject {
     let defaults: UserDefaults
     var dictionaryStore: DictionaryStoring?
     var historyStore: HistoryStoring?
+    let sharedLexiconStore: SharedLexiconStore
     let configStore: VoicePiConfigStore
     let encoder = JSONEncoder()
     let decoder = JSONDecoder()
@@ -235,6 +237,10 @@ final class AppModel: ObservableObject {
         } else {
             self.historyStore = HistoryStore(configPaths: resolvedPaths)
         }
+        // Shared lexicon: same directory as the macOS HistoryStore
+        // (Application Support/VoicePi), so both platforms share the same schema.
+        let lexiconDir = MacVoiceHistoryExtractor.sharedLexiconDirectory()
+        self.sharedLexiconStore = SharedLexiconStore(directoryURL: lexiconDir)
 
         let initialPromptWorkspace = (try? self.configStore.loadPromptWorkspace(configuration: initialConfiguration)) ?? .init()
         let processorDocument = (try? self.configStore.loadExternalProcessors(configuration: initialConfiguration)) ?? .init()
@@ -513,5 +519,18 @@ final class AppModel: ObservableObject {
             refinementPrompt: refinementPrompt ?? llmConfiguration.refinementPrompt,
             enableThinking: enableThinking ?? llmConfiguration.enableThinking
         )
+    }
+
+    /// Run voice history → shared lexicon extraction on a background queue.
+    /// Call once during app launch or periodically in background.
+    func runLexiconExtraction() {
+        guard let historyStore else { return }
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+            MacVoiceHistoryExtractor.runExtraction(
+                historyStore: historyStore,
+                sharedLexiconStore: sharedLexiconStore
+            )
+        }
     }
 }
